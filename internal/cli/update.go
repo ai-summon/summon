@@ -14,6 +14,7 @@ import (
 	"github.com/user/summon/internal/registry"
 	"github.com/user/summon/internal/resolver"
 	"github.com/user/summon/internal/store"
+	"github.com/user/summon/internal/ui"
 )
 
 var updateCmd = &cobra.Command{
@@ -76,7 +77,7 @@ func runScopedUpdate(projectDir string, scope platform.Scope, packageName string
 	}
 
 	if len(toUpdate) == 0 {
-		fmt.Fprintln(os.Stdout, "No packages to update.")
+		ui.Info("No packages to update.")
 		return nil
 	}
 
@@ -88,21 +89,21 @@ func runScopedUpdate(projectDir string, scope platform.Scope, packageName string
 		switch entry.Source.Type {
 		case "github":
 			if err := updateGitHubPackage(name, entry, storePath, paths, reg); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: updating %s: %v\n", name, err)
+				ui.Error("updating %s: %v", name, err)
 				continue
 			}
 			updated++
 		case "local":
 			m, mErr := manifest.Load(storePath)
 			if mErr != nil {
-				fmt.Fprintf(os.Stderr, "Error: reading manifest for %s: %v\n", name, mErr)
+				ui.Error("reading manifest for %s: %v", name, mErr)
 				continue
 			}
 			if err := marketplace.GeneratePluginJSON(storePath, m); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: regenerating plugin.json for %s: %v\n", name, err)
+				ui.Error("regenerating plugin.json for %s: %v", name, err)
 				continue
 			}
-			fmt.Fprintf(os.Stdout, "Regenerated marketplace views for %s\n", name)
+			ui.Success("Regenerated marketplace views for %s", name)
 			updated++
 		}
 	}
@@ -117,7 +118,7 @@ func runScopedUpdate(projectDir string, scope platform.Scope, packageName string
 		return fmt.Errorf("saving registry: %w", err)
 	}
 
-	fmt.Fprintf(os.Stdout, "Updated %d package(s) in %s scope\n", updated, scope.String())
+	ui.Detail("Updated %d package(s) in %s scope", updated, scope.String())
 	return nil
 }
 
@@ -125,7 +126,7 @@ func runScopedUpdate(projectDir string, scope platform.Scope, packageName string
 // checks it out (or pulls HEAD), and updates the registry entry if the
 // commit SHA has changed.
 func updateGitHubPackage(name string, entry registry.Entry, storePath string, paths installer.Paths, reg *registry.Registry) error {
-	fmt.Fprintf(os.Stdout, "Checking %s for updates...\n", name)
+	ui.Info("Checking %s for updates...", name)
 
 	if err := git.FetchTags(storePath); err != nil {
 		return err
@@ -152,7 +153,7 @@ func updateGitHubPackage(name string, entry registry.Entry, storePath string, pa
 	}
 
 	if newSHA == entry.Source.SHA {
-		fmt.Fprintf(os.Stdout, "%s is already up to date\n", name)
+		ui.Info("%s is already up to date", name)
 		return nil
 	}
 
@@ -176,6 +177,6 @@ func updateGitHubPackage(name string, entry registry.Entry, storePath string, pa
 		Platforms: entry.Platforms,
 	})
 
-	fmt.Fprintf(os.Stdout, "Updated %s to %s (%s)\n", name, m.Version, newSHA[:8])
+	ui.Success("Updated %s to %s (%s)", name, m.Version, newSHA[:8])
 	return nil
 }

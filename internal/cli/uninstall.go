@@ -11,6 +11,7 @@ import (
 	"github.com/user/summon/internal/platform"
 	"github.com/user/summon/internal/registry"
 	"github.com/user/summon/internal/store"
+	"github.com/user/summon/internal/ui"
 )
 
 var uninstallCmd = &cobra.Command{
@@ -82,14 +83,14 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 	for _, a := range platform.AllAdapters(projectDir) {
 		platformDir := fmt.Sprintf("%s/%s", paths.PlatformsDir, a.Name())
 		if err := marketplace.Generate(a.Name(), paths.MarketplaceName, paths.StoreDir, platformDir, reg); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to regenerate marketplace for %s: %v\n", a.Name(), err)
+			ui.Warn("failed to regenerate marketplace for %s: %v", a.Name(), err)
 		}
 	}
 
 	// Disable the plugin on all active platforms.
 	for _, a := range platform.DetectActive(projectDir) {
 		if err := a.DisablePlugin(name, paths.MarketplaceName, paths.StoreDir, paths.Scope); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to disable plugin on %s: %v\n", a.Name(), err)
+			ui.Warn("failed to disable plugin on %s: %v", a.Name(), err)
 		}
 	}
 
@@ -97,11 +98,11 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 	if len(reg.Packages) == 0 {
 		for _, a := range platform.DetectActive(projectDir) {
 			if err := a.Unregister(paths.MarketplaceName, paths.Scope); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to unregister from %s: %v\n", a.Name(), err)
+				ui.Warn("failed to unregister from %s: %v", a.Name(), err)
 			}
 		}
 	}
 
-	fmt.Fprintf(os.Stdout, "Uninstalled %s\n", name)
+	ui.Success("Uninstalled %s", name)
 	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/user/summon/internal/installer"
 	"github.com/user/summon/internal/platform"
+	"github.com/user/summon/internal/ui"
 )
 
 var installCmd = &cobra.Command{
@@ -80,7 +81,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		if scope == platform.ScopeLocal {
 			return fmt.Errorf("local installs are not restored automatically; use --scope project or --scope user")
 		}
-		fmt.Fprintf(os.Stdout, "Restoring %s scope packages...\n", scope.String())
+		ui.Info("Restoring %s scope packages...", scope.String())
 		return installer.RestoreScope(scope, projectDir)
 	}
 
@@ -109,10 +110,10 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Fprintf(os.Stdout, "Scope: %s\n", scope.String())
+	ui.Detail("Scope: %s", scope.String())
 	if scope != platform.ScopeUser {
 		if gitErr := installer.EnsureGitignore(projectDir); gitErr != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not update .gitignore: %v\n", gitErr)
+			ui.Warn("could not update .gitignore: %v", gitErr)
 		}
 	}
 

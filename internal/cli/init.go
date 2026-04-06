@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/user/summon/internal/ui"
 	"gopkg.in/yaml.v3"
 )
 
@@ -88,7 +89,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Fprintf(os.Stdout, "Initialized package %q\n", name)
-	fmt.Fprintln(os.Stdout, "Created: summon.yaml, skills/, agents/, commands/, README.md")
+	ui.Success("Initialized package %q", name)
+	ui.Detail("Created: summon.yaml, skills/, agents/, commands/, README.md")
 	return nil
 }

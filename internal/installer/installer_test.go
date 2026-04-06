@@ -115,7 +115,7 @@ func TestResolveGitURL(t *testing.T) {
 		{
 			name:  "catalog name superpowers",
 			input: "superpowers",
-			want:  "https://github.com/ismaelJimenez/superpowers",
+			want:  "https://github.com/obra/superpowers",
 		},
 		{
 			name:    "unknown catalog name",
@@ -304,18 +304,32 @@ func TestReportDependencies_MissingDeps(t *testing.T) {
 	}
 	reg := registry.New()
 
-	old := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-	reportDependencies(m, reg)
-	w.Close()
-	os.Stderr = old
+	// Capture stderr (warning header)
+	oldErr := os.Stderr
+	rErr, wErr, _ := os.Pipe()
+	os.Stderr = wErr
 
-	buf := make([]byte, 4096)
-	n, _ := r.Read(buf)
-	output := string(buf[:n])
-	assert.Contains(t, output, "missing dependencies")
-	assert.Contains(t, output, "missing-dep")
+	// Capture stdout (detail lines)
+	oldOut := os.Stdout
+	rOut, wOut, _ := os.Pipe()
+	os.Stdout = wOut
+
+	reportDependencies(m, reg)
+
+	wErr.Close()
+	os.Stderr = oldErr
+	wOut.Close()
+	os.Stdout = oldOut
+
+	errBuf := make([]byte, 4096)
+	nErr, _ := rErr.Read(errBuf)
+	errOutput := string(errBuf[:nErr])
+	assert.Contains(t, errOutput, "Missing dependencies")
+
+	outBuf := make([]byte, 4096)
+	nOut, _ := rOut.Read(outBuf)
+	outOutput := string(outBuf[:nOut])
+	assert.Contains(t, outOutput, "missing-dep")
 }
 
 // ---------------------------------------------------------------------------

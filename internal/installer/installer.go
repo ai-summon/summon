@@ -19,6 +19,7 @@ import (
 	"github.com/user/summon/internal/registry"
 	"github.com/user/summon/internal/resolver"
 	"github.com/user/summon/internal/store"
+	"github.com/user/summon/internal/ui"
 )
 
 // Options configures a single package installation. Package is a git URL,
@@ -109,7 +110,7 @@ func installGitHub(opts Options, paths Paths, s *store.Store, reg *registry.Regi
 	name := packageNameFromURL(gitURL)
 
 	if entry, ok := reg.Get(name); ok && opts.Ref == "" && !opts.Force {
-		fmt.Fprintf(os.Stdout, "%s is already installed at version %s. Already up to date.\n", name, entry.Version)
+		ui.Info("%s is already installed at version %s. Already up to date.", name, entry.Version)
 		return nil
 	}
 
@@ -120,7 +121,7 @@ func installGitHub(opts Options, paths Paths, s *store.Store, reg *registry.Regi
 	defer os.RemoveAll(tmpDir)
 
 	cloneDest := filepath.Join(tmpDir, name)
-	fmt.Fprintf(os.Stdout, "Fetching %s...\n", gitURL)
+	ui.Info("Fetching %s...", gitURL)
 	if err := git.Clone(gitURL, cloneDest); err != nil {
 		return fmt.Errorf("cloning %s: %w", gitURL, err)
 	}
@@ -143,7 +144,7 @@ func installGitHub(opts Options, paths Paths, s *store.Store, reg *registry.Regi
 		return fmt.Errorf("getting commit SHA: %w", err)
 	}
 	if entry, ok := reg.Get(name); ok && entry.Source.SHA == sha && !opts.Force {
-		fmt.Fprintf(os.Stdout, "%s is already at %s (%s)\n", name, ref, sha[:8])
+		ui.Info("%s is already at %s (%s)", name, ref, sha[:8])
 		return nil
 	}
 
@@ -159,7 +160,7 @@ func installGitHub(opts Options, paths Paths, s *store.Store, reg *registry.Regi
 		if hasSummonYAML {
 			if errs := m.ValidateFull(pluginRoot); len(errs) > 0 {
 				for _, e := range errs {
-					fmt.Fprintf(os.Stderr, "Warning: %s\n", e)
+					ui.Warn("%s", e)
 				}
 			}
 		}
@@ -176,7 +177,7 @@ func installGitHub(opts Options, paths Paths, s *store.Store, reg *registry.Regi
 			return fmt.Errorf("no compatible platform detected for %s (supports: %v). Use --force to install anyway", m.Name, m.Platforms)
 		}
 		if len(compatiblePlatforms) == 0 {
-			fmt.Fprintf(os.Stderr, "Warning: no compatible platform detected, installing with --force\n")
+			ui.Warn("no compatible platform detected, installing with --force")
 			if len(m.Platforms) > 0 {
 				compatiblePlatforms = makePlatformList(m.Platforms, opts.ProjectDir)
 			}
@@ -224,7 +225,7 @@ func installGitHub(opts Options, paths Paths, s *store.Store, reg *registry.Regi
 		enablePlugins(m.Name, paths, compatiblePlatforms)
 		materializeComponents(storePath, m, paths, compatiblePlatforms)
 
-		fmt.Fprintf(os.Stdout, "Installed %s@%s (%s)\n", m.Name, m.Version, sha[:8])
+		ui.Success("Installed %s@%s (%s)", m.Name, m.Version, sha[:8])
 		reportDependencies(m, reg)
 	}
 	return nil
@@ -247,7 +248,7 @@ func installLocal(opts Options, paths Paths, s *store.Store, reg *registry.Regis
 		if hasSummonYAML {
 			if errs := m.ValidateFull(pluginRoot); len(errs) > 0 {
 				for _, e := range errs {
-					fmt.Fprintf(os.Stderr, "Warning: %s\n", e)
+					ui.Warn("%s", e)
 				}
 			}
 		}
@@ -298,7 +299,7 @@ func installLocal(opts Options, paths Paths, s *store.Store, reg *registry.Regis
 		enablePlugins(m.Name, paths, compatiblePlatforms)
 		materializeComponents(storePath, m, paths, compatiblePlatforms)
 
-		fmt.Fprintf(os.Stdout, "Installed %s@%s (local: %s)\n", m.Name, m.Version, pluginRoot)
+		ui.Success("Installed %s@%s (local: %s)", m.Name, m.Version, pluginRoot)
 		reportDependencies(m, reg)
 	}
 	return nil
@@ -320,35 +321,35 @@ func RestoreScope(scope platform.Scope, projectDir string) error {
 	}
 	reg.Scope = paths.Scope.String()
 	if len(reg.Packages) == 0 {
-		fmt.Fprintln(os.Stdout, "No packages to restore.")
+		ui.Info("No packages to restore.")
 		return nil
 	}
 
 	s := store.New(paths.StoreDir)
 	for name, entry := range reg.Packages {
 		if s.Has(name) {
-			fmt.Fprintf(os.Stdout, "%s already in store, skipping\n", name)
+			ui.Info("%s already in store, skipping", name)
 			continue
 		}
 		switch entry.Source.Type {
 		case "github":
-			fmt.Fprintf(os.Stdout, "Restoring %s from %s...\n", name, entry.Source.URL)
+			ui.Info("Restoring %s from %s...", name, entry.Source.URL)
 			ref := entry.Source.Ref
 			if ref == "" {
 				ref = "HEAD"
 			}
 			if err := git.CloneRef(entry.Source.URL, s.PackagePath(name), ref); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to restore %s: %v\n", name, err)
+				ui.Error("failed to restore %s: %v", name, err)
 				continue
 			}
 		case "local":
-			fmt.Fprintf(os.Stdout, "Restoring %s from %s...\n", name, entry.Source.URL)
+			ui.Info("Restoring %s from %s...", name, entry.Source.URL)
 			if _, statErr := os.Stat(entry.Source.URL); statErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: local path %s not available for %s\n", entry.Source.URL, name)
+				ui.Warn("local path %s not available for %s", entry.Source.URL, name)
 				continue
 			}
 			if err := s.Link(name, entry.Source.URL); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to restore %s: %v\n", name, err)
+				ui.Error("failed to restore %s: %v", name, err)
 				continue
 			}
 		}
@@ -368,7 +369,7 @@ func RestoreScope(scope platform.Scope, projectDir string) error {
 	activePlatforms := platform.DetectActive(projectDir)
 	registerPlatforms(paths, activePlatforms)
 
-	fmt.Fprintln(os.Stdout, "All packages restored.")
+	ui.Success("All packages restored.")
 	return nil
 }
 
@@ -470,7 +471,7 @@ func registerPlatforms(paths Paths, adapters []platform.Adapter) {
 	for _, a := range adapters {
 		platformDir := filepath.Join(paths.PlatformsDir, a.Name())
 		if err := a.Register(platformDir, paths.MarketplaceName, paths.Scope); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to register with %s: %v\n", a.Name(), err)
+			ui.Warn("failed to register with %s: %v", a.Name(), err)
 		}
 	}
 }
@@ -481,7 +482,7 @@ func registerPlatforms(paths Paths, adapters []platform.Adapter) {
 func enablePlugins(pluginName string, paths Paths, adapters []platform.Adapter) {
 	for _, a := range adapters {
 		if err := a.EnablePlugin(pluginName, paths.MarketplaceName, paths.StoreDir, paths.Scope); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to enable plugin on %s: %v\n", a.Name(), err)
+			ui.Warn("failed to enable plugin on %s: %v", a.Name(), err)
 		}
 	}
 }
@@ -499,7 +500,7 @@ func materializeComponents(storePath string, m *manifest.Manifest, paths Paths, 
 			continue
 		}
 		if err := mat.MaterializeComponents(storePath, m, paths.Scope); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Copilot workspace materialization for %s: %v\n", m.Name, err)
+			ui.Warn("Copilot workspace materialization for %s: %v", m.Name, err)
 		}
 	}
 }
@@ -561,9 +562,9 @@ func reportDependencies(m *manifest.Manifest, reg *registry.Registry) {
 		}
 	}
 	if len(missing) > 0 {
-		fmt.Fprintf(os.Stderr, "Warning: missing dependencies:\n")
+		ui.Warn("Missing dependencies:")
 		for _, dep := range missing {
-			fmt.Fprintf(os.Stderr, "  - %s (install with: summon install %s)\n", dep, dep)
+			ui.Detail("- %s (install with: summon install %s)", dep, dep)
 		}
 	}
 }

@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 	"github.com/user/summon/internal/installer"
 	"github.com/user/summon/internal/registry"
 	"github.com/user/summon/internal/store"
+	"github.com/user/summon/internal/ui"
 )
 
 var listCmd = &cobra.Command{
@@ -79,7 +81,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(entries) == 0 {
-		fmt.Fprintln(os.Stdout, "No packages installed.")
+		ui.Info("No packages installed.")
 		return nil
 	}
 
@@ -92,7 +94,9 @@ func runList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	var buf strings.Builder
+	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(w, "NAME\tVERSION\tSCOPE\tSOURCE\n")
 	for _, e := range entries {
 		broken := ""
 		if e.Broken {
@@ -100,7 +104,78 @@ func runList(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s%s\n", e.Name, e.Version, e.Scope, e.Source, broken)
 	}
-	return w.Flush()
+	w.Flush()
+
+	lines := strings.Split(buf.String(), "\n")
+	if len(lines) == 0 {
+		return nil
+	}
+
+	header := lines[0]
+	fmt.Fprintln(os.Stdout, ui.Bold(header))
+
+	// Print separator matching header width.
+	sepLen := len(header)
+	sep := strings.Repeat("─", sepLen)
+	fmt.Fprintln(os.Stdout, ui.Dim(sep))
+
+	// Find column start positions from header.
+	colStarts := []int{0}
+	for _, col := range []string{"VERSION", "SCOPE", "SOURCE"} {
+		idx := strings.Index(header, col)
+		if idx >= 0 {
+			colStarts = append(colStarts, idx)
+		}
+	}
+
+	for _, line := range lines[1:] {
+		if line == "" {
+			continue
+		}
+		fmt.Fprintln(os.Stdout, colorizeListRow(line, colStarts))
+	}
+	return nil
+}
+
+// colorizeListRow applies per-column colors to an aligned list row.
+// Column order: NAME (bold), VERSION (green), SCOPE (cyan), SOURCE (dim).
+func colorizeListRow(line string, colStarts []int) string {
+	cols := splitAtPositions(line, colStarts)
+	// Apply styling per column.
+	colorFns := []func(string) string{ui.Bold, ui.Green, ui.Cyan, ui.Dim}
+	var parts []string
+	for i, col := range cols {
+		trimmed := strings.TrimRight(col, " ")
+		padding := col[len(trimmed):]
+		if i < len(colorFns) {
+			// Special-case broken link in source column.
+			if strings.Contains(trimmed, "(broken link)") {
+				trimmed = strings.Replace(trimmed, "(broken link)", ui.Red("(broken link)"), 1)
+				parts = append(parts, trimmed+padding)
+			} else {
+				parts = append(parts, colorFns[i](trimmed)+padding)
+			}
+		} else {
+			parts = append(parts, col)
+		}
+	}
+	return strings.Join(parts, "")
+}
+
+// splitAtPositions splits a line into segments at the given byte positions.
+func splitAtPositions(line string, positions []int) []string {
+	var result []string
+	for i, pos := range positions {
+		if pos >= len(line) {
+			break
+		}
+		end := len(line)
+		if i+1 < len(positions) && positions[i+1] < len(line) {
+			end = positions[i+1]
+		}
+		result = append(result, line[pos:end])
+	}
+	return result
 }
 
 // extractRepoPath strips the "https://github.com/" prefix from a URL,
