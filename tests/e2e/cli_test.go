@@ -597,3 +597,47 @@ func TestInstallerScript_ShadowedBinaryWarning(t *testing.T) {
 	require.NoError(t, err, string(out))
 	assert.Contains(t, string(out), "Another summon binary appears earlier in PATH")
 }
+
+// ---------------------------------------------------------------------------
+// plugin.json fallback E2E (004-plugin-json-fallback)
+// ---------------------------------------------------------------------------
+
+func TestPluginJSONFallback_E2E(t *testing.T) {
+	binary := buildBinary(t)
+	projectDir := t.TempDir()
+
+	// Create a local package with only .claude-plugin/plugin.json
+	pkgDir := filepath.Join(t.TempDir(), "pj-e2e-pkg")
+	claudeDir := filepath.Join(pkgDir, ".claude-plugin")
+	require.NoError(t, os.MkdirAll(claudeDir, 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(pkgDir, "skills"), 0o755))
+	pj := `{"name":"pj-e2e-pkg","version":"1.0.0","description":"E2E plugin.json test"}`
+	require.NoError(t, os.WriteFile(filepath.Join(claudeDir, "plugin.json"), []byte(pj), 0o644))
+
+	// Install
+	cmd := exec.Command(binary, "install", "--path", pkgDir, "--scope", "local", "--force")
+	cmd.Dir = projectDir
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "install failed: "+string(out))
+	assert.Contains(t, string(out), "Installed pj-e2e-pkg@1.0.0")
+
+	// List
+	cmd = exec.Command(binary, "list", "--scope", "local")
+	cmd.Dir = projectDir
+	out, err = cmd.CombinedOutput()
+	require.NoError(t, err, "list failed: "+string(out))
+	assert.Contains(t, string(out), "pj-e2e-pkg")
+
+	// Uninstall
+	cmd = exec.Command(binary, "uninstall", "pj-e2e-pkg", "--scope", "local")
+	cmd.Dir = projectDir
+	out, err = cmd.CombinedOutput()
+	require.NoError(t, err, "uninstall failed: "+string(out))
+
+	// Verify gone from list
+	cmd = exec.Command(binary, "list", "--scope", "local")
+	cmd.Dir = projectDir
+	out, err = cmd.CombinedOutput()
+	require.NoError(t, err, "list after uninstall failed: "+string(out))
+	assert.NotContains(t, string(out), "pj-e2e-pkg")
+}

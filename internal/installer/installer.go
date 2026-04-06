@@ -147,77 +147,86 @@ func installGitHub(opts Options, paths Paths, s *store.Store, reg *registry.Regi
 		return nil
 	}
 
-	m, err := manifest.Load(cloneDest)
+	manifests, pluginRoots, err := manifest.LoadOrInfer(cloneDest)
 	if err != nil {
 		return fmt.Errorf("loading manifest: %w", err)
 	}
 
-	if errs := m.ValidateFull(cloneDest); len(errs) > 0 {
-		for _, e := range errs {
-			fmt.Fprintf(os.Stderr, "Warning: %s\n", e)
+	for i, m := range manifests {
+		pluginRoot := pluginRoots[i]
+		hasSummonYAML := fileExists(filepath.Join(pluginRoot, "summon.yaml"))
+
+		if hasSummonYAML {
+			if errs := m.ValidateFull(pluginRoot); len(errs) > 0 {
+				for _, e := range errs {
+					fmt.Fprintf(os.Stderr, "Warning: %s\n", e)
+				}
+			}
 		}
-	}
 
-	if opts.SummonVersion != "" {
-		if ok, msg := manifest.CheckSummonVersion(m.SummonVersion, opts.SummonVersion); !ok {
-			return fmt.Errorf("version constraint: %s", msg)
+		if opts.SummonVersion != "" {
+			if ok, msg := manifest.CheckSummonVersion(m.SummonVersion, opts.SummonVersion); !ok {
+				return fmt.Errorf("version constraint: %s", msg)
+			}
 		}
-	}
 
-	activePlatforms := platform.DetectActive(opts.ProjectDir)
-	compatiblePlatforms := filterCompatible(m.Platforms, activePlatforms)
-	if len(compatiblePlatforms) == 0 && !opts.Force {
-		return fmt.Errorf("no compatible platform detected for %s (supports: %v). Use --force to install anyway", name, m.Platforms)
-	}
-	if len(compatiblePlatforms) == 0 {
-		fmt.Fprintf(os.Stderr, "Warning: no compatible platform detected, installing with --force\n")
-		if len(m.Platforms) > 0 {
-			compatiblePlatforms = makePlatformList(m.Platforms, opts.ProjectDir)
+		activePlatforms := platform.DetectActive(opts.ProjectDir)
+		compatiblePlatforms := filterCompatible(m.Platforms, activePlatforms)
+		if len(compatiblePlatforms) == 0 && !opts.Force {
+			return fmt.Errorf("no compatible platform detected for %s (supports: %v). Use --force to install anyway", m.Name, m.Platforms)
 		}
-	}
+		if len(compatiblePlatforms) == 0 {
+			fmt.Fprintf(os.Stderr, "Warning: no compatible platform detected, installing with --force\n")
+			if len(m.Platforms) > 0 {
+				compatiblePlatforms = makePlatformList(m.Platforms, opts.ProjectDir)
+			}
+		}
 
-	if err := s.Remove(name); err != nil {
-		return fmt.Errorf("removing old store entry: %w", err)
-	}
-	storePath := s.PackagePath(name)
-	if err := os.MkdirAll(filepath.Dir(storePath), 0o755); err != nil {
-		return err
-	}
-	if err := os.Rename(cloneDest, storePath); err != nil {
-		return fmt.Errorf("moving to store: %w", err)
-	}
+		if err := s.Remove(m.Name); err != nil {
+			return fmt.Errorf("removing old store entry: %w", err)
+		}
+		storePath := s.PackagePath(m.Name)
+		if err := os.MkdirAll(filepath.Dir(storePath), 0o755); err != nil {
+			return err
+		}
+		if err := os.Rename(pluginRoot, storePath); err != nil {
+			return fmt.Errorf("moving to store: %w", err)
+		}
 
-	if err := marketplace.GeneratePluginJSON(storePath, m); err != nil {
-		return fmt.Errorf("generating plugin.json: %w", err)
-	}
-	if err := expandHookVariables(storePath); err != nil {
-		return fmt.Errorf("expanding hook variables: %w", err)
-	}
+		if !marketplace.PluginJSONExists(storePath) {
+			if err := marketplace.GeneratePluginJSON(storePath, m); err != nil {
+				return fmt.Errorf("generating plugin.json: %w", err)
+			}
+		}
+		if err := expandHookVariables(storePath); err != nil {
+			return fmt.Errorf("expanding hook variables: %w", err)
+		}
 
-	platformNames := getPlatformNames(compatiblePlatforms)
-	reg.Add(name, registry.Entry{
-		Version: m.Version,
-		Source: registry.Source{
-			Type: "github",
-			URL:  gitURL,
-			Ref:  ref,
-			SHA:  sha,
-		},
-		Platforms: platformNames,
-	})
-	if err := reg.Save(paths.RegistryPath); err != nil {
-		return fmt.Errorf("saving registry: %w", err)
-	}
+		platformNames := getPlatformNames(compatiblePlatforms)
+		reg.Add(m.Name, registry.Entry{
+			Version: m.Version,
+			Source: registry.Source{
+				Type: "github",
+				URL:  gitURL,
+				Ref:  ref,
+				SHA:  sha,
+			},
+			Platforms: platformNames,
+		})
+		if err := reg.Save(paths.RegistryPath); err != nil {
+			return fmt.Errorf("saving registry: %w", err)
+		}
 
-	if err := generateMarketplaces(paths, reg); err != nil {
-		return fmt.Errorf("generating marketplace: %w", err)
-	}
-	registerPlatforms(paths, compatiblePlatforms)
-	enablePlugins(name, paths, compatiblePlatforms)
-	materializeComponents(storePath, m, paths, compatiblePlatforms)
+		if err := generateMarketplaces(paths, reg); err != nil {
+			return fmt.Errorf("generating marketplace: %w", err)
+		}
+		registerPlatforms(paths, compatiblePlatforms)
+		enablePlugins(m.Name, paths, compatiblePlatforms)
+		materializeComponents(storePath, m, paths, compatiblePlatforms)
 
-	fmt.Fprintf(os.Stdout, "Installed %s@%s (%s)\n", name, m.Version, sha[:8])
-	reportDependencies(m, reg)
+		fmt.Fprintf(os.Stdout, "Installed %s@%s (%s)\n", m.Name, m.Version, sha[:8])
+		reportDependencies(m, reg)
+	}
 	return nil
 }
 
@@ -226,63 +235,72 @@ func installLocal(opts Options, paths Paths, s *store.Store, reg *registry.Regis
 	if err != nil {
 		return fmt.Errorf("resolving path: %w", err)
 	}
-	m, err := manifest.Load(absPath)
+	manifests, pluginRoots, err := manifest.LoadOrInfer(absPath)
 	if err != nil {
 		return err
 	}
 
-	if errs := m.ValidateFull(absPath); len(errs) > 0 {
-		for _, e := range errs {
-			fmt.Fprintf(os.Stderr, "Warning: %s\n", e)
+	for i, m := range manifests {
+		pluginRoot := pluginRoots[i]
+		hasSummonYAML := fileExists(filepath.Join(pluginRoot, "summon.yaml"))
+
+		if hasSummonYAML {
+			if errs := m.ValidateFull(pluginRoot); len(errs) > 0 {
+				for _, e := range errs {
+					fmt.Fprintf(os.Stderr, "Warning: %s\n", e)
+				}
+			}
 		}
-	}
 
-	if opts.SummonVersion != "" {
-		if ok, msg := manifest.CheckSummonVersion(m.SummonVersion, opts.SummonVersion); !ok {
-			return fmt.Errorf("version constraint: %s", msg)
+		if opts.SummonVersion != "" {
+			if ok, msg := manifest.CheckSummonVersion(m.SummonVersion, opts.SummonVersion); !ok {
+				return fmt.Errorf("version constraint: %s", msg)
+			}
 		}
-	}
 
-	activePlatforms := platform.DetectActive(opts.ProjectDir)
-	compatiblePlatforms := filterCompatible(m.Platforms, activePlatforms)
-	if len(compatiblePlatforms) == 0 && !opts.Force {
-		return fmt.Errorf("no compatible platform detected for %s (supports: %v). Use --force to install anyway", m.Name, m.Platforms)
-	}
+		activePlatforms := platform.DetectActive(opts.ProjectDir)
+		compatiblePlatforms := filterCompatible(m.Platforms, activePlatforms)
+		if len(compatiblePlatforms) == 0 && !opts.Force {
+			return fmt.Errorf("no compatible platform detected for %s (supports: %v). Use --force to install anyway", m.Name, m.Platforms)
+		}
 
-	if err := s.Link(m.Name, absPath); err != nil {
-		return fmt.Errorf("linking to store: %w", err)
-	}
+		if err := s.Link(m.Name, pluginRoot); err != nil {
+			return fmt.Errorf("linking to store: %w", err)
+		}
 
-	storePath := s.PackagePath(m.Name)
-	if err := marketplace.GeneratePluginJSON(storePath, m); err != nil {
-		return fmt.Errorf("generating plugin.json: %w", err)
-	}
-	if err := expandHookVariables(storePath); err != nil {
-		return fmt.Errorf("expanding hook variables: %w", err)
-	}
+		storePath := s.PackagePath(m.Name)
+		if !marketplace.PluginJSONExists(storePath) {
+			if err := marketplace.GeneratePluginJSON(storePath, m); err != nil {
+				return fmt.Errorf("generating plugin.json: %w", err)
+			}
+		}
+		if err := expandHookVariables(storePath); err != nil {
+			return fmt.Errorf("expanding hook variables: %w", err)
+		}
 
-	platformNames := getPlatformNames(compatiblePlatforms)
-	reg.Add(m.Name, registry.Entry{
-		Version: m.Version,
-		Source: registry.Source{
-			Type: "local",
-			URL:  absPath,
-		},
-		Platforms: platformNames,
-	})
-	if err := reg.Save(paths.RegistryPath); err != nil {
-		return fmt.Errorf("saving registry: %w", err)
-	}
+		platformNames := getPlatformNames(compatiblePlatforms)
+		reg.Add(m.Name, registry.Entry{
+			Version: m.Version,
+			Source: registry.Source{
+				Type: "local",
+				URL:  pluginRoot,
+			},
+			Platforms: platformNames,
+		})
+		if err := reg.Save(paths.RegistryPath); err != nil {
+			return fmt.Errorf("saving registry: %w", err)
+		}
 
-	if err := generateMarketplaces(paths, reg); err != nil {
-		return fmt.Errorf("generating marketplace: %w", err)
-	}
-	registerPlatforms(paths, compatiblePlatforms)
-	enablePlugins(m.Name, paths, compatiblePlatforms)
-	materializeComponents(storePath, m, paths, compatiblePlatforms)
+		if err := generateMarketplaces(paths, reg); err != nil {
+			return fmt.Errorf("generating marketplace: %w", err)
+		}
+		registerPlatforms(paths, compatiblePlatforms)
+		enablePlugins(m.Name, paths, compatiblePlatforms)
+		materializeComponents(storePath, m, paths, compatiblePlatforms)
 
-	fmt.Fprintf(os.Stdout, "Installed %s@%s (local: %s)\n", m.Name, m.Version, absPath)
-	reportDependencies(m, reg)
+		fmt.Fprintf(os.Stdout, "Installed %s@%s (local: %s)\n", m.Name, m.Version, pluginRoot)
+		reportDependencies(m, reg)
+	}
 	return nil
 }
 
@@ -337,7 +355,9 @@ func RestoreScope(scope platform.Scope, projectDir string) error {
 		storePath := s.PackagePath(name)
 		m, mErr := manifest.Load(storePath)
 		if mErr == nil {
-			_ = marketplace.GeneratePluginJSON(storePath, m)
+			if !marketplace.PluginJSONExists(storePath) {
+				_ = marketplace.GeneratePluginJSON(storePath, m)
+			}
 			_ = expandHookVariables(storePath)
 		}
 	}
@@ -546,6 +566,11 @@ func reportDependencies(m *manifest.Manifest, reg *registry.Registry) {
 			fmt.Fprintf(os.Stderr, "  - %s (install with: summon install %s)\n", dep, dep)
 		}
 	}
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 // expandHookVariables replaces ${CLAUDE_PLUGIN_ROOT} in hooks/hooks.json with

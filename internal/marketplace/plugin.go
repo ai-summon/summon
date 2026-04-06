@@ -42,3 +42,11 @@ func GeneratePluginJSON(storePackagePath string, m *manifest.Manifest) error {
 
 	return os.WriteFile(filepath.Join(pluginDir, "plugin.json"), data, 0o644)
 }
+
+// PluginJSONExists checks whether .claude-plugin/plugin.json already exists
+// in the given package directory. Used to skip GeneratePluginJSON when the
+// plugin ships its own descriptor.
+func PluginJSONExists(storePackagePath string) bool {
+	info, err := os.Stat(filepath.Join(storePackagePath, ".claude-plugin", "plugin.json"))
+	return err == nil && !info.IsDir()
+}
