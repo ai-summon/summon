@@ -1,0 +1,36 @@
+# Go
+/summon
+/bin/
+*.exe
+*.test
+*.out
+vendor/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
+
+# Summon
+.summon/
+.claude/
+
+# AI
+.claude
+.github/agents
+.github/prompts
+.github/copilot-instructions.md
+.specify
+tmp/
+specs/
+.summon/store/
+.summon/platforms/
+.summon/local/
+.summon/project/store/
+.summon/project/platforms/
+.vscode
