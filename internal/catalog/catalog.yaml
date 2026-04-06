@@ -3,7 +3,7 @@ packages:
     repository: https://github.com/ismaelJimenez/superpowers
     description: "Core skills library for Claude Code"
     platforms: [claude]
-  - name: cc-spex
+  - name: spex
     repository: https://github.com/rhuss/cc-spex
     description: "Specification framework"
     platforms: [claude]

@@ -4,6 +4,7 @@
 package manifest
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -244,4 +245,225 @@ func parseSemverParts(v string) [3]int {
 		result[i], _ = strconv.Atoi(parts[i])
 	}
 	return result
+}
+
+// ---------------------------------------------------------------------------
+// plugin.json / marketplace.json fallback types
+// ---------------------------------------------------------------------------
+
+// pluginJSONFile represents the schema of .claude-plugin/plugin.json.
+type pluginJSONFile struct {
+	Name        string  `json:"name"`
+	Version     string  `json:"version"`
+	Description string  `json:"description"`
+	Author      *Author `json:"author,omitempty"`
+	License     string  `json:"license,omitempty"`
+	Homepage    string  `json:"homepage,omitempty"`
+	Repository  string  `json:"repository,omitempty"`
+}
+
+// marketplacePlugin describes one entry in a marketplace.json plugins array.
+type marketplacePlugin struct {
+	Source      string `json:"source"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// marketplaceJSONFile represents .claude-plugin/marketplace.json.
+type marketplaceJSONFile struct {
+	Plugins []marketplacePlugin `json:"plugins"`
+}
+
+// ---------------------------------------------------------------------------
+// Component auto-detection
+// ---------------------------------------------------------------------------
+
+// detectComponents probes a plugin root directory for well-known component
+// paths and returns a Components struct. Returns nil if no components found.
+func detectComponents(pluginRoot string) *Components {
+	var c Components
+	found := false
+
+	if isDir(filepath.Join(pluginRoot, "skills")) {
+		c.Skills = "skills"
+		found = true
+	}
+	if isDir(filepath.Join(pluginRoot, "agents")) {
+		c.Agents = "agents"
+		found = true
+	}
+	if isDir(filepath.Join(pluginRoot, "commands")) {
+		c.Commands = "commands"
+		found = true
+	}
+	if isFile(filepath.Join(pluginRoot, "hooks", "hooks.json")) {
+		c.Hooks = "hooks"
+		found = true
+	} else if isFile(filepath.Join(pluginRoot, "hooks.json")) {
+		c.Hooks = "."
+		found = true
+	}
+	if isFile(filepath.Join(pluginRoot, ".mcp.json")) {
+		c.MCP = "."
+		found = true
+	}
+
+	if !found {
+		return nil
+	}
+	return &c
+}
+
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func isFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+// ---------------------------------------------------------------------------
+// Inferred manifest validation
+// ---------------------------------------------------------------------------
+
+// ValidateInferred checks only that name, version, and description are
+// non-empty. It does not enforce kebab-case, semver, path existence, or
+// platform allowlists — inferred manifests are intentionally permissive.
+func (m *Manifest) ValidateInferred() error {
+	if m.Name == "" {
+		return fmt.Errorf("plugin.json: name is required")
+	}
+	if m.Version == "" {
+		return fmt.Errorf("plugin.json: version is required")
+	}
+	if m.Description == "" {
+		return fmt.Errorf("plugin.json: description is required")
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Manifest inference from plugin.json
+// ---------------------------------------------------------------------------
+
+// inferFromPluginJSON reads .claude-plugin/plugin.json from dir, maps its
+// fields to a Manifest, auto-detects components, and defaults platforms to
+// ["claude", "copilot"].
+func inferFromPluginJSON(dir string) (*Manifest, error) {
+	path := filepath.Join(dir, ".claude-plugin", "plugin.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading plugin.json: %w", err)
+	}
+
+	var pj pluginJSONFile
+	if err := json.Unmarshal(data, &pj); err != nil {
+		return nil, fmt.Errorf("parsing plugin.json: %w", err)
+	}
+
+	m := &Manifest{
+		Name:        pj.Name,
+		Version:     pj.Version,
+		Description: pj.Description,
+		Author:      pj.Author,
+		License:     pj.License,
+		Homepage:    pj.Homepage,
+		Repository:  pj.Repository,
+		Platforms:   []string{"claude", "copilot"},
+		Components:  detectComponents(dir),
+	}
+
+	if err := m.ValidateInferred(); err != nil {
+		return nil, err
+	}
+
+	return m, nil
+}
+
+// ---------------------------------------------------------------------------
+// Manifest inference from marketplace.json
+// ---------------------------------------------------------------------------
+
+// inferFromMarketplaceJSON reads .claude-plugin/marketplace.json from dir,
+// resolves each plugin's source directory, and infers a manifest from each.
+func inferFromMarketplaceJSON(dir string) ([]*Manifest, []string, error) {
+	path := filepath.Join(dir, ".claude-plugin", "marketplace.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading marketplace.json: %w", err)
+	}
+
+	var mj marketplaceJSONFile
+	if err := json.Unmarshal(data, &mj); err != nil {
+		return nil, nil, fmt.Errorf("parsing marketplace.json: %w", err)
+	}
+
+	if len(mj.Plugins) == 0 {
+		return nil, nil, fmt.Errorf("marketplace.json has no plugins listed")
+	}
+
+	var manifests []*Manifest
+	var roots []string
+	seen := make(map[string]bool)
+
+	for _, p := range mj.Plugins {
+		pluginDir := filepath.Join(dir, filepath.Clean(p.Source))
+		info, err := os.Stat(pluginDir)
+		if err != nil || !info.IsDir() {
+			return nil, nil, fmt.Errorf("marketplace.json plugin source %q does not exist", p.Source)
+		}
+
+		m, err := inferFromPluginJSON(pluginDir)
+		if err != nil {
+			return nil, nil, fmt.Errorf("plugin at %q: %w", p.Source, err)
+		}
+
+		if seen[m.Name] {
+			return nil, nil, fmt.Errorf("marketplace.json has duplicate plugin name %q", m.Name)
+		}
+		seen[m.Name] = true
+
+		manifests = append(manifests, m)
+		roots = append(roots, pluginDir)
+	}
+
+	return manifests, roots, nil
+}
+
+// ---------------------------------------------------------------------------
+// LoadOrInfer
+// ---------------------------------------------------------------------------
+
+// LoadOrInfer tries to load a manifest from a directory using this resolution
+// chain: summon.yaml → .claude-plugin/plugin.json → .claude-plugin/marketplace.json.
+// It always returns slices: 1-element for single-manifest cases, N-element for
+// marketplace repos. The second slice contains the plugin root directories
+// (which may differ from dir for marketplace entries).
+func LoadOrInfer(dir string) ([]*Manifest, []string, error) {
+	// 1. Try summon.yaml (highest priority)
+	if _, err := os.Stat(filepath.Join(dir, "summon.yaml")); err == nil {
+		m, err := Load(dir)
+		if err != nil {
+			return nil, nil, err
+		}
+		return []*Manifest{m}, []string{dir}, nil
+	}
+
+	// 2. Try .claude-plugin/plugin.json
+	if _, err := os.Stat(filepath.Join(dir, ".claude-plugin", "plugin.json")); err == nil {
+		m, err := inferFromPluginJSON(dir)
+		if err != nil {
+			return nil, nil, err
+		}
+		return []*Manifest{m}, []string{dir}, nil
+	}
+
+	// 3. Try .claude-plugin/marketplace.json
+	if _, err := os.Stat(filepath.Join(dir, ".claude-plugin", "marketplace.json")); err == nil {
+		return inferFromMarketplaceJSON(dir)
+	}
+
+	return nil, nil, fmt.Errorf("no summon.yaml, plugin.json, or marketplace.json found in %s", dir)
 }

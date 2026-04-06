@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -251,4 +252,265 @@ func TestCompareSemver(t *testing.T) {
 			assert.Equal(t, tc.want, compareSemver(tc.a, tc.b))
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// plugin.json fallback tests (US1)
+// ---------------------------------------------------------------------------
+
+// helper: create a plugin.json in dir/.claude-plugin/plugin.json
+func writePluginJSON(t *testing.T, dir string, data map[string]any) {
+	t.Helper()
+	pluginDir := filepath.Join(dir, ".claude-plugin")
+	require.NoError(t, os.MkdirAll(pluginDir, 0o755))
+	b, err := json.Marshal(data)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(pluginDir, "plugin.json"), b, 0o644))
+}
+
+func TestInferFromPluginJSON_AutoDetectComponents(t *testing.T) {
+	dir := t.TempDir()
+	writePluginJSON(t, dir, map[string]any{
+		"name": "detect-test", "version": "1.0.0", "description": "test",
+	})
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "skills"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "commands"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "hooks.json"), []byte("{}"), 0o644))
+
+	m, err := inferFromPluginJSON(dir)
+	require.NoError(t, err)
+	require.NotNil(t, m.Components)
+	assert.Equal(t, "skills", m.Components.Skills)
+	assert.Equal(t, "commands", m.Components.Commands)
+	assert.Equal(t, ".", m.Components.Hooks)
+	assert.Empty(t, m.Components.Agents)
+	assert.Empty(t, m.Components.MCP)
+}
+
+func TestInferFromPluginJSON_NoComponents(t *testing.T) {
+	dir := t.TempDir()
+	writePluginJSON(t, dir, map[string]any{
+		"name": "bare-test", "version": "0.1.0", "description": "no components",
+	})
+
+	m, err := inferFromPluginJSON(dir)
+	require.NoError(t, err)
+	assert.Nil(t, m.Components)
+	assert.Equal(t, "bare-test", m.Name)
+}
+
+func TestInferFromPluginJSON_InvalidJSON(t *testing.T) {
+	dir := t.TempDir()
+	pluginDir := filepath.Join(dir, ".claude-plugin")
+	require.NoError(t, os.MkdirAll(pluginDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pluginDir, "plugin.json"), []byte("{bad json"), 0o644))
+
+	_, err := inferFromPluginJSON(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parsing plugin.json")
+}
+
+func TestInferFromPluginJSON_HooksSubdir(t *testing.T) {
+	dir := t.TempDir()
+	writePluginJSON(t, dir, map[string]any{
+		"name": "hooks-test", "version": "1.0.0", "description": "test",
+	})
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "hooks"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "hooks", "hooks.json"), []byte("{}"), 0o644))
+
+	m, err := inferFromPluginJSON(dir)
+	require.NoError(t, err)
+	require.NotNil(t, m.Components)
+	assert.Equal(t, "hooks", m.Components.Hooks)
+}
+
+func TestLoadOrInfer_PluginJSON(t *testing.T) {
+	dir := t.TempDir()
+	writePluginJSON(t, dir, map[string]any{
+		"name": "pj-test", "version": "2.0.0", "description": "plugin.json only",
+		"author":  map[string]any{"name": "Alice"},
+		"license": "MIT", "homepage": "https://example.com",
+	})
+
+	manifests, roots, err := LoadOrInfer(dir)
+	require.NoError(t, err)
+	require.Len(t, manifests, 1)
+	require.Len(t, roots, 1)
+
+	m := manifests[0]
+	assert.Equal(t, "pj-test", m.Name)
+	assert.Equal(t, "2.0.0", m.Version)
+	assert.Equal(t, "plugin.json only", m.Description)
+	assert.Equal(t, []string{"claude", "copilot"}, m.Platforms)
+	assert.Equal(t, "MIT", m.License)
+	assert.Equal(t, "https://example.com", m.Homepage)
+	require.NotNil(t, m.Author)
+	assert.Equal(t, "Alice", m.Author.Name)
+	assert.Equal(t, dir, roots[0])
+}
+
+func TestLoadOrInfer_NothingFound(t *testing.T) {
+	dir := t.TempDir()
+	_, _, err := LoadOrInfer(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no summon.yaml, plugin.json, or marketplace.json")
+}
+
+// ---------------------------------------------------------------------------
+// marketplace.json fallback tests (US2)
+// ---------------------------------------------------------------------------
+
+func writeMarketplaceJSON(t *testing.T, dir string, mj map[string]any) {
+	t.Helper()
+	claudeDir := filepath.Join(dir, ".claude-plugin")
+	require.NoError(t, os.MkdirAll(claudeDir, 0o755))
+	b, err := json.Marshal(mj)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(claudeDir, "marketplace.json"), b, 0o644))
+}
+
+func TestLoadOrInfer_MarketplaceJSON(t *testing.T) {
+	dir := t.TempDir()
+	sub1 := filepath.Join(dir, "plugin-a")
+	sub2 := filepath.Join(dir, "plugin-b")
+	writePluginJSON(t, sub1, map[string]any{
+		"name": "plugin-a", "version": "1.0.0", "description": "first",
+	})
+	writePluginJSON(t, sub2, map[string]any{
+		"name": "plugin-b", "version": "2.0.0", "description": "second",
+	})
+	writeMarketplaceJSON(t, dir, map[string]any{
+		"name": "my-marketplace",
+		"plugins": []map[string]any{
+			{"name": "plugin-a", "source": "./plugin-a"},
+			{"name": "plugin-b", "source": "./plugin-b"},
+		},
+	})
+
+	manifests, roots, err := LoadOrInfer(dir)
+	require.NoError(t, err)
+	require.Len(t, manifests, 2)
+	require.Len(t, roots, 2)
+	assert.Equal(t, "plugin-a", manifests[0].Name)
+	assert.Equal(t, "plugin-b", manifests[1].Name)
+	assert.Equal(t, sub1, roots[0])
+	assert.Equal(t, sub2, roots[1])
+}
+
+func TestLoadOrInfer_PluginJSONBeatsMarketplace(t *testing.T) {
+	dir := t.TempDir()
+	writePluginJSON(t, dir, map[string]any{
+		"name": "direct-plugin", "version": "1.0.0", "description": "direct",
+	})
+	writeMarketplaceJSON(t, dir, map[string]any{
+		"name": "mp",
+		"plugins": []map[string]any{
+			{"name": "mp-plugin", "source": "./sub"},
+		},
+	})
+
+	manifests, roots, err := LoadOrInfer(dir)
+	require.NoError(t, err)
+	require.Len(t, manifests, 1)
+	assert.Equal(t, "direct-plugin", manifests[0].Name)
+	assert.Equal(t, dir, roots[0])
+}
+
+func TestInferFromMarketplaceJSON_EmptyPlugins(t *testing.T) {
+	dir := t.TempDir()
+	writeMarketplaceJSON(t, dir, map[string]any{
+		"name": "empty", "plugins": []map[string]any{},
+	})
+	_, _, err := inferFromMarketplaceJSON(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no plugins listed")
+}
+
+func TestInferFromMarketplaceJSON_MissingPluginJSON(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "missing-pj")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+	writeMarketplaceJSON(t, dir, map[string]any{
+		"name": "mp",
+		"plugins": []map[string]any{
+			{"name": "x", "source": "./missing-pj"},
+		},
+	})
+	_, _, err := inferFromMarketplaceJSON(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing-pj")
+}
+
+func TestInferFromMarketplaceJSON_DuplicateNames(t *testing.T) {
+	dir := t.TempDir()
+	sub1 := filepath.Join(dir, "a")
+	sub2 := filepath.Join(dir, "b")
+	writePluginJSON(t, sub1, map[string]any{
+		"name": "dup-name", "version": "1.0.0", "description": "first",
+	})
+	writePluginJSON(t, sub2, map[string]any{
+		"name": "dup-name", "version": "2.0.0", "description": "second",
+	})
+	writeMarketplaceJSON(t, dir, map[string]any{
+		"name": "mp",
+		"plugins": []map[string]any{
+			{"name": "a", "source": "./a"},
+			{"name": "b", "source": "./b"},
+		},
+	})
+	_, _, err := inferFromMarketplaceJSON(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "duplicate plugin name")
+}
+
+// ---------------------------------------------------------------------------
+// US3: summon.yaml priority tests
+// ---------------------------------------------------------------------------
+
+func TestLoadOrInfer_SummonYamlWins(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "summon.yaml"),
+		[]byte("name: yaml-pkg\nversion: \"3.0.0\"\ndescription: from yaml\nplatforms:\n  - claude\n"),
+		0o644,
+	))
+	writePluginJSON(t, dir, map[string]any{
+		"name": "json-pkg", "version": "1.0.0", "description": "from json",
+	})
+
+	manifests, roots, err := LoadOrInfer(dir)
+	require.NoError(t, err)
+	require.Len(t, manifests, 1)
+	m := manifests[0]
+	assert.Equal(t, "yaml-pkg", m.Name)
+	assert.Equal(t, "3.0.0", m.Version)
+	assert.Equal(t, []string{"claude"}, m.Platforms)
+	assert.Equal(t, dir, roots[0])
+}
+
+func TestLoadOrInfer_SummonYaml(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "summon.yaml"),
+		[]byte("name: yaml-only\nversion: \"1.0.0\"\ndescription: test\n"),
+		0o644,
+	))
+
+	manifests, roots, err := LoadOrInfer(dir)
+	require.NoError(t, err)
+	require.Len(t, manifests, 1)
+	assert.Equal(t, "yaml-only", manifests[0].Name)
+	assert.Equal(t, dir, roots[0])
+}
+
+// ---------------------------------------------------------------------------
+// ValidateInferred
+// ---------------------------------------------------------------------------
+
+func TestValidateInferred(t *testing.T) {
+	m := &Manifest{Name: "x", Version: "1.0.0", Description: "d"}
+	assert.NoError(t, m.ValidateInferred())
+
+	m2 := &Manifest{Name: "", Version: "1.0.0", Description: "d"}
+	err := m2.ValidateInferred()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "name")
 }

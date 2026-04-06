@@ -34,15 +34,48 @@ summon install github:user/pkg
    ┌─────┴──────────────────────────────────────────────┐
    │  1. Clone repo → temp dir                         │
    │  2. Resolve version (tag/ref/HEAD)                 │
-   │  3. Load & validate summon.yaml manifest           │
+   │  3. Load manifest (resolution chain below)          │
    │  4. Move to store (.summon/store/<name>)            │
-   │  5. Generate plugin descriptor (plugin.json)        │
+   │  5. Generate plugin descriptor if missing           │
    │  6. Record in registry (.summon/registry.yaml)      │
    │  7. Generate marketplace (marketplace.json)         │
    │  8. Register marketplace with platforms             │
    │  9. Auto-enable plugin on platforms                 │
    └────────────────────────────────────────────────────┘
 ```
+
+### Manifest Resolution Chain
+
+When loading a package, `manifest.LoadOrInfer()` tries these sources in order:
+
+1. **`summon.yaml`** — Full manifest with explicit configuration. Uses `Validate()` + `ValidateFull()`.
+2. **`.claude-plugin/plugin.json`** — Claude/Copilot plugin descriptor. Fields are mapped to a Manifest with permissive validation (`ValidateInferred`). Platforms default to `["claude", "copilot"]`. Components are auto-detected by probing the directory.
+3. **`.claude-plugin/marketplace.json`** — Marketplace index listing multiple plugins. Each plugin's `source` directory is resolved and its `plugin.json` is loaded via step 2. All plugins are installed as separate registry entries.
+4. **Error** — If none of the above exist, installation fails.
+
+### Component Auto-Detection
+
+When inferring from `plugin.json`, the following directories/files are probed to populate `components`:
+
+| Probe | Component | Value |
+|-------|-----------|-------|
+| `skills/` directory exists | `components.skills` | `"skills"` |
+| `agents/` directory exists | `components.agents` | `"agents"` |
+| `commands/` directory exists | `components.commands` | `"commands"` |
+| `hooks.json` file at root | `components.hooks` | `"."` |
+| `hooks/hooks.json` file | `components.hooks` | `"hooks"` |
+| `.mcp.json` file exists | `components.mcp` | `"."` |
+
+If no probes match, `components` is left nil (the plugin has no materializable components).
+
+### Validation Differences
+
+| Check | `summon.yaml` | `plugin.json` / `marketplace.json` |
+|-------|--------------|-------------------------------------|
+| Required fields (name, version, description) | Yes (`Validate`) | Yes (`ValidateInferred`) |
+| Component paths exist on disk | Yes (`ValidateFull`) | No |
+| Semantic version format | Yes | No |
+| summon_version constraint | Yes | No |
 
 ### Directory Layout (local scope)
 

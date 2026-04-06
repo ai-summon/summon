@@ -858,3 +858,114 @@ func TestInstallerScripts_ContainPathOptOutAndFallback(t *testing.T) {
 	assert.Contains(t, sh, "Run manually:")
 	assert.Contains(t, ps, "Run manually:")
 }
+
+// ---------------------------------------------------------------------------
+// plugin.json fallback tests (004-plugin-json-fallback)
+// ---------------------------------------------------------------------------
+
+func TestInstall_PluginJSONFallback(t *testing.T) {
+	projectDir := t.TempDir()
+	pkgDir := filepath.Join(t.TempDir(), "pj-only-pkg")
+	require.NoError(t, os.MkdirAll(filepath.Join(pkgDir, ".claude-plugin"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(pkgDir, "skills"), 0o755))
+
+	pj := map[string]any{
+		"name": "pj-only-pkg", "version": "1.0.0", "description": "plugin.json only",
+	}
+	pjData, _ := json.Marshal(pj)
+	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, ".claude-plugin", "plugin.json"), pjData, 0o644))
+
+	err := Install(Options{
+		Path:       pkgDir,
+		Force:      true,
+		Scope:      platform.ScopeLocal,
+		ProjectDir: projectDir,
+	})
+	require.NoError(t, err)
+
+	paths := ResolvePaths(platform.ScopeLocal, projectDir)
+	reg, err := registry.Load(paths.RegistryPath)
+	require.NoError(t, err)
+	entry, ok := reg.Get("pj-only-pkg")
+	require.True(t, ok, "pj-only-pkg should be in registry")
+	assert.Equal(t, "1.0.0", entry.Version)
+}
+
+func TestInstall_SkipGeneratePluginJSON(t *testing.T) {
+	projectDir := t.TempDir()
+	pkgDir := filepath.Join(t.TempDir(), "custom-pj-pkg")
+	require.NoError(t, os.MkdirAll(filepath.Join(pkgDir, ".claude-plugin"), 0o755))
+
+	// Write summon.yaml so the normal flow is used
+	require.NoError(t, os.WriteFile(
+		filepath.Join(pkgDir, "summon.yaml"),
+		[]byte("name: custom-pj-pkg\nversion: \"1.0.0\"\ndescription: test\n"),
+		0o644,
+	))
+
+	// Write a custom plugin.json with extra fields
+	customPJ := `{"name":"custom-pj-pkg","version":"1.0.0","description":"test","keywords":["custom"]}`
+	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, ".claude-plugin", "plugin.json"), []byte(customPJ), 0o644))
+
+	err := Install(Options{
+		Path:       pkgDir,
+		Force:      true,
+		Scope:      platform.ScopeLocal,
+		ProjectDir: projectDir,
+	})
+	require.NoError(t, err)
+
+	// Verify the custom plugin.json was preserved (not overwritten by GeneratePluginJSON)
+	paths := ResolvePaths(platform.ScopeLocal, projectDir)
+	storePJ := filepath.Join(paths.StoreDir, "custom-pj-pkg", ".claude-plugin", "plugin.json")
+	data, err := os.ReadFile(storePJ)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"keywords"`, "custom plugin.json should be preserved")
+}
+
+func TestInstall_MarketplaceExtraction(t *testing.T) {
+	projectDir := t.TempDir()
+	repoDir := filepath.Join(t.TempDir(), "marketplace-repo")
+	require.NoError(t, os.MkdirAll(repoDir, 0o755))
+
+	// Create two plugin subdirs with plugin.json
+	for _, name := range []string{"mp-plugin-a", "mp-plugin-b"} {
+		sub := filepath.Join(repoDir, name)
+		require.NoError(t, os.MkdirAll(filepath.Join(sub, ".claude-plugin"), 0o755))
+		pj, _ := json.Marshal(map[string]any{
+			"name": name, "version": "1.0.0", "description": name + " desc",
+		})
+		require.NoError(t, os.WriteFile(filepath.Join(sub, ".claude-plugin", "plugin.json"), pj, 0o644))
+	}
+
+	// Create marketplace.json at repo root
+	mpDir := filepath.Join(repoDir, ".claude-plugin")
+	require.NoError(t, os.MkdirAll(mpDir, 0o755))
+	mp, _ := json.Marshal(map[string]any{
+		"name": "test-marketplace",
+		"plugins": []map[string]any{
+			{"name": "mp-plugin-a", "source": "./mp-plugin-a"},
+			{"name": "mp-plugin-b", "source": "./mp-plugin-b"},
+		},
+	})
+	require.NoError(t, os.WriteFile(filepath.Join(mpDir, "marketplace.json"), mp, 0o644))
+
+	err := Install(Options{
+		Path:       repoDir,
+		Force:      true,
+		Scope:      platform.ScopeLocal,
+		ProjectDir: projectDir,
+	})
+	require.NoError(t, err)
+
+	paths := ResolvePaths(platform.ScopeLocal, projectDir)
+	reg, err := registry.Load(paths.RegistryPath)
+	require.NoError(t, err)
+
+	entryA, okA := reg.Get("mp-plugin-a")
+	entryB, okB := reg.Get("mp-plugin-b")
+	require.True(t, okA, "mp-plugin-a should be in registry")
+	require.True(t, okB, "mp-plugin-b should be in registry")
+	assert.Equal(t, "1.0.0", entryA.Version)
+	assert.Equal(t, "1.0.0", entryB.Version)
+}
