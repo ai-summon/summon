@@ -265,8 +265,8 @@ main() {
   trap cleanup EXIT INT TERM
 
   DOWNLOAD_URL=$(resolve_download_url "$VERSION" "$OS_NAME" "$ARCH_NAME")
-  ARTIFACT_PATH="$TMP_DIR/artifact"
   ARTIFACT_NAME="summon_${VERSION#v}_${OS_NAME}_${ARCH_NAME}.tar.gz"
+  ARTIFACT_PATH="$TMP_DIR/$ARTIFACT_NAME"
 
   info "Installing summon $VERSION for $OS_NAME/$ARCH_NAME"
   download_file "$DOWNLOAD_URL" "$ARTIFACT_PATH"
