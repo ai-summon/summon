@@ -1,0 +1,291 @@
+name: Installer Validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  installer-unix:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Validate installer happy path and timing
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SOURCE_BIN="$RUNNER_TEMP/summon-source"
+          TARGET_BIN="$RUNNER_TEMP/install-bin/summon"
+          mkdir -p "$(dirname "$TARGET_BIN")"
+
+          go build -o "$SOURCE_BIN" ./cmd/summon
+          if command -v shasum >/dev/null 2>&1; then
+            CHECKSUM="$(shasum -a 256 "$SOURCE_BIN" | awk '{print $1}')"
+          else
+            CHECKSUM="$(sha256sum "$SOURCE_BIN" | awk '{print $1}')"
+          fi
+
+          START="$(date +%s)"
+          SUMMON_TEST_ALLOW_INSECURE_URLS=1 \
+          SUMMON_DOWNLOAD_URL="file://$SOURCE_BIN" \
+          SUMMON_CHECKSUM="$CHECKSUM" \
+          SUMMON_INSTALL_PATH="$TARGET_BIN" \
+          SUMMON_NO_MODIFY_PATH=1 \
+          SUMMON_NONINTERACTIVE=1 \
+          sh scripts/install.sh
+
+          "$TARGET_BIN" --version
+
+          END="$(date +%s)"
+          DURATION="$((END - START))"
+          test "$DURATION" -le 300
+
+      - name: Validate installer checksum failure path
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SOURCE_BIN="$RUNNER_TEMP/summon-source"
+          TARGET_BIN="$RUNNER_TEMP/install-bin/summon"
+          mkdir -p "$(dirname "$TARGET_BIN")"
+
+          go build -o "$SOURCE_BIN" ./cmd/summon
+
+           if SUMMON_TEST_ALLOW_INSECURE_URLS=1 \
+             SUMMON_DOWNLOAD_URL="file://$SOURCE_BIN" \
+             SUMMON_CHECKSUM="deadbeef" \
+             SUMMON_INSTALL_PATH="$TARGET_BIN" \
+             SUMMON_NO_MODIFY_PATH=1 \
+             SUMMON_NONINTERACTIVE=1 \
+             sh scripts/install.sh; then
+            echo "expected checksum mismatch failure"
+            exit 1
+          fi
+
+      - name: Validate unsupported platform guardrail
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if SUMMON_TEST_OS="plan9" \
+             SUMMON_NO_MODIFY_PATH=1 \
+             SUMMON_NONINTERACTIVE=1 \
+             sh scripts/install.sh; then
+            echo "expected unsupported platform failure"
+            exit 1
+          fi
+
+      - name: Validate version resolution parsing
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          MOCK_RESPONSE='{"tag_name": "v1.2.3", "name": "v1.2.3"}'
+          EXTRACTED=$(printf '%s' "$MOCK_RESPONSE" | grep '"tag_name"' | sed 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/' | head -n 1)
+          if [ "$EXTRACTED" != "v1.2.3" ]; then
+            echo "Version resolution parsing failed: expected v1.2.3, got $EXTRACTED"
+            exit 1
+          fi
+          echo "Version resolution parsing OK: $EXTRACTED"
+
+      - name: Validate version resolution fallback
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SOURCE_BIN="$RUNNER_TEMP/summon-source"
+          TARGET_BIN="$RUNNER_TEMP/install-bin-fallback/summon"
+          mkdir -p "$(dirname "$TARGET_BIN")"
+
+          go build -o "$SOURCE_BIN" ./cmd/summon
+          if command -v shasum >/dev/null 2>&1; then
+            CHECKSUM="$(shasum -a 256 "$SOURCE_BIN" | awk '{print $1}')"
+          else
+            CHECKSUM="$(sha256sum "$SOURCE_BIN" | awk '{print $1}')"
+          fi
+
+          # Point API at an unreachable URL to force fallback
+          OUTPUT=$(
+            SUMMON_TEST_API_URL="https://localhost:1/no-releases" \
+            SUMMON_TEST_ALLOW_INSECURE_URLS=1 \
+            SUMMON_DOWNLOAD_URL="file://$SOURCE_BIN" \
+            SUMMON_CHECKSUM="$CHECKSUM" \
+            SUMMON_INSTALL_PATH="$TARGET_BIN" \
+            SUMMON_NO_MODIFY_PATH=1 \
+            SUMMON_NONINTERACTIVE=1 \
+            sh scripts/install.sh 2>&1
+          )
+          echo "$OUTPUT"
+          echo "$OUTPUT" | grep -q "WARN" || { echo "Expected fallback warning"; exit 1; }
+          "$TARGET_BIN" --version
+
+      - name: Validate manifest-based checksum resolution
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SOURCE_BIN="$RUNNER_TEMP/summon-source"
+          TARGET_BIN="$RUNNER_TEMP/install-bin-manifest/summon"
+          MANIFEST_DIR="$RUNNER_TEMP/manifest-test/v0.1.0"
+          mkdir -p "$(dirname "$TARGET_BIN")" "$MANIFEST_DIR"
+
+          go build -o "$SOURCE_BIN" ./cmd/summon
+          if command -v shasum >/dev/null 2>&1; then
+            CHECKSUM="$(shasum -a 256 "$SOURCE_BIN" | awk '{print $1}')"
+          else
+            CHECKSUM="$(sha256sum "$SOURCE_BIN" | awk '{print $1}')"
+          fi
+
+          OS_NAME=$(uname -s | tr '[:upper:]' '[:lower:]')
+          ARCH_NAME=$(uname -m)
+          case "$ARCH_NAME" in x86_64) ARCH_NAME=amd64 ;; aarch64) ARCH_NAME=arm64 ;; esac
+          ARTIFACT="summon_0.1.0_${OS_NAME}_${ARCH_NAME}.tar.gz"
+
+          # Create a manifest file with the correct checksum
+          echo "$CHECKSUM  $ARTIFACT" > "$MANIFEST_DIR/summon_0.1.0_checksums.txt"
+
+          SUMMON_VERSION=v0.1.0 \
+          SUMMON_TEST_ALLOW_INSECURE_URLS=1 \
+          SUMMON_DOWNLOAD_URL="file://$SOURCE_BIN" \
+          SUMMON_CHECKSUM_URL="file://$MANIFEST_DIR/summon_0.1.0_checksums.txt" \
+          SUMMON_INSTALL_PATH="$TARGET_BIN" \
+          SUMMON_NO_MODIFY_PATH=1 \
+          SUMMON_NONINTERACTIVE=1 \
+          sh scripts/install.sh
+
+          "$TARGET_BIN" --version
+
+  installer-windows:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Validate installer happy path and timing
+        shell: pwsh
+        run: |
+          $source = Join-Path $env:RUNNER_TEMP "summon-source.exe"
+          $target = Join-Path $env:RUNNER_TEMP "install-bin\summon.exe"
+          New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
+
+          go build -o $source ./cmd/summon
+          $checksum = (Get-FileHash -Path $source -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sourceUri = [System.Uri]::new($source).AbsoluteUri
+
+          $start = Get-Date
+          $env:SUMMON_TEST_ALLOW_INSECURE_URLS = "1"
+          $env:SUMMON_DOWNLOAD_URL = $sourceUri
+          $env:SUMMON_CHECKSUM = $checksum
+          $env:SUMMON_INSTALL_PATH = $target
+          $env:SUMMON_NO_MODIFY_PATH = "1"
+          $env:SUMMON_NONINTERACTIVE = "1"
+          ./scripts/install.ps1
+
+          & $target --version
+
+          $duration = [int]((Get-Date) - $start).TotalSeconds
+          if ($duration -gt 300) {
+            throw "installer exceeded 300s threshold: $duration"
+          }
+
+      - name: Validate installer checksum failure path
+        shell: pwsh
+        run: |
+          $source = Join-Path $env:RUNNER_TEMP "summon-source.exe"
+          $target = Join-Path $env:RUNNER_TEMP "install-bin\summon.exe"
+          New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
+
+          go build -o $source ./cmd/summon
+          $sourceUri = [System.Uri]::new($source).AbsoluteUri
+
+          $env:SUMMON_TEST_ALLOW_INSECURE_URLS = "1"
+          $env:SUMMON_DOWNLOAD_URL = $sourceUri
+          $env:SUMMON_CHECKSUM = "deadbeef"
+          $env:SUMMON_INSTALL_PATH = $target
+          $env:SUMMON_NO_MODIFY_PATH = "1"
+          $env:SUMMON_NONINTERACTIVE = "1"
+
+          $failed = $false
+          try {
+            ./scripts/install.ps1
+          } catch {
+            $failed = $true
+          }
+
+          if (-not $failed) {
+            throw "expected checksum mismatch failure"
+          }
+
+      - name: Validate unsupported platform guardrail
+        shell: pwsh
+        run: |
+          $env:SUMMON_TEST_OS = "plan9"
+          $env:SUMMON_NO_MODIFY_PATH = "1"
+          $env:SUMMON_NONINTERACTIVE = "1"
+
+          $failed = $false
+          try {
+            ./scripts/install.ps1
+          } catch {
+            $failed = $true
+          }
+
+          if (-not $failed) {
+            throw "expected unsupported platform failure"
+          }
+
+      - name: Validate version resolution parsing
+        shell: pwsh
+        run: |
+          $mockJson = '{"tag_name": "v1.2.3", "name": "v1.2.3"}'
+          $parsed = $mockJson | ConvertFrom-Json
+          $extracted = $parsed.tag_name
+          if ($extracted -ne "v1.2.3") {
+            throw "Version resolution parsing failed: expected v1.2.3, got $extracted"
+          }
+          Write-Output "Version resolution parsing OK: $extracted"
+
+      - name: Validate version resolution fallback
+        shell: pwsh
+        run: |
+          $source = Join-Path $env:RUNNER_TEMP "summon-source.exe"
+          $target = Join-Path $env:RUNNER_TEMP "install-bin-fallback\summon.exe"
+          New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
+
+          go build -o $source ./cmd/summon
+          $checksum = (Get-FileHash -Path $source -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sourceUri = [System.Uri]::new($source).AbsoluteUri
+
+          # Point API at an unreachable URL to force fallback
+          $env:SUMMON_TEST_API_URL = "https://localhost:1/no-releases"
+          $env:SUMMON_TEST_ALLOW_INSECURE_URLS = "1"
+          $env:SUMMON_DOWNLOAD_URL = $sourceUri
+          $env:SUMMON_CHECKSUM = $checksum
+          $env:SUMMON_INSTALL_PATH = $target
+          $env:SUMMON_NO_MODIFY_PATH = "1"
+          $env:SUMMON_NONINTERACTIVE = "1"
+
+          $output = ./scripts/install.ps1 *>&1 | Out-String
+          Write-Output $output
+          if ($output -notmatch "Could not determine latest version") {
+            throw "Expected fallback warning in output"
+          }
+          & $target --version
