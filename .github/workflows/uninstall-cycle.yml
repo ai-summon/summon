@@ -1,0 +1,183 @@
+name: Uninstall Cycle Validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  uninstall-cycle-unix:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Install and uninstall cycle
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Build summon
+          SOURCE_BIN="$RUNNER_TEMP/summon-source"
+          go build -o "$SOURCE_BIN" ./cmd/summon
+
+          # Determine install path and profile
+          INSTALL_DIR="$HOME/.local/bin"
+          TARGET_BIN="$INSTALL_DIR/summon"
+          DATA_DIR="$HOME/.summon"
+
+          case "$SHELL" in
+            */zsh)  PROFILE="$HOME/.zprofile" ;;
+            */bash) PROFILE="$HOME/.bashrc" ;;
+            *)      PROFILE="$HOME/.profile" ;;
+          esac
+
+          # Snapshot pre-install state
+          PRE_BINARY_EXISTS="false"
+          [ -f "$TARGET_BIN" ] && PRE_BINARY_EXISTS="true"
+          PRE_DATA_EXISTS="false"
+          [ -d "$DATA_DIR" ] && PRE_DATA_EXISTS="true"
+          PRE_PROFILE=""
+          [ -f "$PROFILE" ] && PRE_PROFILE="$(cat "$PROFILE")"
+
+          # Install via official installer
+          if command -v shasum >/dev/null 2>&1; then
+            CHECKSUM="$(shasum -a 256 "$SOURCE_BIN" | awk '{print $1}')"
+          else
+            CHECKSUM="$(sha256sum "$SOURCE_BIN" | awk '{print $1}')"
+          fi
+
+          SUMMON_TEST_ALLOW_INSECURE_URLS=1 \
+          SUMMON_DOWNLOAD_URL="file://$SOURCE_BIN" \
+          SUMMON_CHECKSUM="$CHECKSUM" \
+          SUMMON_INSTALL_PATH="$TARGET_BIN" \
+          SUMMON_NONINTERACTIVE=1 \
+          sh scripts/install.sh
+
+          # Verify install succeeded
+          "$TARGET_BIN" --version
+
+          # Create some data to simulate runtime usage
+          mkdir -p "$DATA_DIR/store"
+          echo "test-registry" > "$DATA_DIR/registry.yaml"
+
+          # Run uninstall (non-interactive)
+          "$TARGET_BIN" self uninstall --yes
+
+          # Verify binary is gone
+          if [ -f "$TARGET_BIN" ]; then
+            echo "FAIL: Binary still exists at $TARGET_BIN"
+            exit 1
+          fi
+          echo "PASS: Binary removed"
+
+          # Verify data directory is gone
+          if [ -d "$DATA_DIR" ]; then
+            echo "FAIL: Data directory still exists at $DATA_DIR"
+            exit 1
+          fi
+          echo "PASS: Data directory removed"
+
+          # Verify PATH entry removed from profile
+          if [ -f "$PROFILE" ]; then
+            POST_PROFILE="$(cat "$PROFILE")"
+            PATH_LINE="export PATH=\"$INSTALL_DIR:\$PATH\""
+            if echo "$POST_PROFILE" | grep -F "$PATH_LINE" >/dev/null 2>&1; then
+              echo "FAIL: PATH line still in $PROFILE"
+              exit 1
+            fi
+          fi
+          echo "PASS: PATH entry removed"
+
+          # Verify summon is no longer on PATH
+          if command -v summon >/dev/null 2>&1; then
+            echo "WARN: summon still found on PATH (may be from build, not installer)"
+          fi
+
+          echo "All checks passed."
+
+  uninstall-cycle-windows:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Install and uninstall cycle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          # Build summon
+          $sourceBin = Join-Path $env:RUNNER_TEMP "summon-source.exe"
+          go build -o $sourceBin ./cmd/summon
+
+          # Determine paths
+          $installDir = Join-Path $env:USERPROFILE ".summon\bin"
+          $targetBin = Join-Path $installDir "summon.exe"
+          $dataDir = Join-Path $env:USERPROFILE ".summon"
+
+          # Snapshot pre-install user PATH
+          $prePath = [Environment]::GetEnvironmentVariable("Path", "User")
+
+          # Install via official installer
+          $checksum = (Get-FileHash $sourceBin -Algorithm SHA256).Hash.ToLower()
+
+          $env:SUMMON_TEST_ALLOW_INSECURE_URLS = "1"
+          $env:SUMMON_DOWNLOAD_URL = "file:///$sourceBin"
+          $env:SUMMON_CHECKSUM = $checksum
+          $env:SUMMON_INSTALL_PATH = $targetBin
+          $env:SUMMON_NONINTERACTIVE = "1"
+
+          & pwsh -File scripts/install.ps1
+
+          # Verify install
+          & $targetBin --version
+
+          # Create data
+          New-Item -ItemType Directory -Path (Join-Path $dataDir "store") -Force | Out-Null
+          Set-Content -Path (Join-Path $dataDir "registry.yaml") -Value "test-registry"
+
+          # Run uninstall
+          & $targetBin self uninstall --yes
+
+          # Wait for GC process to complete
+          Start-Sleep -Seconds 2
+
+          # Verify binary is gone
+          if (Test-Path $targetBin) {
+            Write-Error "FAIL: Binary still exists at $targetBin"
+            exit 1
+          }
+          Write-Host "PASS: Binary removed"
+
+          # Verify data directory is gone
+          if (Test-Path $dataDir) {
+            Write-Error "FAIL: Data directory still exists at $dataDir"
+            exit 1
+          }
+          Write-Host "PASS: Data directory removed"
+
+          # Verify PATH entry removed
+          $postPath = [Environment]::GetEnvironmentVariable("Path", "User")
+          if ($postPath -and $postPath.Contains($installDir)) {
+            Write-Error "FAIL: PATH still contains $installDir"
+            exit 1
+          }
+          Write-Host "PASS: PATH entry removed"
+
+          Write-Host "All checks passed."

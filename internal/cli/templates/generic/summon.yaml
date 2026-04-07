@@ -1,0 +1,5 @@
+name: {{NAME}}
+version: {{VERSION}}
+description: {{DESCRIPTION}}
+author:
+  name: {{AUTHOR}}
