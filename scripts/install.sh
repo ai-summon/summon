@@ -265,17 +265,18 @@ main() {
   trap cleanup EXIT INT TERM
 
   DOWNLOAD_URL=$(resolve_download_url "$VERSION" "$OS_NAME" "$ARCH_NAME")
+  CANONICAL_ARTIFACT="summon_${VERSION#v}_${OS_NAME}_${ARCH_NAME}.tar.gz"
   if [ -n "$SUMMON_DOWNLOAD_URL" ]; then
     ARTIFACT_NAME=$(basename "$SUMMON_DOWNLOAD_URL")
   else
-    ARTIFACT_NAME="summon_${VERSION#v}_${OS_NAME}_${ARCH_NAME}.tar.gz"
+    ARTIFACT_NAME="$CANONICAL_ARTIFACT"
   fi
   ARTIFACT_PATH="$TMP_DIR/$ARTIFACT_NAME"
 
   info "Installing summon $VERSION for $OS_NAME/$ARCH_NAME"
   download_file "$DOWNLOAD_URL" "$ARTIFACT_PATH"
 
-  EXPECTED_CHECKSUM=$(resolve_checksum "$VERSION" "$ARTIFACT_NAME")
+  EXPECTED_CHECKSUM=$(resolve_checksum "$VERSION" "$CANONICAL_ARTIFACT")
   ACTUAL_CHECKSUM=$(sha256_file "$ARTIFACT_PATH")
   [ "$EXPECTED_CHECKSUM" = "$ACTUAL_CHECKSUM" ] || fail checksum "Checksum mismatch. Expected $EXPECTED_CHECKSUM got $ACTUAL_CHECKSUM"
 
