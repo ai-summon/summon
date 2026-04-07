@@ -1,36 +1,28 @@
-# Go
-/summon
-/bin/
+# Binaries for programs and plugins
 *.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
 *.test
+
+# Code coverage profiles and other test artifacts
 *.out
-vendor/
+coverage.*
+*.coverprofile
+profile.cov
 
-# IDE
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# env file
+.env
+
+# Editor/IDE
 .vscode/
-.idea/
-
-# OS
-.DS_Store
-Thumbs.db
-*.tmp
-*.swp
-
-# Summon
-.summon/
-.claude/
-
-# AI
-.claude
-.github/agents
-.github/prompts
-.github/copilot-instructions.md
-.specify
-tmp/
-specs/
-.summon/store/
-.summon/platforms/
-.summon/local/
-.summon/project/store/
-.summon/project/platforms/
-.vscode
