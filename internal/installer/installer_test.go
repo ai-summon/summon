@@ -452,6 +452,64 @@ func TestExpandHookVariables_ResolvesSymlinks(t *testing.T) {
 	assert.NotContains(t, string(data), "${CLAUDE_PLUGIN_ROOT}")
 }
 
+func TestExpandHookVariables_RootLevelHooksJSON(t *testing.T) {
+	dir := t.TempDir()
+
+	hooksJSON := `{
+  "hooks": {
+    "UserPromptSubmit": [{
+      "hooks": [{
+        "type": "command",
+        "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/context-hook.py"
+      }]
+    }]
+  }
+}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "hooks.json"), []byte(hooksJSON), 0o644))
+
+	err := expandHookVariables(dir)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(dir, "hooks.json"))
+	require.NoError(t, err)
+	absDir, _ := filepath.Abs(dir)
+	if resolved, err := filepath.EvalSymlinks(absDir); err == nil {
+		absDir = resolved
+	}
+	assert.Contains(t, string(data), absDir+"/scripts/hooks/context-hook.py")
+	assert.NotContains(t, string(data), "${CLAUDE_PLUGIN_ROOT}")
+}
+
+func TestExpandHookVariables_BothLocations(t *testing.T) {
+	dir := t.TempDir()
+	hooksDir := filepath.Join(dir, "hooks")
+	require.NoError(t, os.MkdirAll(hooksDir, 0o755))
+
+	subHooksJSON := `"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd"`
+	require.NoError(t, os.WriteFile(filepath.Join(hooksDir, "hooks.json"), []byte(subHooksJSON), 0o644))
+
+	rootHooksJSON := `"${CLAUDE_PLUGIN_ROOT}/scripts/context-hook.py"`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "hooks.json"), []byte(rootHooksJSON), 0o644))
+
+	err := expandHookVariables(dir)
+	require.NoError(t, err)
+
+	absDir, _ := filepath.Abs(dir)
+	if resolved, err := filepath.EvalSymlinks(absDir); err == nil {
+		absDir = resolved
+	}
+
+	subData, err := os.ReadFile(filepath.Join(hooksDir, "hooks.json"))
+	require.NoError(t, err)
+	assert.Contains(t, string(subData), absDir+"/hooks/run-hook.cmd")
+	assert.NotContains(t, string(subData), "${CLAUDE_PLUGIN_ROOT}")
+
+	rootData, err := os.ReadFile(filepath.Join(dir, "hooks.json"))
+	require.NoError(t, err)
+	assert.Contains(t, string(rootData), absDir+"/scripts/context-hook.py")
+	assert.NotContains(t, string(rootData), "${CLAUDE_PLUGIN_ROOT}")
+}
+
 // ---------------------------------------------------------------------------
 
 func TestGenerateMarketplaces_CreatesCorrectStructure(t *testing.T) {

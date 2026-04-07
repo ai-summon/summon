@@ -573,19 +573,15 @@ func fileExists(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
-// expandHookVariables replaces ${CLAUDE_PLUGIN_ROOT} in hooks/hooks.json with
-// the absolute plugin path. This is needed because some platforms (VS Code
-// Copilot Chat) don't expand this template variable before executing hooks.
+// expandHookVariables replaces ${CLAUDE_PLUGIN_ROOT} in hooks.json with the
+// absolute plugin path. This is needed because some platforms (VS Code Copilot
+// Chat) don't expand this template variable before executing hooks.
+//
+// It checks both known hook file locations to match the detection logic in
+// manifest.detectComponents:
+//   - <storePath>/hooks/hooks.json  (subdirectory layout)
+//   - <storePath>/hooks.json        (root-level layout)
 func expandHookVariables(storePath string) error {
-	hooksPath := filepath.Join(storePath, "hooks", "hooks.json")
-	data, err := os.ReadFile(hooksPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-
 	absPath, err := filepath.Abs(storePath)
 	if err != nil {
 		return err
@@ -594,10 +590,29 @@ func expandHookVariables(storePath string) error {
 		absPath = resolved
 	}
 
-	expanded := strings.ReplaceAll(string(data), "${CLAUDE_PLUGIN_ROOT}", absPath)
-	if expanded == string(data) {
-		return nil
+	candidates := []string{
+		filepath.Join(storePath, "hooks", "hooks.json"),
+		filepath.Join(storePath, "hooks.json"),
 	}
 
-	return os.WriteFile(hooksPath, []byte(expanded), 0o644)
+	for _, hooksPath := range candidates {
+		data, err := os.ReadFile(hooksPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+
+		expanded := strings.ReplaceAll(string(data), "${CLAUDE_PLUGIN_ROOT}", absPath)
+		if expanded == string(data) {
+			continue
+		}
+
+		if err := os.WriteFile(hooksPath, []byte(expanded), 0o644); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
