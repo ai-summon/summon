@@ -1,0 +1,25 @@
+# Summon artifacts
+.summon/
+
+# Version control
+.git/
+*.patch
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Build artifacts
+dist/
+build/
+out/
