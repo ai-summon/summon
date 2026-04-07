@@ -7,12 +7,18 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
 
-// version is stamped at build time via ldflags; defaults to dev value.
-var version = "0.1.0"
+// version, commit, and date are stamped at build time via ldflags;
+// defaults are used for local dev builds.
+var (
+	version = "0.1.0"
+	commit  = "none"
+	date    = "unknown"
+)
 
 // rootCmd is the top-level cobra command. All subcommands attach to it.
 var rootCmd = &cobra.Command{
@@ -22,6 +28,16 @@ var rootCmd = &cobra.Command{
 	Version:       version,
 	SilenceUsage:  true,
 	SilenceErrors: true,
+}
+
+func init() {
+	if commit != "none" {
+		// Truncate date to YYYY-MM-DD if it contains a 'T' (RFC 3339).
+		if i := strings.IndexByte(date, 'T'); i > 0 {
+			date = date[:i]
+		}
+		rootCmd.Version = version + " (" + commit + " " + date + ")"
+	}
 }
 
 // Execute runs the root command. It prints errors to stderr and exits
