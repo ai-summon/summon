@@ -1,0 +1,47 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Stamp fallback version in installer scripts
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          sed -i "s/SUMMON_LATEST_VERSION:-v[^}]*/SUMMON_LATEST_VERSION:-${TAG}/" scripts/install.sh
+          sed -i "s/\"v[0-9]*\.[0-9]*\.[0-9]*\" }/\"${TAG}\" }/" scripts/install.ps1
+
+      - name: Run tests
+        run: go test ./... -count=1
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          args: release --clean --skip=validate
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push stamped installer scripts to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout main
+          TAG="${GITHUB_REF#refs/tags/}"
+          sed -i "s/SUMMON_LATEST_VERSION:-v[^}]*/SUMMON_LATEST_VERSION:-${TAG}/" scripts/install.sh
+          sed -i "s/\"v[0-9]*\.[0-9]*\.[0-9]*\" }/\"${TAG}\" }/" scripts/install.ps1
+          git add scripts/install.sh scripts/install.ps1
+          git diff --cached --quiet || git commit -m "chore: stamp fallback version to ${TAG} [skip ci]"
+          git push origin main
