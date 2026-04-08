@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ai-summon/summon/internal/depcheck"
 	"github.com/ai-summon/summon/internal/manifest"
 	"github.com/ai-summon/summon/internal/platform"
 	"github.com/ai-summon/summon/internal/registry"
@@ -264,7 +265,11 @@ func TestGetPlatformNames_Empty(t *testing.T) {
 
 func TestReportDependencies_NoDeps(t *testing.T) {
 	m := &manifest.Manifest{Name: "test", Version: "1.0.0", Description: "d"}
-	reg := registry.New()
+
+	tmpDir := t.TempDir()
+	setupRegistryDir(t, tmpDir, "local", `summon_version: "0.1.0"
+packages: {}
+`)
 
 	// Should not panic and produce no output on stderr.
 	old := os.Stderr
@@ -272,11 +277,13 @@ func TestReportDependencies_NoDeps(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stderr = w
 	Stderr = w
-	reportDependencies(m, reg)
+	results, err := reportDependencies(m, platform.ScopeLocal, tmpDir, false)
 	w.Close()
 	os.Stderr = old
 	Stderr = oldWriter
 
+	assert.NoError(t, err)
+	assert.Nil(t, results)
 	buf := make([]byte, 1024)
 	n, _ := r.Read(buf)
 	assert.Equal(t, 0, n, "expected no stderr output when there are no deps")
@@ -287,19 +294,26 @@ func TestReportDependencies_AllSatisfied(t *testing.T) {
 		Name: "test", Version: "1.0.0", Description: "d",
 		Dependencies: map[string]string{"dep-a": ">=1.0.0"},
 	}
-	reg := registry.New()
-	reg.Add("dep-a", registry.Entry{Version: "1.0.0"})
+
+	tmpDir := t.TempDir()
+	setupRegistryDir(t, tmpDir, "local", `summon_version: "0.1.0"
+packages:
+  dep-a:
+    version: "1.0.0"
+    source: {type: github, url: "https://github.com/test/dep-a"}
+`)
 
 	old := os.Stderr
 	oldWriter := Stderr
 	r, w, _ := os.Pipe()
 	os.Stderr = w
 	Stderr = w
-	reportDependencies(m, reg)
+	_, err := reportDependencies(m, platform.ScopeLocal, tmpDir, false)
 	w.Close()
 	os.Stderr = old
 	Stderr = oldWriter
 
+	assert.NoError(t, err)
 	buf := make([]byte, 1024)
 	n, _ := r.Read(buf)
 	assert.Equal(t, 0, n, "expected no warning when all deps are satisfied")
@@ -310,23 +324,178 @@ func TestReportDependencies_MissingDeps(t *testing.T) {
 		Name: "test", Version: "1.0.0", Description: "d",
 		Dependencies: map[string]string{"missing-dep": ">=1.0.0"},
 	}
-	reg := registry.New()
+
+	tmpDir := t.TempDir()
+	setupRegistryDir(t, tmpDir, "local", `summon_version: "0.1.0"
+packages: {}
+`)
 
 	old := os.Stderr
 	oldWriter := Stderr
 	r, w, _ := os.Pipe()
 	os.Stderr = w
 	Stderr = w
-	reportDependencies(m, reg)
+	_, err := reportDependencies(m, platform.ScopeLocal, tmpDir, false)
 	w.Close()
 	os.Stderr = old
 	Stderr = oldWriter
 
+	assert.NoError(t, err)
 	buf := make([]byte, 4096)
 	n, _ := r.Read(buf)
 	output := string(buf[:n])
 	assert.Contains(t, output, "missing dependencies")
 	assert.Contains(t, output, "missing-dep")
+}
+
+func TestReportDependencies_StrictDeps(t *testing.T) {
+	m := &manifest.Manifest{
+		Name: "test", Version: "1.0.0", Description: "d",
+		Dependencies: map[string]string{"missing-dep": ">=1.0.0"},
+	}
+
+	tmpDir := t.TempDir()
+	setupRegistryDir(t, tmpDir, "local", `summon_version: "0.1.0"
+packages: {}
+`)
+
+	old := os.Stderr
+	oldWriter := Stderr
+	_, w, _ := os.Pipe()
+	os.Stderr = w
+	Stderr = w
+	_, err := reportDependencies(m, platform.ScopeLocal, tmpDir, true)
+	w.Close()
+	os.Stderr = old
+	Stderr = oldWriter
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "missing required dependencies")
+}
+
+// setupRegistryDir creates a .summon/<scope>/registry.yaml under dir.
+func setupRegistryDir(t *testing.T, dir, scope, content string) {
+	t.Helper()
+	summonDir := filepath.Join(dir, ".summon", scope)
+	require.NoError(t, os.MkdirAll(summonDir, 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(summonDir, "registry.yaml"),
+		[]byte(content), 0o644,
+	))
+}
+
+func TestReportDependencies_VersionMismatch(t *testing.T) {
+	m := &manifest.Manifest{
+		Name: "test", Version: "1.0.0", Description: "d",
+		Dependencies: map[string]string{"dep-a": ">=2.0.0"},
+	}
+
+	tmpDir := t.TempDir()
+	setupRegistryDir(t, tmpDir, "local", `summon_version: "0.1.0"
+packages:
+  dep-a:
+    version: "1.5.0"
+    source: {type: github, url: "https://github.com/test/dep-a"}
+`)
+
+	old := os.Stderr
+	oldWriter := Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	Stderr = w
+	_, err := reportDependencies(m, platform.ScopeLocal, tmpDir, false)
+	w.Close()
+	os.Stderr = old
+	Stderr = oldWriter
+
+	assert.NoError(t, err) // non-strict, so no error
+	buf := make([]byte, 4096)
+	n, _ := r.Read(buf)
+	output := string(buf[:n])
+	assert.Contains(t, output, "dep-a")
+	assert.Contains(t, output, "installed 1.5.0")
+}
+
+func TestReportDependencies_CaretConstraintSatisfied(t *testing.T) {
+	m := &manifest.Manifest{
+		Name: "test", Version: "1.0.0", Description: "d",
+		Dependencies: map[string]string{"dep-a": "^1.2.0"},
+	}
+
+	tmpDir := t.TempDir()
+	setupRegistryDir(t, tmpDir, "local", `summon_version: "0.1.0"
+packages:
+  dep-a:
+    version: "1.5.0"
+    source: {type: github, url: "https://github.com/test/dep-a"}
+`)
+
+	old := os.Stderr
+	oldWriter := Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	Stderr = w
+	_, err := reportDependencies(m, platform.ScopeLocal, tmpDir, false)
+	w.Close()
+	os.Stderr = old
+	Stderr = oldWriter
+
+	assert.NoError(t, err)
+	buf := make([]byte, 1024)
+	n, _ := r.Read(buf)
+	assert.Equal(t, 0, n, "expected no warning when caret constraint is satisfied")
+}
+
+func TestReportDependencies_UnparseableConstraint(t *testing.T) {
+	m := &manifest.Manifest{
+		Name: "test", Version: "1.0.0", Description: "d",
+		Dependencies: map[string]string{"dep-a": "not-a-constraint"},
+	}
+
+	tmpDir := t.TempDir()
+	setupRegistryDir(t, tmpDir, "local", `summon_version: "0.1.0"
+packages:
+  dep-a:
+    version: "1.0.0"
+    source: {type: github, url: "https://github.com/test/dep-a"}
+`)
+
+	old := os.Stderr
+	oldWriter := Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	Stderr = w
+	_, err := reportDependencies(m, platform.ScopeLocal, tmpDir, false)
+	w.Close()
+	os.Stderr = old
+	Stderr = oldWriter
+
+	assert.NoError(t, err) // non-strict
+	buf := make([]byte, 4096)
+	n, _ := r.Read(buf)
+	output := string(buf[:n])
+	assert.Contains(t, output, "dep-a")
+}
+
+func TestPromptInstallDeps_NonInteractive(t *testing.T) {
+	// SUMMON_NONINTERACTIVE=1 should return nil
+	t.Setenv("SUMMON_NONINTERACTIVE", "1")
+	results := []depcheck.Result{
+		{DependencyName: "dep-a", Status: depcheck.Missing},
+	}
+	names := PromptInstallDeps(results)
+	assert.Nil(t, names)
+}
+
+func TestPromptInstallDeps_NoMissingDeps(t *testing.T) {
+	// Only version mismatch — nothing installable
+	results := []depcheck.Result{
+		{DependencyName: "dep-a", Status: depcheck.VersionMismatch},
+	}
+	// Even if interactive, should return nil since there's nothing to install
+	t.Setenv("SUMMON_NONINTERACTIVE", "1")
+	names := PromptInstallDeps(results)
+	assert.Nil(t, names)
 }
 
 // ---------------------------------------------------------------------------
