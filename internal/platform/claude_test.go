@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -323,6 +324,9 @@ func TestReadJSONFile_InvalidJSON_Garbage(t *testing.T) {
 }
 
 func TestReadJSONFile_Unreadable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file permissions not enforced on Windows")
+	}
 	path := filepath.Join(t.TempDir(), "unreadable.json")
 	require.NoError(t, os.WriteFile(path, []byte(`{"key":"val"}`), 0o644))
 	require.NoError(t, os.Chmod(path, 0o000))
@@ -353,10 +357,12 @@ func TestWriteJSONFile_Success(t *testing.T) {
 	require.NoError(t, json.Unmarshal(content, &parsed))
 	assert.Equal(t, "world", parsed["hello"])
 
-	// Check permissions
-	info, err := os.Stat(path)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o644), info.Mode().Perm())
+	// Check permissions (Windows maps 0644 to 0666, skip there)
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(path)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o644), info.Mode().Perm())
+	}
 }
 
 func TestWriteJSONFile_CreatesParentDirs(t *testing.T) {
@@ -522,6 +528,9 @@ func TestClaudeAdapter_Register_AtomicWrite(t *testing.T) {
 // --- T019: Write-failure preservation test ---
 
 func TestWriteJSONFile_FailurePreservesOriginal(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix directory permissions not enforced on Windows")
+	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")
 	originalContent := []byte(`{"preserved": true}` + "\n")
