@@ -17,10 +17,9 @@ var defaultCatalog []byte
 
 // Entry describes a single package in the catalog.
 type Entry struct {
-	Name        string   `yaml:"name"`
-	Repository  string   `yaml:"repository"`
-	Description string   `yaml:"description,omitempty"`
-	Platforms   []string `yaml:"platforms,omitempty"` // e.g. ["claude", "copilot"]
+	Name        string `yaml:"name"`
+	Repository  string `yaml:"repository"`
+	Description string `yaml:"description,omitempty"`
 }
 
 // Catalog holds a list of package entries and an index for O(1) name lookups.

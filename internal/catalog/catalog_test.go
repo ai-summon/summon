@@ -41,7 +41,6 @@ func TestLoad_ValidYAML(t *testing.T) {
   - name: foo
     repository: https://github.com/org/foo
     description: "Foo package"
-    platforms: [claude, copilot]
   - name: bar
     repository: https://github.com/org/bar
 `)
@@ -53,13 +52,11 @@ func TestLoad_ValidYAML(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "https://github.com/org/foo", foo.Repository)
 	assert.Equal(t, "Foo package", foo.Description)
-	assert.Equal(t, []string{"claude", "copilot"}, foo.Platforms)
 
 	bar, ok := c.Lookup("bar")
 	require.True(t, ok)
 	assert.Equal(t, "https://github.com/org/bar", bar.Repository)
 	assert.Empty(t, bar.Description, "omitted description should be empty")
-	assert.Empty(t, bar.Platforms, "omitted platforms should be empty")
 }
 
 func TestLoad_EmptyPackagesList(t *testing.T) {
