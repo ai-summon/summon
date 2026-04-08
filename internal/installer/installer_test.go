@@ -981,14 +981,17 @@ func TestInstall_PersistsRegistryScope(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestMaterializeComponents_ProjectScope verifies that MaterializeComponents
-// creates workspace symlinks for skills and agents at project scope.
+// creates workspace symlinks for individual skill/agent subdirectories at project scope.
 func TestMaterializeComponents_ProjectScope(t *testing.T) {
 	projectDir := t.TempDir()
 	pkgDir := filepath.Join(t.TempDir(), "mat-pkg")
-	skillsDir := filepath.Join(pkgDir, "skills")
-	agentsDir := filepath.Join(pkgDir, "agents")
-	require.NoError(t, os.MkdirAll(skillsDir, 0o755))
-	require.NoError(t, os.MkdirAll(agentsDir, 0o755))
+	// Create realistic subdirectory structure
+	skillSubdir := filepath.Join(pkgDir, "skills", "my-skill")
+	agentSubdir := filepath.Join(pkgDir, "agents", "my-agent")
+	require.NoError(t, os.MkdirAll(skillSubdir, 0o755))
+	require.NoError(t, os.MkdirAll(agentSubdir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(skillSubdir, "SKILL.md"), []byte("# skill"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(agentSubdir, "my-agent.agent.md"), []byte("# agent"), 0o644))
 	require.NoError(t, os.WriteFile(
 		filepath.Join(pkgDir, "summon.yaml"),
 		[]byte("name: mat-pkg\nversion: \"1.0.0\"\ndescription: \"materialize test\"\ncomponents:\n  skills: skills/\n  agents: agents/\n"),
@@ -1001,11 +1004,23 @@ func TestMaterializeComponents_ProjectScope(t *testing.T) {
 	a := &platform.CopilotAdapter{ProjectDir: projectDir}
 	require.NoError(t, a.MaterializeComponents(pkgDir, m, platform.ScopeProject))
 
-	// skills and agents should be symlinked into .github/
+	// Individual skill subdirectory should be linked
+	_, err = os.Lstat(filepath.Join(projectDir, ".github", "skills", "my-skill"))
+	require.NoError(t, err, ".github/skills/my-skill should exist (symlink)")
+	_, err = os.Stat(filepath.Join(projectDir, ".github", "skills", "my-skill", "SKILL.md"))
+	require.NoError(t, err, "SKILL.md should be at depth 1")
+
+	// Individual agent subdirectory should be linked
+	_, err = os.Lstat(filepath.Join(projectDir, ".github", "agents", "my-agent"))
+	require.NoError(t, err, ".github/agents/my-agent should exist (symlink)")
+	_, err = os.Stat(filepath.Join(projectDir, ".github", "agents", "my-agent", "my-agent.agent.md"))
+	require.NoError(t, err, ".agent.md should be at depth 1")
+
+	// Old package-named directories should NOT exist
 	_, err = os.Lstat(filepath.Join(projectDir, ".github", "skills", "mat-pkg"))
-	require.NoError(t, err, ".github/skills/mat-pkg should exist (symlink)")
+	assert.True(t, os.IsNotExist(err), ".github/skills/mat-pkg should NOT exist")
 	_, err = os.Lstat(filepath.Join(projectDir, ".github", "agents", "mat-pkg"))
-	require.NoError(t, err, ".github/agents/mat-pkg should exist (symlink)")
+	assert.True(t, os.IsNotExist(err), ".github/agents/mat-pkg should NOT exist")
 }
 
 // TestMaterializeComponents_LocalScope verifies skills/agents go to .claude/
@@ -1013,7 +1028,9 @@ func TestMaterializeComponents_ProjectScope(t *testing.T) {
 func TestMaterializeComponents_LocalScope(t *testing.T) {
 	projectDir := t.TempDir()
 	pkgDir := filepath.Join(t.TempDir(), "mat-local-pkg")
-	require.NoError(t, os.MkdirAll(filepath.Join(pkgDir, "skills"), 0o755))
+	skillSubdir := filepath.Join(pkgDir, "skills", "my-skill")
+	require.NoError(t, os.MkdirAll(skillSubdir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(skillSubdir, "SKILL.md"), []byte("# skill"), 0o644))
 	require.NoError(t, os.WriteFile(
 		filepath.Join(pkgDir, "summon.yaml"),
 		[]byte("name: mat-local-pkg\nversion: \"1.0.0\"\ndescription: d\ncomponents:\n  skills: skills/\n"),
@@ -1026,15 +1043,19 @@ func TestMaterializeComponents_LocalScope(t *testing.T) {
 	a := &platform.CopilotAdapter{ProjectDir: projectDir}
 	require.NoError(t, a.MaterializeComponents(pkgDir, m, platform.ScopeLocal))
 
-	_, err = os.Lstat(filepath.Join(projectDir, ".claude", "skills", "mat-local-pkg"))
-	require.NoError(t, err, ".claude/skills/mat-local-pkg should exist (symlink)")
+	_, err = os.Lstat(filepath.Join(projectDir, ".claude", "skills", "my-skill"))
+	require.NoError(t, err, ".claude/skills/my-skill should exist (symlink)")
+	_, err = os.Stat(filepath.Join(projectDir, ".claude", "skills", "my-skill", "SKILL.md"))
+	require.NoError(t, err, "SKILL.md should be at depth 1")
 }
 
 // TestRemoveMaterialized_ProjectScope verifies workspace links are cleaned up.
 func TestRemoveMaterialized_ProjectScope(t *testing.T) {
 	projectDir := t.TempDir()
 	pkgDir := filepath.Join(t.TempDir(), "rm-mat-pkg")
-	require.NoError(t, os.MkdirAll(filepath.Join(pkgDir, "skills"), 0o755))
+	skillSubdir := filepath.Join(pkgDir, "skills", "my-skill")
+	require.NoError(t, os.MkdirAll(skillSubdir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(skillSubdir, "SKILL.md"), []byte("# skill"), 0o644))
 	require.NoError(t, os.WriteFile(
 		filepath.Join(pkgDir, "summon.yaml"),
 		[]byte("name: rm-mat-pkg\nversion: \"1.0.0\"\ndescription: d\ncomponents:\n  skills: skills/\n"),
@@ -1046,13 +1067,13 @@ func TestRemoveMaterialized_ProjectScope(t *testing.T) {
 
 	a := &platform.CopilotAdapter{ProjectDir: projectDir}
 	require.NoError(t, a.MaterializeComponents(pkgDir, m, platform.ScopeProject))
-	skillsPath := filepath.Join(projectDir, ".github", "skills", "rm-mat-pkg")
+	skillsPath := filepath.Join(projectDir, ".github", "skills", "my-skill")
 	_, err = os.Lstat(skillsPath)
 	require.NoError(t, err, "symlink should exist after materialization")
 
-	require.NoError(t, a.RemoveMaterialized("rm-mat-pkg", m, platform.ScopeProject))
+	require.NoError(t, a.RemoveMaterialized("rm-mat-pkg", pkgDir, m, platform.ScopeProject))
 	_, err = os.Lstat(skillsPath)
-	assert.True(t, os.IsNotExist(err), ".github/skills/rm-mat-pkg should be gone after removal")
+	assert.True(t, os.IsNotExist(err), ".github/skills/my-skill should be gone after removal")
 }
 
 // ---------------------------------------------------------------------------

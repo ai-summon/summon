@@ -349,54 +349,96 @@ func TestCopilotAdapter_MaterializeComponents_Project_Skills(t *testing.T) {
 	a, tmpDir, _ := newTestCopilotAdapter(t)
 
 	pkgDir := filepath.Join(tmpDir, "store", "my-pkg")
-	skillsDir := filepath.Join(pkgDir, "skills")
-	require.NoError(t, os.MkdirAll(skillsDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(skillsDir, "skill.md"), []byte("# skill"), 0o644))
+	// Create a realistic skill subdirectory structure: skills/my-skill/SKILL.md
+	skillSubdir := filepath.Join(pkgDir, "skills", "my-skill")
+	require.NoError(t, os.MkdirAll(skillSubdir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(skillSubdir, "SKILL.md"), []byte("# my-skill"), 0o644))
 
 	m := &testManifest{name: "my-pkg", skills: "skills"}
 	err := a.MaterializeComponents(pkgDir, m, ScopeProject)
 	require.NoError(t, err)
 
-	// Skills should be linked under .github/skills/my-pkg
-	target := filepath.Join(tmpDir, ".github", "skills", "my-pkg")
+	// Each skill subdirectory should be linked individually under .github/skills/
+	target := filepath.Join(tmpDir, ".github", "skills", "my-skill")
 	_, err = os.Lstat(target)
-	assert.NoError(t, err, ".github/skills/my-pkg should be created")
+	assert.NoError(t, err, ".github/skills/my-skill should be created")
+
+	// SKILL.md must be at depth 1 from discovery root
+	_, err = os.Stat(filepath.Join(target, "SKILL.md"))
+	assert.NoError(t, err, "SKILL.md should be at depth 1: .github/skills/my-skill/SKILL.md")
+
+	// The old package-named directory should NOT exist
+	_, err = os.Lstat(filepath.Join(tmpDir, ".github", "skills", "my-pkg"))
+	assert.True(t, os.IsNotExist(err), ".github/skills/my-pkg should NOT exist (old behavior)")
 }
 
 func TestCopilotAdapter_MaterializeComponents_Project_Agents(t *testing.T) {
 	a, tmpDir, _ := newTestCopilotAdapter(t)
 
 	pkgDir := filepath.Join(tmpDir, "store", "my-pkg")
-	agentsDir := filepath.Join(pkgDir, "agents")
-	require.NoError(t, os.MkdirAll(agentsDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(agentsDir, "agent.md"), []byte("# agent"), 0o644))
+	// Create a realistic agent subdirectory structure: agents/my-agent/my-agent.agent.md
+	agentSubdir := filepath.Join(pkgDir, "agents", "my-agent")
+	require.NoError(t, os.MkdirAll(agentSubdir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(agentSubdir, "my-agent.agent.md"), []byte("# agent"), 0o644))
 
 	m := &testManifest{name: "my-pkg", agents: "agents"}
 	err := a.MaterializeComponents(pkgDir, m, ScopeProject)
 	require.NoError(t, err)
 
-	// Agents should be linked under .github/agents/my-pkg
-	target := filepath.Join(tmpDir, ".github", "agents", "my-pkg")
+	// Each agent subdirectory should be linked individually under .github/agents/
+	target := filepath.Join(tmpDir, ".github", "agents", "my-agent")
 	_, err = os.Lstat(target)
-	assert.NoError(t, err, ".github/agents/my-pkg should be created")
+	assert.NoError(t, err, ".github/agents/my-agent should be created")
+
+	// .agent.md must be at depth 1 from discovery root
+	_, err = os.Stat(filepath.Join(target, "my-agent.agent.md"))
+	assert.NoError(t, err, ".agent.md should be at depth 1: .github/agents/my-agent/my-agent.agent.md")
+
+	// The old package-named directory should NOT exist
+	_, err = os.Lstat(filepath.Join(tmpDir, ".github", "agents", "my-pkg"))
+	assert.True(t, os.IsNotExist(err), ".github/agents/my-pkg should NOT exist (old behavior)")
 }
 
 func TestCopilotAdapter_MaterializeComponents_Local_Skills(t *testing.T) {
 	a, tmpDir, _ := newTestCopilotAdapter(t)
 
 	pkgDir := filepath.Join(tmpDir, "store", "my-pkg")
-	skillsDir := filepath.Join(pkgDir, "skills")
-	require.NoError(t, os.MkdirAll(skillsDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(skillsDir, "skill.md"), []byte("# skill"), 0o644))
+	skillSubdir := filepath.Join(pkgDir, "skills", "my-skill")
+	require.NoError(t, os.MkdirAll(skillSubdir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(skillSubdir, "SKILL.md"), []byte("# skill"), 0o644))
 
 	m := &testManifest{name: "my-pkg", skills: "skills"}
 	err := a.MaterializeComponents(pkgDir, m, ScopeLocal)
 	require.NoError(t, err)
 
-	// Skills should be linked under .claude/skills/my-pkg for local scope
-	target := filepath.Join(tmpDir, ".claude", "skills", "my-pkg")
+	// Skill subdirectory should be linked under .claude/skills/
+	target := filepath.Join(tmpDir, ".claude", "skills", "my-skill")
 	_, err = os.Lstat(target)
-	assert.NoError(t, err, ".claude/skills/my-pkg should be created for ScopeLocal")
+	assert.NoError(t, err, ".claude/skills/my-skill should be created for ScopeLocal")
+
+	// SKILL.md must be at depth 1
+	_, err = os.Stat(filepath.Join(target, "SKILL.md"))
+	assert.NoError(t, err, "SKILL.md should be at depth 1: .claude/skills/my-skill/SKILL.md")
+}
+
+func TestCopilotAdapter_MaterializeComponents_Local_Agents(t *testing.T) {
+	a, tmpDir, _ := newTestCopilotAdapter(t)
+
+	pkgDir := filepath.Join(tmpDir, "store", "my-pkg")
+	agentSubdir := filepath.Join(pkgDir, "agents", "my-agent")
+	require.NoError(t, os.MkdirAll(agentSubdir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(agentSubdir, "my-agent.agent.md"), []byte("# agent"), 0o644))
+
+	m := &testManifest{name: "my-pkg", agents: "agents"}
+	err := a.MaterializeComponents(pkgDir, m, ScopeLocal)
+	require.NoError(t, err)
+
+	target := filepath.Join(tmpDir, ".claude", "agents", "my-agent")
+	_, err = os.Lstat(target)
+	assert.NoError(t, err, ".claude/agents/my-agent should be created for ScopeLocal")
+
+	_, err = os.Stat(filepath.Join(target, "my-agent.agent.md"))
+	assert.NoError(t, err, ".agent.md should be at depth 1")
 }
 
 func TestCopilotAdapter_MaterializeComponents_Local_MCP_Fails(t *testing.T) {
@@ -417,19 +459,208 @@ func TestCopilotAdapter_RemoveMaterialized_Project(t *testing.T) {
 	a, tmpDir, _ := newTestCopilotAdapter(t)
 
 	pkgDir := filepath.Join(tmpDir, "store", "my-pkg")
-	skillsDir := filepath.Join(pkgDir, "skills")
-	require.NoError(t, os.MkdirAll(skillsDir, 0o755))
+	skillSubdir := filepath.Join(pkgDir, "skills", "my-skill")
+	require.NoError(t, os.MkdirAll(skillSubdir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(skillSubdir, "SKILL.md"), []byte("# skill"), 0o644))
 
 	m := &testManifest{name: "my-pkg", skills: "skills"}
 	require.NoError(t, a.MaterializeComponents(pkgDir, m, ScopeProject))
 
-	target := filepath.Join(tmpDir, ".github", "skills", "my-pkg")
+	// Verify individual skill link exists
+	target := filepath.Join(tmpDir, ".github", "skills", "my-skill")
 	_, err := os.Lstat(target)
 	require.NoError(t, err, "link should exist before removal")
 
-	require.NoError(t, a.RemoveMaterialized("my-pkg", m, ScopeProject))
+	require.NoError(t, a.RemoveMaterialized("my-pkg", pkgDir, m, ScopeProject))
 	_, err = os.Lstat(target)
-	assert.True(t, os.IsNotExist(err), "link should be removed")
+	assert.True(t, os.IsNotExist(err), "individual skill link should be removed")
+}
+
+func TestCopilotAdapter_MaterializeComponents_MultiSkill(t *testing.T) {
+	a, tmpDir, _ := newTestCopilotAdapter(t)
+
+	pkgDir := filepath.Join(tmpDir, "store", "my-tools")
+	for _, skill := range []string{"linter", "formatter"} {
+		subdir := filepath.Join(pkgDir, "skills", skill)
+		require.NoError(t, os.MkdirAll(subdir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(subdir, "SKILL.md"), []byte("# "+skill), 0o644))
+	}
+
+	m := &testManifest{name: "my-tools", skills: "skills"}
+	require.NoError(t, a.MaterializeComponents(pkgDir, m, ScopeLocal))
+
+	// Both skills should be individually linked
+	for _, skill := range []string{"linter", "formatter"} {
+		target := filepath.Join(tmpDir, ".claude", "skills", skill)
+		_, err := os.Lstat(target)
+		assert.NoError(t, err, ".claude/skills/%s should exist", skill)
+
+		_, err = os.Stat(filepath.Join(target, "SKILL.md"))
+		assert.NoError(t, err, "SKILL.md should be at depth 1 for %s", skill)
+	}
+
+	// Package-named directory should NOT exist
+	_, err := os.Lstat(filepath.Join(tmpDir, ".claude", "skills", "my-tools"))
+	assert.True(t, os.IsNotExist(err), "package-named directory should not exist")
+}
+
+func TestCopilotAdapter_RemoveMaterialized_MultiSkill(t *testing.T) {
+	a, tmpDir, _ := newTestCopilotAdapter(t)
+
+	pkgDir := filepath.Join(tmpDir, "store", "my-tools")
+	for _, skill := range []string{"linter", "formatter"} {
+		subdir := filepath.Join(pkgDir, "skills", skill)
+		require.NoError(t, os.MkdirAll(subdir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(subdir, "SKILL.md"), []byte("# "+skill), 0o644))
+	}
+
+	m := &testManifest{name: "my-tools", skills: "skills"}
+	require.NoError(t, a.MaterializeComponents(pkgDir, m, ScopeProject))
+
+	// Both should exist
+	for _, skill := range []string{"linter", "formatter"} {
+		_, err := os.Lstat(filepath.Join(tmpDir, ".github", "skills", skill))
+		require.NoError(t, err)
+	}
+
+	// Remove and verify both are gone
+	require.NoError(t, a.RemoveMaterialized("my-tools", pkgDir, m, ScopeProject))
+	for _, skill := range []string{"linter", "formatter"} {
+		_, err := os.Lstat(filepath.Join(tmpDir, ".github", "skills", skill))
+		assert.True(t, os.IsNotExist(err), "%s link should be removed", skill)
+	}
+}
+
+func TestCopilotAdapter_MaterializeComponents_MultiAgent(t *testing.T) {
+	a, tmpDir, _ := newTestCopilotAdapter(t)
+
+	pkgDir := filepath.Join(tmpDir, "store", "my-agents")
+	for _, agent := range []string{"reviewer", "fixer"} {
+		subdir := filepath.Join(pkgDir, "agents", agent)
+		require.NoError(t, os.MkdirAll(subdir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(subdir, agent+".agent.md"), []byte("# "+agent), 0o644))
+	}
+
+	m := &testManifest{name: "my-agents", agents: "agents"}
+	require.NoError(t, a.MaterializeComponents(pkgDir, m, ScopeProject))
+
+	for _, agent := range []string{"reviewer", "fixer"} {
+		target := filepath.Join(tmpDir, ".github", "agents", agent)
+		_, err := os.Lstat(target)
+		assert.NoError(t, err, ".github/agents/%s should exist", agent)
+
+		_, err = os.Stat(filepath.Join(target, agent+".agent.md"))
+		assert.NoError(t, err, ".agent.md should be at depth 1 for %s", agent)
+	}
+}
+
+func TestCopilotAdapter_RemoveMaterialized_Agents(t *testing.T) {
+	a, tmpDir, _ := newTestCopilotAdapter(t)
+
+	pkgDir := filepath.Join(tmpDir, "store", "my-agents")
+	agentSubdir := filepath.Join(pkgDir, "agents", "my-agent")
+	require.NoError(t, os.MkdirAll(agentSubdir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(agentSubdir, "my-agent.agent.md"), []byte("# agent"), 0o644))
+
+	m := &testManifest{name: "my-agents", agents: "agents"}
+	require.NoError(t, a.MaterializeComponents(pkgDir, m, ScopeLocal))
+
+	target := filepath.Join(tmpDir, ".claude", "agents", "my-agent")
+	_, err := os.Lstat(target)
+	require.NoError(t, err)
+
+	require.NoError(t, a.RemoveMaterialized("my-agents", pkgDir, m, ScopeLocal))
+	_, err = os.Lstat(target)
+	assert.True(t, os.IsNotExist(err), "agent link should be removed")
+}
+
+func TestCopilotAdapter_RemoveMaterialized_CollisionSafe(t *testing.T) {
+	a, tmpDir, _ := newTestCopilotAdapter(t)
+
+	// Package A has a "review" skill
+	pkgDirA := filepath.Join(tmpDir, "store", "pkg-a")
+	subdirA := filepath.Join(pkgDirA, "skills", "review")
+	require.NoError(t, os.MkdirAll(subdirA, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(subdirA, "SKILL.md"), []byte("# A"), 0o644))
+
+	mA := &testManifest{name: "pkg-a", skills: "skills"}
+	require.NoError(t, a.MaterializeComponents(pkgDirA, mA, ScopeLocal))
+
+	// Package B also has a "review" skill — overwrites A's link
+	pkgDirB := filepath.Join(tmpDir, "store", "pkg-b")
+	subdirB := filepath.Join(pkgDirB, "skills", "review")
+	require.NoError(t, os.MkdirAll(subdirB, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(subdirB, "SKILL.md"), []byte("# B"), 0o644))
+
+	mB := &testManifest{name: "pkg-b", skills: "skills"}
+	require.NoError(t, a.MaterializeComponents(pkgDirB, mB, ScopeLocal))
+
+	// Uninstall pkg-a — the link now points to pkg-b, so it must NOT be removed
+	require.NoError(t, a.RemoveMaterialized("pkg-a", pkgDirA, mA, ScopeLocal))
+
+	link := filepath.Join(tmpDir, ".claude", "skills", "review")
+	_, err := os.Lstat(link)
+	assert.NoError(t, err, "link should still exist — it belongs to pkg-b now")
+
+	resolved, err := os.Readlink(link)
+	require.NoError(t, err)
+	absResolved, _ := filepath.Abs(resolved)
+	absB, _ := filepath.Abs(subdirB)
+	assert.Equal(t, absB, absResolved, "link should still point to pkg-b's review skill")
+}
+
+func TestCopilotAdapter_MaterializeComponents_CollisionWarning(t *testing.T) {
+	a, tmpDir, _ := newTestCopilotAdapter(t)
+
+	// Package A has a "review" skill
+	pkgDirA := filepath.Join(tmpDir, "store", "pkg-a")
+	subdirA := filepath.Join(pkgDirA, "skills", "review")
+	require.NoError(t, os.MkdirAll(subdirA, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(subdirA, "SKILL.md"), []byte("# A"), 0o644))
+
+	mA := &testManifest{name: "pkg-a", skills: "skills"}
+	require.NoError(t, a.MaterializeComponents(pkgDirA, mA, ScopeLocal))
+
+	// Package B also has a "review" skill
+	pkgDirB := filepath.Join(tmpDir, "store", "pkg-b")
+	subdirB := filepath.Join(pkgDirB, "skills", "review")
+	require.NoError(t, os.MkdirAll(subdirB, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(subdirB, "SKILL.md"), []byte("# B"), 0o644))
+
+	mB := &testManifest{name: "pkg-b", skills: "skills"}
+	// This should succeed (overwrite) — collision warning is printed to stderr
+	require.NoError(t, a.MaterializeComponents(pkgDirB, mB, ScopeLocal))
+
+	// Verify the link now points to package B's skill
+	target := filepath.Join(tmpDir, ".claude", "skills", "review")
+	resolved, err := os.Readlink(target)
+	require.NoError(t, err)
+	absResolved, _ := filepath.Abs(resolved)
+	absDirB, _ := filepath.Abs(subdirB)
+	assert.Equal(t, absDirB, absResolved, "link should point to pkg-b's review skill")
+}
+
+func TestCopilotAdapter_MaterializeComponents_EmptySkillsDir(t *testing.T) {
+	a, tmpDir, _ := newTestCopilotAdapter(t)
+
+	pkgDir := filepath.Join(tmpDir, "store", "empty-pkg")
+	require.NoError(t, os.MkdirAll(filepath.Join(pkgDir, "skills"), 0o755))
+
+	m := &testManifest{name: "empty-pkg", skills: "skills"}
+	err := a.MaterializeComponents(pkgDir, m, ScopeLocal)
+	assert.NoError(t, err, "empty skills directory should not cause an error")
+}
+
+func TestCopilotAdapter_MaterializeComponents_MissingComponentDir(t *testing.T) {
+	a, tmpDir, _ := newTestCopilotAdapter(t)
+
+	pkgDir := filepath.Join(tmpDir, "store", "missing-pkg")
+	require.NoError(t, os.MkdirAll(pkgDir, 0o755))
+	// Do NOT create the skills directory
+
+	m := &testManifest{name: "missing-pkg", skills: "skills"}
+	err := a.MaterializeComponents(pkgDir, m, ScopeLocal)
+	assert.Error(t, err, "missing component directory should return an error")
 }
 
 // testManifest is a simple component carrier used in materialization tests.
@@ -441,8 +672,8 @@ type testManifest struct {
 	mcp    string
 }
 
-func (m *testManifest) GetName() string    { return m.name }
-func (m *testManifest) GetSkills() string  { return m.skills }
-func (m *testManifest) GetAgents() string  { return m.agents }
-func (m *testManifest) GetHooks() string   { return m.hooks }
-func (m *testManifest) GetMCP() string     { return m.mcp }
+func (m *testManifest) GetName() string   { return m.name }
+func (m *testManifest) GetSkills() string { return m.skills }
+func (m *testManifest) GetAgents() string { return m.agents }
+func (m *testManifest) GetHooks() string  { return m.hooks }
+func (m *testManifest) GetMCP() string    { return m.mcp }

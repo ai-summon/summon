@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/ai-summon/summon/internal/fsutil"
 )
@@ -22,15 +23,19 @@ type ComponentsInfo interface {
 // MaterializeComponents copies or links package component directories into the
 // documented workspace discovery paths for the requested Copilot scope.
 //
+// Each subdirectory inside a component path (e.g., skills/brainstorm/) is
+// linked individually so that SKILL.md / .agent.md files sit exactly one
+// directory level deep from the discovery root.
+//
 // Project scope target paths (documented by VS Code and Copilot CLI):
-//   - Skills  → .github/skills/<name>
-//   - Agents  → .github/agents/<name>
+//   - Skills  → .github/skills/<skill-subdir>
+//   - Agents  → .github/agents/<agent-subdir>
 //   - MCP     → .vscode/mcp.json (merge – TODO)
 //   - Hooks   → not supported for Copilot project scope; returns error
 //
 // Local scope target paths:
-//   - Skills  → .claude/skills/<name>
-//   - Agents  → .claude/agents/<name>
+//   - Skills  → .claude/skills/<skill-subdir>
+//   - Agents  → .claude/agents/<agent-subdir>
 //   - MCP     → no documented personal-in-workspace Copilot path; returns error
 //   - Hooks   → .claude/settings.local.json (not yet implemented; returns error)
 func (v *CopilotAdapter) MaterializeComponents(pkgDir string, m ComponentsInfo, scope Scope) error {
@@ -40,23 +45,21 @@ func (v *CopilotAdapter) MaterializeComponents(pkgDir string, m ComponentsInfo, 
 	switch scope {
 	case ScopeProject:
 		if s := m.GetSkills(); s != "" {
-			if err := v.linkComponent(filepath.Join(pkgDir, s),
-				filepath.Join(v.ProjectDir, ".github", "skills", name)); err != nil {
-				return fmt.Errorf("materializing skills for %s (project): %w", name, err)
+			if err := v.linkComponentSubdirs(pkgDir, filepath.Join(pkgDir, s),
+				filepath.Join(v.ProjectDir, ".github", "skills"), name, "skills"); err != nil {
+				return err
 			}
 		}
 		if a := m.GetAgents(); a != "" {
-			if err := v.linkComponent(filepath.Join(pkgDir, a),
-				filepath.Join(v.ProjectDir, ".github", "agents", name)); err != nil {
-				return fmt.Errorf("materializing agents for %s (project): %w", name, err)
+			if err := v.linkComponentSubdirs(pkgDir, filepath.Join(pkgDir, a),
+				filepath.Join(v.ProjectDir, ".github", "agents"), name, "agents"); err != nil {
+				return err
 			}
 		}
 		if m.GetHooks() != "" {
 			unsupported = append(unsupported, "hooks")
 		}
 		if m.GetMCP() != "" {
-			// MCP project scope is supported via .vscode/mcp.json but not yet
-			// implemented; for now it is unsupported.
 			unsupported = append(unsupported, "mcp")
 		}
 		if len(unsupported) > 0 {
@@ -65,15 +68,15 @@ func (v *CopilotAdapter) MaterializeComponents(pkgDir string, m ComponentsInfo, 
 		}
 	case ScopeLocal:
 		if s := m.GetSkills(); s != "" {
-			if err := v.linkComponent(filepath.Join(pkgDir, s),
-				filepath.Join(v.ProjectDir, ".claude", "skills", name)); err != nil {
-				return fmt.Errorf("materializing skills for %s (local): %w", name, err)
+			if err := v.linkComponentSubdirs(pkgDir, filepath.Join(pkgDir, s),
+				filepath.Join(v.ProjectDir, ".claude", "skills"), name, "skills"); err != nil {
+				return err
 			}
 		}
 		if a := m.GetAgents(); a != "" {
-			if err := v.linkComponent(filepath.Join(pkgDir, a),
-				filepath.Join(v.ProjectDir, ".claude", "agents", name)); err != nil {
-				return fmt.Errorf("materializing agents for %s (local): %w", name, err)
+			if err := v.linkComponentSubdirs(pkgDir, filepath.Join(pkgDir, a),
+				filepath.Join(v.ProjectDir, ".claude", "agents"), name, "agents"); err != nil {
+				return err
 			}
 		}
 		if m.GetHooks() != "" {
@@ -92,25 +95,90 @@ func (v *CopilotAdapter) MaterializeComponents(pkgDir string, m ComponentsInfo, 
 }
 
 // RemoveMaterialized removes any workspace links created by MaterializeComponents
-// for the given package name and scope.
-func (v *CopilotAdapter) RemoveMaterialized(pkgName string, m ComponentsInfo, scope Scope) error {
+// for the given package name and scope. It enumerates subdirectories of each
+// component path to determine which individual links to remove.
+func (v *CopilotAdapter) RemoveMaterialized(pkgName string, pkgDir string, m ComponentsInfo, scope Scope) error {
 	switch scope {
 	case ScopeProject:
-		if m.GetSkills() != "" {
-			_ = os.RemoveAll(filepath.Join(v.ProjectDir, ".github", "skills", pkgName))
+		if s := m.GetSkills(); s != "" {
+			v.removeComponentSubdirs(filepath.Join(pkgDir, s),
+				filepath.Join(v.ProjectDir, ".github", "skills"))
 		}
-		if m.GetAgents() != "" {
-			_ = os.RemoveAll(filepath.Join(v.ProjectDir, ".github", "agents", pkgName))
+		if a := m.GetAgents(); a != "" {
+			v.removeComponentSubdirs(filepath.Join(pkgDir, a),
+				filepath.Join(v.ProjectDir, ".github", "agents"))
 		}
 	case ScopeLocal:
-		if m.GetSkills() != "" {
-			_ = os.RemoveAll(filepath.Join(v.ProjectDir, ".claude", "skills", pkgName))
+		if s := m.GetSkills(); s != "" {
+			v.removeComponentSubdirs(filepath.Join(pkgDir, s),
+				filepath.Join(v.ProjectDir, ".claude", "skills"))
 		}
-		if m.GetAgents() != "" {
-			_ = os.RemoveAll(filepath.Join(v.ProjectDir, ".claude", "agents", pkgName))
+		if a := m.GetAgents(); a != "" {
+			v.removeComponentSubdirs(filepath.Join(pkgDir, a),
+				filepath.Join(v.ProjectDir, ".claude", "agents"))
 		}
 	}
 	return nil
+}
+
+// linkComponentSubdirs enumerates immediate subdirectories of componentDir and
+// creates an individual link in discoveryRoot for each. If the componentDir
+// does not exist, an error is returned. If it has no subdirectories, no links
+// are created and nil is returned.
+func (v *CopilotAdapter) linkComponentSubdirs(pkgDir, componentDir, discoveryRoot, pkgName, componentType string) error {
+	entries, err := os.ReadDir(componentDir)
+	if err != nil {
+		return fmt.Errorf("materializing %s for %s: reading component directory: %w", componentType, pkgName, err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		source := filepath.Join(componentDir, entry.Name())
+		target := filepath.Join(discoveryRoot, entry.Name())
+
+		// Collision detection: if target already exists as a link pointing
+		// to a different package, warn the user.
+		if existing, err := os.Readlink(target); err == nil {
+			absExisting, _ := filepath.Abs(existing)
+			absPkgDir, _ := filepath.Abs(pkgDir)
+			if !strings.HasPrefix(absExisting, absPkgDir+string(filepath.Separator)) && absExisting != absPkgDir {
+				fmt.Fprintf(os.Stderr, "Warning: %s %q overwrites existing link → %s\n", componentType, entry.Name(), absExisting)
+			}
+		}
+
+		if err := v.linkComponent(source, target); err != nil {
+			return fmt.Errorf("materializing %s for %s: %w", componentType, pkgName, err)
+		}
+	}
+	return nil
+}
+
+// removeComponentSubdirs enumerates immediate subdirectories of componentDir
+// and removes the corresponding link from discoveryRoot for each, but only if
+// the link still points into componentDir (collision-safe).
+func (v *CopilotAdapter) removeComponentSubdirs(componentDir, discoveryRoot string) {
+	entries, err := os.ReadDir(componentDir)
+	if err != nil {
+		return
+	}
+	absComponentDir, _ := filepath.Abs(componentDir)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		link := filepath.Join(discoveryRoot, entry.Name())
+		// Only remove if the link still points into this package's component
+		// directory. If another package overwrote the link (collision), leave
+		// the new owner's link intact.
+		if target, err := os.Readlink(link); err == nil {
+			absTarget, _ := filepath.Abs(target)
+			if !strings.HasPrefix(absTarget, absComponentDir+string(filepath.Separator)) {
+				continue
+			}
+		}
+		_ = os.RemoveAll(link)
+	}
 }
 
 // linkComponent creates a directory link from target → source, creating the
