@@ -8,7 +8,7 @@ $SummonQuiet = if ($env:SUMMON_QUIET) { $env:SUMMON_QUIET } else { "0" }
 $SummonDownloadUrl = $env:SUMMON_DOWNLOAD_URL
 $SummonChecksumUrl = $env:SUMMON_CHECKSUM_URL
 $SummonChecksum = $env:SUMMON_CHECKSUM
-$SummonLatestVersion = if ($env:SUMMON_LATEST_VERSION) { $env:SUMMON_LATEST_VERSION } else { "v0.0.11" }
+$SummonLatestVersion = if ($env:SUMMON_LATEST_VERSION) { $env:SUMMON_LATEST_VERSION } else { "v0.0.12" }
 $SummonReleaseBaseUrl = if ($env:SUMMON_RELEASE_BASE_URL) { $env:SUMMON_RELEASE_BASE_URL } else { "https://github.com/ai-summon/summon/releases/download" }
 
 if ($SummonNonInteractive -ne "1" -and -not [Environment]::UserInteractive) {
