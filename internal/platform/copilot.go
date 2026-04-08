@@ -124,6 +124,9 @@ func (v *CopilotAdapter) Register(marketplacePath string, marketplaceName string
 	return nil
 }
 
+// Unregister removes marketplace entries from settings files. Errors from
+// individual file reads are silently ignored (best-effort cleanup) so that
+// uninstall is not blocked by unparseable settings files.
 func (v *CopilotAdapter) Unregister(marketplaceName string, scope Scope) error {
 	if scope == ScopeProject || scope == ScopeLocal {
 		wsPath := v.SettingsPath(scope)
@@ -179,7 +182,9 @@ func (v *CopilotAdapter) EnablePlugin(pluginName string, marketplaceName string,
 }
 
 // DisablePlugin removes the plugin from chat.pluginLocations and
-// (for workspace scopes) from enabledPlugins.
+// (for workspace scopes) from enabledPlugins. Errors from individual file
+// reads are silently ignored (best-effort cleanup) so that uninstall is not
+// blocked by unparseable settings files.
 func (v *CopilotAdapter) DisablePlugin(pluginName string, marketplaceName string, storeDir string, scope Scope) error {
 	pluginPath, err := v.resolvePluginPath(storeDir, pluginName)
 	if err != nil {
@@ -222,7 +227,7 @@ func (v *CopilotAdapter) resolvePluginPath(storeDir, pluginName string) (string,
 func (v *CopilotAdapter) addMarketplaceURI(settingsPath, uri string) error {
 	settings, err := readJSONFile(settingsPath)
 	if err != nil {
-		settings = make(map[string]interface{})
+		return err
 	}
 	var marketplaces []interface{}
 	if existing, ok := settings["chat.plugins.marketplaces"].([]interface{}); ok {
@@ -263,7 +268,7 @@ func (v *CopilotAdapter) removeMarketplaceURI(settingsPath, marketplaceName stri
 func (v *CopilotAdapter) addExtraKnownMarketplace(settingsPath, marketplaceName, absPath string) error {
 	settings, err := readJSONFile(settingsPath)
 	if err != nil {
-		settings = make(map[string]interface{})
+		return err
 	}
 	ekm, ok := settings["extraKnownMarketplaces"].(map[string]interface{})
 	if !ok {
@@ -298,7 +303,7 @@ func (v *CopilotAdapter) removeExtraKnownMarketplace(settingsPath, marketplaceNa
 func (v *CopilotAdapter) addPluginLocation(settingsPath, pluginPath string) error {
 	settings, err := readJSONFile(settingsPath)
 	if err != nil {
-		settings = make(map[string]interface{})
+		return err
 	}
 	pl, ok := settings["chat.pluginLocations"].(map[string]interface{})
 	if !ok {
@@ -330,7 +335,7 @@ func (v *CopilotAdapter) removePluginLocation(settingsPath, pluginPath string) e
 func (v *CopilotAdapter) addEnabledPlugin(settingsPath, pluginName, marketplaceName string) error {
 	settings, err := readJSONFile(settingsPath)
 	if err != nil {
-		settings = make(map[string]interface{})
+		return err
 	}
 	ep, ok := settings["enabledPlugins"].(map[string]interface{})
 	if !ok {
@@ -375,7 +380,7 @@ func containsSegment(uri, name string) bool {
 func (v *CopilotAdapter) ensurePluginsEnabled(settingsPath string) error {
 	settings, err := readJSONFile(settingsPath)
 	if err != nil {
-		settings = make(map[string]interface{})
+		return err
 	}
 	if enabled, ok := settings["chat.plugins.enabled"].(bool); ok && enabled {
 		return nil

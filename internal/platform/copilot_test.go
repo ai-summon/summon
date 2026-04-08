@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -677,3 +678,218 @@ func (m *testManifest) GetSkills() string { return m.skills }
 func (m *testManifest) GetAgents() string { return m.agents }
 func (m *testManifest) GetHooks() string  { return m.hooks }
 func (m *testManifest) GetMCP() string    { return m.mcp }
+
+// --- T014: Parse-failure preservation test for Copilot adapter ---
+
+func TestCopilotAdapter_Register_ParseFailurePreservesFile(t *testing.T) {
+	a, tmpDir, _ := newTestCopilotAdapter(t)
+
+	// Create workspace settings with JSONC content
+	vsDir := filepath.Join(tmpDir, ".vscode")
+	require.NoError(t, os.MkdirAll(vsDir, 0o755))
+	wsPath := filepath.Join(vsDir, "settings.json")
+	jsoncContent := []byte(`{
+  // User comment
+  "editor.fontSize": 14,
+  "theme": "dark"
+}`)
+	require.NoError(t, os.WriteFile(wsPath, jsoncContent, 0o644))
+
+	err := a.Register("/store/copilot", "test-mkt", ScopeProject)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not valid JSON")
+
+	// File must be byte-identical
+	after, err := os.ReadFile(wsPath)
+	require.NoError(t, err)
+	assert.Equal(t, jsoncContent, after)
+}
+
+func TestCopilotAdapter_EnablePlugin_ParseFailurePreservesFile(t *testing.T) {
+	a, tmpDir, _ := newTestCopilotAdapter(t)
+	storeDir := filepath.Join(tmpDir, "store")
+	require.NoError(t, os.MkdirAll(filepath.Join(storeDir, "my-plugin"), 0o755))
+
+	vsDir := filepath.Join(tmpDir, ".vscode")
+	require.NoError(t, os.MkdirAll(vsDir, 0o755))
+	wsPath := filepath.Join(vsDir, "settings.json")
+	jsoncContent := []byte(`{
+  // comment
+  "editor.fontSize": 14
+}`)
+	require.NoError(t, os.WriteFile(wsPath, jsoncContent, 0o644))
+
+	err := a.EnablePlugin("my-plugin", "mkt", storeDir, ScopeProject)
+	require.Error(t, err)
+
+	after, err := os.ReadFile(wsPath)
+	require.NoError(t, err)
+	assert.Equal(t, jsoncContent, after)
+}
+
+// --- T016: Non-destructive merge regression test for Copilot adapter ---
+
+func TestCopilotAdapter_NonDestructiveMerge(t *testing.T) {
+	a, tmpDir, globalDir := newTestCopilotAdapter(t)
+	storeDir := filepath.Join(tmpDir, "store")
+	require.NoError(t, os.MkdirAll(filepath.Join(storeDir, "p1"), 0o755))
+
+	// Pre-populate workspace settings with many unrelated keys
+	vsDir := filepath.Join(tmpDir, ".vscode")
+	require.NoError(t, os.MkdirAll(vsDir, 0o755))
+	wsPath := filepath.Join(vsDir, "settings.json")
+
+	wsOriginal := map[string]interface{}{
+		"editor.fontSize":        float64(14),
+		"editor.tabSize":         float64(4),
+		"editor.wordWrap":        "on",
+		"workbench.colorTheme":   "Monokai",
+		"terminal.integrated":    true,
+		"files.autoSave":         "afterDelay",
+		"files.autoSaveDelay":    float64(1000),
+		"breadcrumbs.enabled":    true,
+		"editor.minimap.enabled": false,
+		"window.zoomLevel":       float64(0),
+		"git.autofetch":          true,
+		"debug.console.fontSize": float64(12),
+	}
+	require.NoError(t, writeJSONFile(wsPath, wsOriginal))
+
+	// Pre-populate global settings
+	globalOriginal := map[string]interface{}{
+		"editor.fontSize":      float64(16),
+		"workbench.colorTheme": "Solarized",
+		"explorer.sortOrder":   "type",
+	}
+	require.NoError(t, writeJSONFile(filepath.Join(globalDir, "settings.json"), globalOriginal))
+
+	// Full install cycle
+	require.NoError(t, a.Register("/store/copilot", "mkt", ScopeLocal))
+	require.NoError(t, a.EnablePlugin("p1", "mkt", storeDir, ScopeLocal))
+	require.NoError(t, a.DisablePlugin("p1", "mkt", storeDir, ScopeLocal))
+	require.NoError(t, a.Unregister("mkt", ScopeLocal))
+
+	// Read back workspace settings and verify all original keys survive
+	wsAfter := readSettings(t, wsPath)
+	for key, expected := range wsOriginal {
+		assert.Equal(t, expected, wsAfter[key], "workspace key %q should be preserved", key)
+	}
+
+	// Read back global settings and verify original keys survive
+	globalAfter := readSettings(t, filepath.Join(globalDir, "settings.json"))
+	for key, expected := range globalOriginal {
+		assert.Equal(t, expected, globalAfter[key], "global key %q should be preserved", key)
+	}
+}
+
+// --- T018: Atomic write integration test for Copilot adapter ---
+
+func TestCopilotAdapter_Register_AtomicWrite(t *testing.T) {
+	a, tmpDir, _ := newTestCopilotAdapter(t)
+
+	require.NoError(t, a.Register("/store/copilot", "test-mkt", ScopeProject))
+
+	vsDir := filepath.Join(tmpDir, ".vscode")
+	wsPath := filepath.Join(vsDir, "settings.json")
+
+	// Output should be valid JSON
+	data, err := os.ReadFile(wsPath)
+	require.NoError(t, err)
+	var parsed map[string]interface{}
+	require.NoError(t, json.Unmarshal(data, &parsed))
+
+	// No temp files should remain
+	entries, err := os.ReadDir(vsDir)
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.False(t, strings.Contains(e.Name(), ".summon-settings-"),
+			"temp file should be cleaned up: %s", e.Name())
+	}
+}
+
+// --- T021: Scope-specific parse-failure test for Copilot adapter ---
+
+func TestCopilotAdapter_ParseFailure_AllScopes(t *testing.T) {
+	jsoncContent := []byte(`{
+  // comment
+  "key": "value"
+}`)
+
+	t.Run("ScopeProject_workspace", func(t *testing.T) {
+		a, tmpDir, _ := newTestCopilotAdapter(t)
+		vsDir := filepath.Join(tmpDir, ".vscode")
+		require.NoError(t, os.MkdirAll(vsDir, 0o755))
+		wsPath := filepath.Join(vsDir, "settings.json")
+		require.NoError(t, os.WriteFile(wsPath, jsoncContent, 0o644))
+
+		err := a.Register("/store", "mkt", ScopeProject)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not valid JSON")
+
+		after, err := os.ReadFile(wsPath)
+		require.NoError(t, err)
+		assert.Equal(t, jsoncContent, after)
+	})
+
+	t.Run("ScopeLocal_workspace", func(t *testing.T) {
+		a, tmpDir, _ := newTestCopilotAdapter(t)
+		vsDir := filepath.Join(tmpDir, ".vscode")
+		require.NoError(t, os.MkdirAll(vsDir, 0o755))
+		wsPath := filepath.Join(vsDir, "settings.json")
+		require.NoError(t, os.WriteFile(wsPath, jsoncContent, 0o644))
+
+		err := a.Register("/store", "mkt", ScopeLocal)
+		require.Error(t, err)
+
+		after, err := os.ReadFile(wsPath)
+		require.NoError(t, err)
+		assert.Equal(t, jsoncContent, after)
+	})
+
+	t.Run("ScopeGlobal_userLevel", func(t *testing.T) {
+		a, _, globalDir := newTestCopilotAdapter(t)
+		globalPath := filepath.Join(globalDir, "settings.json")
+		require.NoError(t, os.WriteFile(globalPath, jsoncContent, 0o644))
+
+		err := a.Register("/store", "mkt", ScopeGlobal)
+		require.Error(t, err)
+
+		after, err := os.ReadFile(globalPath)
+		require.NoError(t, err)
+		assert.Equal(t, jsoncContent, after)
+	})
+}
+
+// --- T022: Missing-file creation test for Copilot adapter ---
+
+func TestCopilotAdapter_MissingFile_CreatesWithRequiredKeys(t *testing.T) {
+	a, tmpDir, _ := newTestCopilotAdapter(t)
+
+	// File does not exist — Register should create it
+	err := a.Register("/store", "mkt", ScopeProject)
+	require.NoError(t, err)
+
+	ws := readSettings(t, filepath.Join(tmpDir, ".vscode", "settings.json"))
+	_, hasMkt := ws["chat.plugins.marketplaces"]
+	assert.True(t, hasMkt, "should have chat.plugins.marketplaces")
+	_, hasEKM := ws["extraKnownMarketplaces"]
+	assert.True(t, hasEKM, "should have extraKnownMarketplaces")
+}
+
+// --- T024: Error message format test for Copilot adapter ---
+
+func TestCopilotAdapter_Register_ErrorMessageFormat(t *testing.T) {
+	a, tmpDir, _ := newTestCopilotAdapter(t)
+
+	vsDir := filepath.Join(tmpDir, ".vscode")
+	require.NoError(t, os.MkdirAll(vsDir, 0o755))
+	wsPath := filepath.Join(vsDir, "settings.json")
+	require.NoError(t, os.WriteFile(wsPath, []byte(`{// comment}`), 0o644))
+
+	err := a.Register("/store", "mkt", ScopeProject)
+	require.Error(t, err)
+	errMsg := err.Error()
+	assert.Contains(t, errMsg, wsPath)
+	assert.Contains(t, errMsg, "not valid JSON")
+	assert.Contains(t, errMsg, "comments")
+}
