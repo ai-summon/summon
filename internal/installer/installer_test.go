@@ -3,6 +3,7 @@ package installer
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -176,6 +177,19 @@ func TestInstallGitHub_MultiPluginCrossDeviceFallback(t *testing.T) {
 }`
 	require.NoError(t, os.MkdirAll(filepath.Join(remote, ".claude-plugin"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(remote, ".claude-plugin", "marketplace.json"), []byte(marketplaceJSON), 0o644))
+
+	// Create plugin-a and plugin-b subdirs with plugin.json
+	for _, plugin := range []string{"plugin-a", "plugin-b"} {
+		pluginDir := filepath.Join(remote, plugin)
+		require.NoError(t, os.MkdirAll(filepath.Join(pluginDir, ".claude-plugin"), 0o755))
+		pluginJSON := fmt.Sprintf(`{
+  "name": "%s",
+  "version": "1.0.0",
+  "description": "Test plugin",
+  "platforms": ["claude"]
+}`, plugin)
+		require.NoError(t, os.WriteFile(filepath.Join(pluginDir, ".claude-plugin", "plugin.json"), []byte(pluginJSON), 0o644))
+	}
 
 	gitInit := exec.Command("git", "init", "--quiet", remote)
 	require.NoError(t, gitInit.Run())

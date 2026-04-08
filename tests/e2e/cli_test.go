@@ -302,7 +302,7 @@ func TestUpdateRemotePackage_PostUpdateDiscoveryActivation(t *testing.T) {
 	env := makeEnv("SUMMON_VSCODE_SETTINGS_DIR=" + vscodeDir)
 
 	// Install a remote package (brainstorm as used in quickstart)
-	installCmd := exec.Command(binary, "install", "brainstorm")
+	installCmd := exec.Command(binary, "install", "brainstorm", "--force")
 	installCmd.Dir = projectDir
 	installCmd.Env = env
 	out, err := installCmd.CombinedOutput()
@@ -315,7 +315,7 @@ func TestUpdateRemotePackage_PostUpdateDiscoveryActivation(t *testing.T) {
 	updateCmd.Env = env
 	out, err = updateCmd.CombinedOutput()
 	require.NoError(t, err, string(out))
-	assert.Contains(t, string(out), "Updated brainstorm")
+	assert.Contains(t, string(out), "Pinned brainstorm")
 
 	// Verify package remains listed in registry
 	listCmd := exec.Command(binary, "list", "--scope", "local")
