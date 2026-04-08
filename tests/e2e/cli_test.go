@@ -787,3 +787,66 @@ func TestPluginJSONFallback_E2E(t *testing.T) {
 	require.NoError(t, err, "list after uninstall failed: "+string(out))
 	assert.NotContains(t, string(out), "pj-e2e-pkg")
 }
+
+// ---------------------------------------------------------------------------
+// Scope flag conflict and -p flag e2e tests
+// ---------------------------------------------------------------------------
+
+func TestInstall_ProjectFlag(t *testing.T) {
+	binary := buildBinary(t)
+	projectDir := t.TempDir()
+	vscodeDir := t.TempDir()
+	env := makeEnv("SUMMON_VSCODE_SETTINGS_DIR=" + vscodeDir)
+
+	pkgDir := filepath.Join(t.TempDir(), "pflag-pkg")
+	require.NoError(t, os.MkdirAll(pkgDir, 0o755))
+	manifest := "name: pflag-pkg\nversion: \"1.0.0\"\ndescription: \"e2e -p flag test\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "summon.yaml"), []byte(manifest), 0o644))
+
+	cmd := exec.Command(binary, "install", "--path", pkgDir, "--force", "-p")
+	cmd.Dir = projectDir
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "install -p should succeed: %s", out)
+	assert.Contains(t, string(out), "Installed pflag-pkg")
+
+	// Verify it shows up with --scope project
+	cmd = exec.Command(binary, "list", "--scope", "project")
+	cmd.Dir = projectDir
+	cmd.Env = env
+	out, err = cmd.CombinedOutput()
+	require.NoError(t, err, "list --scope project: %s", out)
+	assert.Contains(t, string(out), "pflag-pkg")
+}
+
+func TestInstall_ScopeConflict(t *testing.T) {
+	binary := buildBinary(t)
+
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{"scope and global", []string{"install", "--scope", "local", "--global", "pkg"}},
+		{"scope and project", []string{"install", "--scope", "local", "-p", "pkg"}},
+		{"global and project", []string{"install", "-g", "-p", "pkg"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := exec.Command(binary, tt.args...)
+			cmd.Dir = t.TempDir()
+			out, err := cmd.CombinedOutput()
+			assert.Error(t, err, "conflicting flags should fail")
+			assert.Contains(t, string(out), "if any flags in the group [scope global project] are set none of the others can be")
+		})
+	}
+}
+
+func TestInstall_InvalidScope(t *testing.T) {
+	binary := buildBinary(t)
+	cmd := exec.Command(binary, "install", "--scope", "system", "pkg")
+	cmd.Dir = t.TempDir()
+	out, err := cmd.CombinedOutput()
+	assert.Error(t, err, "invalid scope should fail")
+	assert.Contains(t, string(out), "Invalid scope value")
+}

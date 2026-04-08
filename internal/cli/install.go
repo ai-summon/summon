@@ -25,38 +25,47 @@ var installCmd = &cobra.Command{
 }
 
 var (
-	installPath   string
-	installGlobal bool
-	installScope  string
-	installRef    string
-	installForce  bool
+	installPath    string
+	installGlobal  bool
+	installProject bool
+	installScope   string
+	installRef     string
+	installForce   bool
 )
 
 func init() {
 	installCmd.Flags().StringVar(&installPath, "path", "", "Install from local filesystem path")
-	installCmd.Flags().BoolVarP(&installGlobal, "global", "g", false, "Install to global scope (~/.summon/)")
-	installCmd.Flags().StringVar(&installScope, "scope", "", "Install scope: user, project, or local")
+	installCmd.Flags().BoolVarP(&installGlobal, "global", "g", false, "Shortcut for --scope user")
+	installCmd.Flags().BoolVarP(&installProject, "project", "p", false, "Shortcut for --scope project")
+	installCmd.Flags().StringVar(&installScope, "scope", "", "Installation target scope. One of local, project, user")
 	installCmd.Flags().StringVar(&installRef, "ref", "", "Pin to specific git tag, branch, or commit")
 	installCmd.Flags().BoolVar(&installForce, "force", false, "Install even if no compatible platform is active")
+	installCmd.MarkFlagsMutuallyExclusive("scope", "global", "project")
 	rootCmd.AddCommand(installCmd)
 }
 
-func resolveInstallScope(scopeFlag string, global bool) (platform.Scope, error) {
+func resolveInstallScope(scopeFlag string, global bool, project bool) (platform.Scope, error) {
 	if scopeFlag != "" {
 		return platform.ParseScope(scopeFlag)
 	}
 	if global {
 		return platform.ScopeUser, nil
+	}
+	if project {
+		return platform.ScopeProject, nil
 	}
 	return platform.ScopeLocal, nil
 }
 
-func resolveRestoreScope(scopeFlag string, global bool) (platform.Scope, error) {
+func resolveRestoreScope(scopeFlag string, global bool, project bool) (platform.Scope, error) {
 	if scopeFlag != "" {
 		return platform.ParseScope(scopeFlag)
 	}
 	if global {
 		return platform.ScopeUser, nil
+	}
+	if project {
+		return platform.ScopeProject, nil
 	}
 	return platform.ScopeProject, nil
 }
@@ -73,7 +82,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 
 	// No package specified → restore all previously-installed packages.
 	if len(args) == 0 && installPath == "" {
-		scope, err := resolveRestoreScope(installScope, installGlobal)
+		scope, err := resolveRestoreScope(installScope, installGlobal, installProject)
 		if err != nil {
 			return err
 		}
@@ -84,7 +93,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return installer.RestoreScope(scope, projectDir)
 	}
 
-	scope, err := resolveInstallScope(installScope, installGlobal)
+	scope, err := resolveInstallScope(installScope, installGlobal, installProject)
 	if err != nil {
 		return err
 	}

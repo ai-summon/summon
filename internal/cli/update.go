@@ -25,11 +25,14 @@ var updateCmd = &cobra.Command{
 }
 
 var updateGlobal bool
+var updateProject bool
 var updateScope string
 
 func init() {
-	updateCmd.Flags().BoolVarP(&updateGlobal, "global", "g", false, "Update in global scope")
-	updateCmd.Flags().StringVar(&updateScope, "scope", "", "Update scope: user, project, or local")
+	updateCmd.Flags().BoolVarP(&updateGlobal, "global", "g", false, "Shortcut for --scope user")
+	updateCmd.Flags().BoolVarP(&updateProject, "project", "p", false, "Shortcut for --scope project")
+	updateCmd.Flags().StringVar(&updateScope, "scope", "", "Target scope. One of local, project, user")
+	updateCmd.MarkFlagsMutuallyExclusive("scope", "global", "project")
 	rootCmd.AddCommand(updateCmd)
 }
 
@@ -44,14 +47,14 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(args) > 0 {
-		scope, err := resolveExistingPackageScope(projectDir, args[0], updateScope, updateGlobal)
+		scope, err := resolveExistingPackageScope(projectDir, args[0], updateScope, updateGlobal, updateProject)
 		if err != nil {
 			return err
 		}
 		return runScopedUpdate(projectDir, scope, args[0])
 	}
 
-	scope, err := resolveInstallScope(updateScope, updateGlobal)
+	scope, err := resolveInstallScope(updateScope, updateGlobal, updateProject)
 	if err != nil {
 		return err
 	}

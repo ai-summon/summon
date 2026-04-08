@@ -21,11 +21,14 @@ var uninstallCmd = &cobra.Command{
 }
 
 var uninstallGlobal bool
+var uninstallProject bool
 var uninstallScope string
 
 func init() {
-	uninstallCmd.Flags().BoolVarP(&uninstallGlobal, "global", "g", false, "Remove from global scope")
-	uninstallCmd.Flags().StringVar(&uninstallScope, "scope", "", "Remove from scope: user, project, or local")
+	uninstallCmd.Flags().BoolVarP(&uninstallGlobal, "global", "g", false, "Shortcut for --scope user")
+	uninstallCmd.Flags().BoolVarP(&uninstallProject, "project", "p", false, "Shortcut for --scope project")
+	uninstallCmd.Flags().StringVar(&uninstallScope, "scope", "", "Target scope. One of local, project, user")
+	uninstallCmd.MarkFlagsMutuallyExclusive("scope", "global", "project")
 	rootCmd.AddCommand(uninstallCmd)
 }
 
@@ -39,7 +42,7 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	scope, err := resolveExistingPackageScope(projectDir, name, uninstallScope, uninstallGlobal)
+	scope, err := resolveExistingPackageScope(projectDir, name, uninstallScope, uninstallGlobal, uninstallProject)
 	if err != nil {
 		return err
 	}

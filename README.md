@@ -63,6 +63,12 @@ summon install github:obra/superpowers
 # Install from local path (symlinked for development)
 summon install --path ../my-plugin
 
+# Install to project scope (committable, team-shared)
+summon install -p superpowers
+
+# Install to user scope (available across all workspaces)
+summon install -g superpowers
+
 # See installed packages
 summon list
 
@@ -115,9 +121,10 @@ Summon supports three writable scopes:
 Precedence is `local > project > user`.
 
 ```bash
-summon install superpowers
-summon install --scope project superpowers
-summon install --scope user superpowers
+summon install superpowers              # local (default)
+summon install -p superpowers            # project scope
+summon install -g superpowers            # user scope
+summon install --scope project superpowers  # equivalent to -p
 
 summon install                # restore project scope
 summon install --scope user   # restore user scope
