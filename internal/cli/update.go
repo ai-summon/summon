@@ -229,7 +229,7 @@ func updateGitHubPackage(name string, entry registry.Entry, storePath string, pa
 // only the plugin subdirectory). It re-clones the repo, resolves the ref,
 // and replaces the store contents.
 func updateGitHubPackageViaClone(name string, entry registry.Entry, storePath string, paths installer.Paths, reg *registry.Registry) error {
-	tmpDir, err := os.MkdirTemp("", "summon-update-*")
+	tmpDir, err := installer.MakeScopedTempDir(paths, "summon-update-*")
 	if err != nil {
 		return err
 	}
@@ -288,15 +288,11 @@ func updateGitHubPackageViaClone(name string, entry registry.Entry, storePath st
 		if m.Name == name {
 			pluginRoot := pluginRoots[i]
 
-			if err := os.RemoveAll(storePath); err != nil {
-				return fmt.Errorf("removing old store entry: %w", err)
-			}
-			if err := os.MkdirAll(filepath.Dir(storePath), 0o755); err != nil {
-				return err
-			}
-			if err := os.Rename(pluginRoot, storePath); err != nil {
+			s := store.New(paths.StoreDir)
+			if err := s.MoveFromStage(name, pluginRoot); err != nil {
 				return fmt.Errorf("moving to store: %w", err)
 			}
+			storePath = s.PackagePath(name)
 
 			if err := marketplace.GeneratePluginJSON(storePath, m); err != nil {
 				return err

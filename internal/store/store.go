@@ -50,6 +50,22 @@ func (s *Store) Link(name, source string) error {
 	return fsutil.CreateDirLink(absSource, target)
 }
 
+// MoveFromStage moves a staged package directory into the store, replacing any
+// existing entry with the same package name.
+func (s *Store) MoveFromStage(name, source string) error {
+	if err := s.Init(); err != nil {
+		return err
+	}
+	if err := s.Remove(name); err != nil {
+		return fmt.Errorf("removing existing store entry: %w", err)
+	}
+	target := s.PackagePath(name)
+	if err := fsutil.MoveDir(source, target); err != nil {
+		return fmt.Errorf("moving staged package: %w", err)
+	}
+	return nil
+}
+
 // Has checks if a package exists in the store.
 func (s *Store) Has(name string) bool {
 	_, err := os.Lstat(s.PackagePath(name))

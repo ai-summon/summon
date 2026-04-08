@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 
+	"github.com/ai-summon/summon/internal/fsutil"
 	"github.com/ai-summon/summon/internal/registry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -414,4 +417,131 @@ packages:
 	require.True(t, ok)
 	assert.Equal(t, "v2.0.0", entry.Source.Ref, "unpinned package should resolve to latest tag")
 	assert.NotEqual(t, oldSHA, entry.Source.SHA, "SHA should change after updating to latest")
+}
+
+func TestRunUpdate_GitHubPackageViaClone_CrossDeviceFallback(t *testing.T) {
+	dir := setupProjectDir(t)
+	remote := initGitRepo(t, filepath.Join(t.TempDir(), "remote"))
+	oldSHA := gitSHA(t, remote)
+
+	storePath := filepath.Join(dir, ".summon", "local", "store", "test-pkg")
+	require.NoError(t, os.MkdirAll(storePath, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(storePath, "summon.yaml"), []byte(`name: test-pkg
+version: "1.0.0"
+description: A test package
+platforms: [claude]
+`), 0o644))
+
+	writeRegistryYAML(t, dir, fmt.Sprintf(`
+summon_version: "0.1.0"
+packages:
+  test-pkg:
+    version: "1.0.0"
+    source:
+      type: github
+      url: file://%s
+      ref: ""
+      sha: %s
+    platforms: [claude]
+`, remote, oldSHA))
+
+	commitCmd := exec.Command("git", "-C", remote, "commit", "--allow-empty", "-m", "v2")
+	require.NoError(t, commitCmd.Run())
+	newSHA := gitSHA(t, remote)
+
+	fsutil.SetRenameDir(func(oldpath, newpath string) error {
+		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: syscall.EXDEV}
+	})
+	defer fsutil.SetRenameDir(nil)
+
+	updateGlobal = false
+	updateScope = ""
+
+	out := captureStdout(t, func() {
+		err := runUpdate(updateCmd, []string{"test-pkg"})
+		require.NoError(t, err)
+	})
+
+	assert.Contains(t, out, "Updated 1 package(s)")
+
+	reg, err := registry.Load(filepath.Join(dir, ".summon", "local", "registry.yaml"))
+	require.NoError(t, err)
+	entry, ok := reg.Get("test-pkg")
+	require.True(t, ok)
+	assert.Equal(t, newSHA, entry.Source.SHA)
+	assert.Equal(t, "file://"+remote, entry.Source.URL)
+	assert.FileExists(t, filepath.Join(storePath, "summon.yaml"))
+}
+
+// ---------------------------------------------------------------------------
+// T023: Update retry/cleanup regression tests for failed move scenarios
+// ---------------------------------------------------------------------------
+
+func TestRunUpdate_GitHubPackage_MoveFailure_CleanupAndRetry(t *testing.T) {
+	dir := setupProjectDir(t)
+
+	// Create a "remote" repo
+	remote := initGitRepo(t, filepath.Join(t.TempDir(), "remote"))
+	sha := gitSHA(t, remote)
+
+	// Simulate installed package by writing registry and creating store entry
+	writeRegistryYAML(t, dir, `
+summon_version: "0.1.0"
+packages:
+  test-pkg:
+    version: "1.0.0"
+    source:
+      type: github
+      url: `+remote+`
+      ref: HEAD
+      sha: `+sha+`
+    platforms: [claude]
+`)
+	createStorePackage(t, dir, "test-pkg")
+
+	// Add a new commit to the remote to trigger update
+	commitCmd := exec.Command("git", "commit", "--allow-empty", "-m", "new commit")
+	commitCmd.Dir = remote
+	require.NoError(t, commitCmd.Run())
+
+	// Simulate move failure by making rename fail
+	fsutil.SetRenameDir(func(oldpath, newpath string) error {
+		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: syscall.EPERM}
+	})
+	defer fsutil.SetRenameDir(nil)
+
+	updateGlobal = false
+	updateScope = ""
+
+	// Attempt update - should fail due to move error
+	out := captureStdout(t, func() {
+		err := runUpdate(updateCmd, []string{"test-pkg"})
+		require.NoError(t, err) // runUpdate returns no error, but logs the failure
+	})
+	assert.Contains(t, out, "Updated 0 package(s)", "update should fail and report 0 updated")
+
+	// Registry should not be updated (SHA should remain the same)
+	reg, err := registry.Load(filepath.Join(dir, ".summon", "local", "registry.yaml"))
+	require.NoError(t, err)
+	entry, ok := reg.Get("test-pkg")
+	require.True(t, ok)
+	assert.Equal(t, sha, entry.Source.SHA, "registry SHA should not change after failed update")
+
+	// Reset to allow retry
+	fsutil.SetRenameDir(nil)
+
+	// Retry update - should succeed
+	out = captureStdout(t, func() {
+		err := runUpdate(updateCmd, []string{"test-pkg"})
+		require.NoError(t, err)
+	})
+	assert.Contains(t, out, "Updated 1 package(s)")
+
+	// Registry should now be updated
+	reg, err = registry.Load(filepath.Join(dir, ".summon", "local", "registry.yaml"))
+	require.NoError(t, err)
+	entry, ok = reg.Get("test-pkg")
+	require.True(t, ok)
+	newSHA := gitSHA(t, remote)
+	assert.Equal(t, newSHA, entry.Source.SHA, "registry SHA should change after successful update")
 }
