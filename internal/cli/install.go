@@ -25,12 +25,13 @@ var installCmd = &cobra.Command{
 }
 
 var (
-	installPath    string
-	installGlobal  bool
-	installProject bool
-	installScope   string
-	installRef     string
-	installForce   bool
+	installPath       string
+	installGlobal     bool
+	installProject    bool
+	installScope      string
+	installRef        string
+	installForce      bool
+	installStrictDeps bool
 )
 
 func init() {
@@ -40,6 +41,7 @@ func init() {
 	installCmd.Flags().StringVar(&installScope, "scope", "", "Installation target scope. One of local, project, user")
 	installCmd.Flags().StringVar(&installRef, "ref", "", "Pin to specific git tag, branch, or commit")
 	installCmd.Flags().BoolVar(&installForce, "force", false, "Install even if no compatible platform is active")
+	installCmd.Flags().BoolVar(&installStrictDeps, "strict-deps", false, "Fail installation if any declared dependencies are missing or version-incompatible")
 	installCmd.MarkFlagsMutuallyExclusive("scope", "global", "project")
 	rootCmd.AddCommand(installCmd)
 }
@@ -112,6 +114,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		Scope:         scope,
 		ProjectDir:    projectDir,
 		SummonVersion: version,
+		StrictDeps:    installStrictDeps,
 	}
 
 	if err := installer.Install(opts); err != nil {

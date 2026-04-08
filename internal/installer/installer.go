@@ -6,12 +6,14 @@
 package installer
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/ai-summon/summon/internal/catalog"
+	"github.com/ai-summon/summon/internal/depcheck"
 	"github.com/ai-summon/summon/internal/git"
 	"github.com/ai-summon/summon/internal/manifest"
 	"github.com/ai-summon/summon/internal/marketplace"
@@ -19,6 +21,7 @@ import (
 	"github.com/ai-summon/summon/internal/registry"
 	"github.com/ai-summon/summon/internal/resolver"
 	"github.com/ai-summon/summon/internal/store"
+	"golang.org/x/term"
 )
 
 // Options configures a single package installation. Package is a git URL,
@@ -34,6 +37,7 @@ type Options struct {
 	Scope         platform.Scope
 	ProjectDir    string
 	SummonVersion string
+	StrictDeps    bool
 }
 
 // Paths holds the resolved filesystem locations used during installation.
@@ -225,7 +229,15 @@ func installGitHub(opts Options, paths Paths, s *store.Store, reg *registry.Regi
 		materializeComponents(storePath, m, paths, compatiblePlatforms)
 
 		Status("Installed", "%s v%s (%s) → %s scope", m.Name, m.Version, sha[:8], paths.Scope.String())
-		reportDependencies(m, reg)
+		unsatisfied, err := reportDependencies(m, paths.Scope, opts.ProjectDir, opts.StrictDeps)
+		if err != nil {
+			return err
+		}
+		if len(unsatisfied) > 0 && !opts.StrictDeps {
+			if toInstall := PromptInstallDeps(unsatisfied); len(toInstall) > 0 {
+				InstallDeps(toInstall, paths.Scope, opts.ProjectDir, opts.SummonVersion)
+			}
+		}
 	}
 	return nil
 }
@@ -299,7 +311,15 @@ func installLocal(opts Options, paths Paths, s *store.Store, reg *registry.Regis
 		materializeComponents(storePath, m, paths, compatiblePlatforms)
 
 		Status("Installed", "%s v%s (local) → %s scope", m.Name, m.Version, paths.Scope.String())
-		reportDependencies(m, reg)
+		unsatisfied, err := reportDependencies(m, paths.Scope, opts.ProjectDir, opts.StrictDeps)
+		if err != nil {
+			return err
+		}
+		if len(unsatisfied) > 0 && !opts.StrictDeps {
+			if toInstall := PromptInstallDeps(unsatisfied); len(toInstall) > 0 {
+				InstallDeps(toInstall, paths.Scope, opts.ProjectDir, opts.SummonVersion)
+			}
+		}
 	}
 	return nil
 }
@@ -548,24 +568,162 @@ func EnsureGitignore(projectDir string) error {
 	return nil
 }
 
-// reportDependencies prints a warning to stderr listing any manifest
-// dependencies that are not yet present in the registry.
-func reportDependencies(m *manifest.Manifest, reg *registry.Registry) {
+// reportDependencies checks manifest dependencies against all visible
+// registries using depcheck, reports results, and optionally blocks if
+// strictDeps is true and any dependency is unsatisfied.
+// Returns the list of depcheck.Result entries and an error if strict mode
+// is active and unsatisfied deps are found.
+func reportDependencies(m *manifest.Manifest, scope platform.Scope, projectDir string, strictDeps bool) ([]depcheck.Result, error) {
 	if len(m.Dependencies) == 0 {
-		return
+		return nil, nil
 	}
-	var missing []string
-	for dep := range m.Dependencies {
-		if !reg.Has(dep) {
-			missing = append(missing, dep)
+
+	// Build a registry view across all scopes
+	allScopes := platform.ScopePrecedence()
+	registries := make(map[platform.Scope]*registry.Registry)
+	for _, s := range allScopes {
+		p := ResolvePaths(s, projectDir)
+		reg, err := registry.Load(p.RegistryPath)
+		if err != nil {
+			continue
+		}
+		registries[s] = reg
+	}
+
+	view := depcheck.NewRegistryView(registries)
+	result := depcheck.CheckPackage(m, scope, view)
+
+	if result.AllSatisfied {
+		return result.Results, nil
+	}
+
+	// Collect unsatisfied
+	var unsatisfied []depcheck.Result
+	for _, r := range result.Results {
+		if r.Status != depcheck.Satisfied {
+			unsatisfied = append(unsatisfied, r)
 		}
 	}
-	if len(missing) > 0 {
-		StatusErr("Warning", "missing dependencies:")
-		for _, dep := range missing {
-			fmt.Fprintf(Stderr, "%*s - %s (install with: summon install %s)\n", statusLabelWidth, "", dep, dep)
+
+	if strictDeps {
+		StatusErr("Error", "missing required dependencies:")
+		for _, r := range unsatisfied {
+			switch r.Status {
+			case depcheck.Missing:
+				fmt.Fprintf(Stderr, "%*s - %s %s (not installed)\n", statusLabelWidth, "", r.DependencyName, r.Constraint)
+			case depcheck.VersionMismatch:
+				fmt.Fprintf(Stderr, "%*s - %s %s (installed %s, requires %s)\n", statusLabelWidth, "", r.DependencyName, r.Constraint, r.InstalledVersion, r.Constraint)
+			case depcheck.UnparseableConstraint:
+				fmt.Fprintf(Stderr, "%*s - %s %s (%s)\n", statusLabelWidth, "", r.DependencyName, r.Constraint, r.Message)
+			}
+		}
+		fmt.Fprintf(Stderr, "\n%*s Install the missing dependencies first, or remove --strict-deps to install with warnings.\n", statusLabelWidth, "")
+		return unsatisfied, fmt.Errorf("missing required dependencies")
+	}
+
+	// Non-strict: warn and continue (default behavior)
+	StatusErr("Warning", "missing dependencies:")
+	for _, r := range unsatisfied {
+		switch r.Status {
+		case depcheck.Missing:
+			if r.Constraint != "" {
+				fmt.Fprintf(Stderr, "%*s - %s %s (not installed)\n", statusLabelWidth, "", r.DependencyName, r.Constraint)
+			} else {
+				fmt.Fprintf(Stderr, "%*s - %s (not installed)\n", statusLabelWidth, "", r.DependencyName)
+			}
+		case depcheck.VersionMismatch:
+			fmt.Fprintf(Stderr, "%*s - %s: installed %s, requires %s\n", statusLabelWidth, "", r.DependencyName, r.InstalledVersion, r.Constraint)
+		case depcheck.UnparseableConstraint:
+			fmt.Fprintf(Stderr, "%*s - %s: %s\n", statusLabelWidth, "", r.DependencyName, r.Message)
 		}
 	}
+	return unsatisfied, nil
+}
+
+// Stdin is the reader used for interactive prompts. Tests can replace this.
+var Stdin *os.File = os.Stdin
+
+// IsInteractive checks whether stdin is a terminal and SUMMON_NONINTERACTIVE
+// is not set.
+func IsInteractive() bool {
+	if os.Getenv("SUMMON_NONINTERACTIVE") == "1" {
+		return false
+	}
+	return term.IsTerminal(int(Stdin.Fd()))
+}
+
+// PromptInstallDeps asks the user whether to install missing dependencies.
+// Returns the list of dependency names to install. Returns nil if the user
+// declines or stdin is not interactive.
+func PromptInstallDeps(unsatisfied []depcheck.Result) []string {
+	if !IsInteractive() {
+		return nil
+	}
+
+	// Only offer to install missing deps (not version mismatches — those need manual update)
+	var installable []depcheck.Result
+	for _, r := range unsatisfied {
+		if r.Status == depcheck.Missing {
+			installable = append(installable, r)
+		}
+	}
+	if len(installable) == 0 {
+		return nil
+	}
+
+	fmt.Fprintf(Stderr, "\n%*s Install missing dependencies? [Y/n/s(elect)] ", statusLabelWidth, "")
+
+	scanner := bufio.NewScanner(Stdin)
+	if !scanner.Scan() {
+		return nil
+	}
+	answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
+
+	switch answer {
+	case "", "y", "yes":
+		// Install all missing
+		names := make([]string, 0, len(installable))
+		for _, r := range installable {
+			names = append(names, r.DependencyName)
+		}
+		return names
+
+	case "s", "select":
+		// Prompt individually
+		var names []string
+		for _, r := range installable {
+			fmt.Fprintf(Stderr, "%*s Install %s %s? [Y/n] ", statusLabelWidth, "", r.DependencyName, r.Constraint)
+			if !scanner.Scan() {
+				break
+			}
+			a := strings.TrimSpace(strings.ToLower(scanner.Text()))
+			if a == "" || a == "y" || a == "yes" {
+				names = append(names, r.DependencyName)
+			}
+		}
+		return names
+
+	default:
+		// n or anything else — decline
+		return nil
+	}
+}
+
+// InstallDeps installs a list of packages as dependencies at the given scope.
+func InstallDeps(deps []string, scope platform.Scope, projectDir, summonVersion string) {
+	for _, dep := range deps {
+		depOpts := Options{
+			Package:       dep,
+			Scope:         scope,
+			ProjectDir:    projectDir,
+			SummonVersion: summonVersion,
+		}
+		if err := Install(depOpts); err != nil {
+			StatusErr("Warning", "failed to install dependency %s: %v", dep, err)
+		}
+	}
+
+	// Report version mismatch deps that were skipped
 }
 
 func fileExists(path string) bool {

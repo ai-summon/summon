@@ -286,3 +286,119 @@ packages:
 		}
 	}
 }
+
+func TestRunUninstall_ReverseDepCheck_HasDependents_NonInteractive(t *testing.T) {
+	dir := setupProjectDir(t)
+	writeScopedRegistryYAML(t, dir, "local", `
+summon_version: "0.1.0"
+packages:
+  base-lib:
+    version: "1.0.0"
+    source: {type: github, url: "https://github.com/test/base-lib"}
+  pkg-a:
+    version: "1.0.0"
+    source: {type: github, url: "https://github.com/test/pkg-a"}
+`)
+	writeManifest(t, dir, "local", "base-lib", `
+name: base-lib
+version: "1.0.0"
+description: "base library"
+`)
+	writeManifest(t, dir, "local", "pkg-a", `
+name: pkg-a
+version: "1.0.0"
+description: "depends on base-lib"
+dependencies:
+  base-lib: ">=1.0.0"
+`)
+
+	uninstallGlobal = false
+	uninstallProject = false
+	uninstallScope = "local"
+	uninstallForce = false
+
+	// Non-interactive → should fail with error
+	t.Setenv("SUMMON_NONINTERACTIVE", "1")
+
+	err := runUninstall(uninstallCmd, []string{"base-lib"})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "has dependents")
+}
+
+func TestRunUninstall_ReverseDepCheck_Force(t *testing.T) {
+	dir := setupProjectDir(t)
+	writeScopedRegistryYAML(t, dir, "local", `
+summon_version: "0.1.0"
+packages:
+  base-lib:
+    version: "1.0.0"
+    source: {type: github, url: "https://github.com/test/base-lib"}
+  pkg-a:
+    version: "1.0.0"
+    source: {type: github, url: "https://github.com/test/pkg-a"}
+`)
+	writeManifest(t, dir, "local", "base-lib", `
+name: base-lib
+version: "1.0.0"
+description: "base library"
+`)
+	writeManifest(t, dir, "local", "pkg-a", `
+name: pkg-a
+version: "1.0.0"
+description: "depends on base-lib"
+dependencies:
+  base-lib: ">=1.0.0"
+`)
+
+	uninstallGlobal = false
+	uninstallProject = false
+	uninstallScope = "local"
+	uninstallForce = true // force skips reverse dep check
+
+	captureStdout(t, func() {
+		err := runUninstall(uninstallCmd, []string{"base-lib"})
+		assert.NoError(t, err)
+	})
+
+	// Verify base-lib was removed
+	_, err := os.Stat(filepath.Join(dir, ".summon", "local", "store", "base-lib"))
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestRunUninstall_NoDependents(t *testing.T) {
+	dir := setupProjectDir(t)
+	writeScopedRegistryYAML(t, dir, "local", `
+summon_version: "0.1.0"
+packages:
+  standalone:
+    version: "1.0.0"
+    source: {type: github, url: "https://github.com/test/standalone"}
+  other-pkg:
+    version: "1.0.0"
+    source: {type: github, url: "https://github.com/test/other-pkg"}
+`)
+	writeManifest(t, dir, "local", "standalone", `
+name: standalone
+version: "1.0.0"
+description: "no deps"
+`)
+	writeManifest(t, dir, "local", "other-pkg", `
+name: other-pkg
+version: "1.0.0"
+description: "no deps either"
+`)
+
+	uninstallGlobal = false
+	uninstallProject = false
+	uninstallScope = "local"
+	uninstallForce = false
+
+	captureStdout(t, func() {
+		err := runUninstall(uninstallCmd, []string{"standalone"})
+		assert.NoError(t, err)
+	})
+
+	// Verify it was uninstalled without prompting
+	_, err := os.Stat(filepath.Join(dir, ".summon", "local", "store", "standalone"))
+	assert.True(t, os.IsNotExist(err))
+}

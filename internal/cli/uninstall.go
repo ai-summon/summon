@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"bufio"
 	"fmt"
 	"os"
+	"strings"
 
+	"github.com/ai-summon/summon/internal/depcheck"
 	"github.com/ai-summon/summon/internal/installer"
 	"github.com/ai-summon/summon/internal/manifest"
 	"github.com/ai-summon/summon/internal/marketplace"
@@ -20,14 +23,18 @@ var uninstallCmd = &cobra.Command{
 	RunE:  runUninstall,
 }
 
-var uninstallGlobal bool
-var uninstallProject bool
-var uninstallScope string
+var (
+	uninstallGlobal  bool
+	uninstallProject bool
+	uninstallScope   string
+	uninstallForce   bool
+)
 
 func init() {
 	uninstallCmd.Flags().BoolVarP(&uninstallGlobal, "global", "g", false, "Shortcut for --scope user")
 	uninstallCmd.Flags().BoolVarP(&uninstallProject, "project", "p", false, "Shortcut for --scope project")
 	uninstallCmd.Flags().StringVar(&uninstallScope, "scope", "", "Target scope. One of local, project, user")
+	uninstallCmd.Flags().BoolVar(&uninstallForce, "force", false, "Skip reverse dependency check")
 	uninstallCmd.MarkFlagsMutuallyExclusive("scope", "global", "project")
 	rootCmd.AddCommand(uninstallCmd)
 }
@@ -55,6 +62,61 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 
 	if !reg.Has(name) {
 		return fmt.Errorf("package %q is not installed", name)
+	}
+
+	// Reverse dependency check (skip if --force)
+	if !uninstallForce {
+		allScopes := platform.ScopePrecedence()
+		registries := make(map[platform.Scope]*registry.Registry)
+		for _, s := range allScopes {
+			p := installer.ResolvePaths(s, projectDir)
+			r, loadErr := registry.Load(p.RegistryPath)
+			if loadErr != nil {
+				continue
+			}
+			registries[s] = r
+		}
+
+		reverseDeps := depcheck.FindReverseDeps(
+			name,
+			allScopes,
+			registries,
+			func(s platform.Scope, n string) string {
+				p := installer.ResolvePaths(s, projectDir)
+				return p.StoreDir + "/" + n
+			},
+			func(pkgDir string) (*manifest.Manifest, error) {
+				return manifest.Load(pkgDir)
+			},
+		)
+
+		if len(reverseDeps) > 0 {
+			installer.StatusErr("Warning", "the following packages depend on %s:", name)
+			for _, rd := range reverseDeps {
+				constraint := rd.Constraint
+				if constraint == "" {
+					constraint = "(any version)"
+				}
+				fmt.Fprintf(installer.Stderr, "%*s - %s (%s) requires %s %s\n",
+					12, "", rd.PackageName, rd.Scope, name, constraint)
+			}
+
+			if !installer.IsInteractive() {
+				return fmt.Errorf("package %q has dependents; use --force to remove anyway", name)
+			}
+
+			fmt.Fprintf(installer.Stderr, "\n%*s Proceed with uninstall? (y/N) ", 12, "")
+			scanner := bufio.NewScanner(installer.Stdin)
+			if !scanner.Scan() {
+				installer.Status("Cancelled", "uninstall of %s", name)
+				return nil
+			}
+			answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
+			if answer != "y" && answer != "yes" {
+				installer.Status("Cancelled", "uninstall of %s", name)
+				return nil
+			}
+		}
 	}
 
 	s := store.New(paths.StoreDir)
@@ -106,5 +168,37 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 	}
 
 	installer.Status("Uninstalled", "%s from %s scope", name, scope.String())
+
+	// Remind about packages with now-unmet deps
+	if !uninstallForce {
+		allScopes := platform.ScopePrecedence()
+		registries := make(map[platform.Scope]*registry.Registry)
+		for _, s := range allScopes {
+			p := installer.ResolvePaths(s, projectDir)
+			r, loadErr := registry.Load(p.RegistryPath)
+			if loadErr != nil {
+				continue
+			}
+			registries[s] = r
+		}
+		reverseDeps := depcheck.FindReverseDeps(
+			name,
+			allScopes,
+			registries,
+			func(s platform.Scope, n string) string {
+				p := installer.ResolvePaths(s, projectDir)
+				return p.StoreDir + "/" + n
+			},
+			func(pkgDir string) (*manifest.Manifest, error) {
+				return manifest.Load(pkgDir)
+			},
+		)
+		if len(reverseDeps) > 0 {
+			installer.StatusErr("Note", "the following packages now have unmet dependencies:")
+			for _, rd := range reverseDeps {
+				fmt.Fprintf(installer.Stderr, "%*s - %s (%s)\n", 12, "", rd.PackageName, rd.Scope)
+			}
+		}
+	}
 	return nil
 }

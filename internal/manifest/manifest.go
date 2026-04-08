@@ -143,6 +143,11 @@ func (m *Manifest) ValidateFull(pkgDir string) []string {
 		checkComponentPath("mcp", m.Components.MCP)
 	}
 
+	// Reject self-referential dependencies.
+	if _, selfDep := m.Dependencies[m.Name]; selfDep {
+		errs = append(errs, fmt.Sprintf("package cannot depend on itself (%q)", m.Name))
+	}
+
 	return errs
 }
 
