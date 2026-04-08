@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -8,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ai-summon/summon/internal/manifest"
 	"github.com/ai-summon/summon/internal/platform"
@@ -820,8 +822,11 @@ func runShellInstaller(t *testing.T, env []string) (string, error) {
 	shPath, err := filepath.Abs(filepath.Join(root, "scripts", "install.sh"))
 	require.NoError(t, err)
 	workDir := t.TempDir()
-	cmd := exec.Command("sh", shPath)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sh", shPath)
 	cmd.Dir = workDir
+	env = append(env, "SUMMON_NONINTERACTIVE=1")
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	return string(out), err

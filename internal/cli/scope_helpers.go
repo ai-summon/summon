@@ -8,9 +8,9 @@ import (
 	"github.com/ai-summon/summon/internal/registry"
 )
 
-func resolveQueryScopes(scopeFlag string, global bool) ([]platform.Scope, error) {
-	if scopeFlag != "" || global {
-		scope, err := resolveInstallScope(scopeFlag, global)
+func resolveQueryScopes(scopeFlag string, global bool, project bool) ([]platform.Scope, error) {
+	if scopeFlag != "" || global || project {
+		scope, err := resolveInstallScope(scopeFlag, global, project)
 		if err != nil {
 			return nil, err
 		}
@@ -34,9 +34,9 @@ func findInstalledScopes(projectDir, packageName string) ([]platform.Scope, erro
 	return matches, nil
 }
 
-func resolveExistingPackageScope(projectDir, packageName, scopeFlag string, global bool) (platform.Scope, error) {
-	if scopeFlag != "" || global {
-		scope, err := resolveInstallScope(scopeFlag, global)
+func resolveExistingPackageScope(projectDir, packageName, scopeFlag string, global bool, project bool) (platform.Scope, error) {
+	if scopeFlag != "" || global || project {
+		scope, err := resolveInstallScope(scopeFlag, global, project)
 		if err != nil {
 			return 0, err
 		}

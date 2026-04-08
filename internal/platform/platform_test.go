@@ -25,7 +25,7 @@ func TestParseScope(t *testing.T) {
 		{name: "project", input: "project", want: ScopeProject},
 		{name: "user", input: "user", want: ScopeUser},
 		{name: "empty defaults local", input: "", want: ScopeLocal},
-		{name: "invalid", input: "workspace", wantErr: "invalid scope"},
+		{name: "invalid", input: "workspace", wantErr: "Invalid scope value"},
 	}
 
 	for _, tt := range tests {

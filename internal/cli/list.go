@@ -21,15 +21,18 @@ var listCmd = &cobra.Command{
 }
 
 var (
-	listGlobal bool
-	listScope  string
-	listJSON   bool
+	listGlobal  bool
+	listProject bool
+	listScope   string
+	listJSON    bool
 )
 
 func init() {
-	listCmd.Flags().BoolVarP(&listGlobal, "global", "g", false, "List global packages only")
-	listCmd.Flags().StringVar(&listScope, "scope", "", "Filter to one scope: user, project, or local")
+	listCmd.Flags().BoolVarP(&listGlobal, "global", "g", false, "Shortcut for --scope user")
+	listCmd.Flags().BoolVarP(&listProject, "project", "p", false, "Shortcut for --scope project")
+	listCmd.Flags().StringVar(&listScope, "scope", "", "Filter to one scope. One of local, project, user")
 	listCmd.Flags().BoolVar(&listJSON, "json", false, "Output as JSON")
+	listCmd.MarkFlagsMutuallyExclusive("scope", "global", "project")
 	rootCmd.AddCommand(listCmd)
 }
 
@@ -50,7 +53,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	scopes, err := resolveQueryScopes(listScope, listGlobal)
+	scopes, err := resolveQueryScopes(listScope, listGlobal, listProject)
 	if err != nil {
 		return err
 	}

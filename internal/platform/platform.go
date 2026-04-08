@@ -63,7 +63,7 @@ func ParseScope(value string) (Scope, error) {
 	case ScopeUser.String(), "global":
 		return ScopeUser, nil
 	default:
-		return 0, fmt.Errorf("invalid scope %q (supported: user, project, local)", value)
+		return 0, fmt.Errorf("Invalid scope value %q. Allowed: local, project, user.", value)
 	}
 }
 
