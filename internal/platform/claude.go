@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,6 +13,9 @@ import (
 // entries to the extraKnownMarketplaces map.
 type ClaudeAdapter struct {
 	ProjectDir string
+	// HomeDir overrides the user home directory for settings path resolution.
+	// When empty, os.UserHomeDir() is used. This is primarily for testing.
+	HomeDir string
 }
 
 func (c *ClaudeAdapter) Name() string {
@@ -29,7 +33,10 @@ func (c *ClaudeAdapter) Detect() bool {
 
 func (c *ClaudeAdapter) SettingsPath(scope Scope) string {
 	if scope == ScopeGlobal {
-		home, _ := os.UserHomeDir()
+		home := c.HomeDir
+		if home == "" {
+			home, _ = os.UserHomeDir()
+		}
 		return filepath.Join(home, ".claude", "settings.json")
 	}
 	if scope == ScopeLocal {
@@ -43,7 +50,7 @@ func (c *ClaudeAdapter) Register(marketplacePath string, marketplaceName string,
 	settingsPath := c.SettingsPath(scope)
 	settings, err := readJSONFile(settingsPath)
 	if err != nil {
-		settings = make(map[string]interface{})
+		return err
 	}
 
 	ekm, ok := settings["extraKnownMarketplaces"].(map[string]interface{})
@@ -71,6 +78,8 @@ func (c *ClaudeAdapter) Unregister(marketplaceName string, scope Scope) error {
 	settingsPath := c.SettingsPath(scope)
 	settings, err := readJSONFile(settingsPath)
 	if err != nil {
+		// Best-effort cleanup: if the file can't be parsed, there's nothing
+		// safe to remove. Silently skip rather than block uninstall.
 		return nil
 	}
 
@@ -93,7 +102,7 @@ func (c *ClaudeAdapter) EnablePlugin(pluginName string, marketplaceName string, 
 	settingsPath := c.SettingsPath(scope)
 	settings, err := readJSONFile(settingsPath)
 	if err != nil {
-		settings = make(map[string]interface{})
+		return err
 	}
 
 	ep, ok := settings["enabledPlugins"].(map[string]interface{})
@@ -112,6 +121,8 @@ func (c *ClaudeAdapter) DisablePlugin(pluginName string, marketplaceName string,
 	settingsPath := c.SettingsPath(scope)
 	settings, err := readJSONFile(settingsPath)
 	if err != nil {
+		// Best-effort cleanup: if the file can't be parsed, there's nothing
+		// safe to remove. Silently skip rather than block uninstall.
 		return nil
 	}
 
@@ -130,23 +141,32 @@ func (c *ClaudeAdapter) DisablePlugin(pluginName string, marketplaceName string,
 }
 
 // readJSONFile reads and unmarshals a JSON file into a generic map.
-// Returns an error if the file cannot be read or is not valid JSON.
+// Returns an empty map if the file does not exist or is empty/whitespace-only.
+// Returns an error if the file exists but is not valid JSON.
 func readJSONFile(path string) (map[string]interface{}, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		if os.IsNotExist(err) {
+			return make(map[string]interface{}), nil
+		}
+		return nil, fmt.Errorf("cannot safely read settings from %s: %w", path, err)
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return make(map[string]interface{}), nil
 	}
 	var result map[string]interface{}
 	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("cannot safely read settings from %s: file exists but is not valid JSON (%w); fix the file manually or remove non-JSON content (e.g., comments, trailing commas)", path, err)
 	}
 	return result, nil
 }
 
-// writeJSONFile marshals a map to pretty-printed JSON and writes it to the
-// given path, creating parent directories as needed.
+// writeJSONFile marshals a map to pretty-printed JSON and atomically writes it
+// to the given path using temp-file-then-rename, creating parent directories
+// as needed.
 func writeJSONFile(path string, data map[string]interface{}) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("creating settings directory: %w", err)
 	}
 	out, err := json.MarshalIndent(data, "", "  ")
@@ -154,5 +174,29 @@ func writeJSONFile(path string, data map[string]interface{}) error {
 		return err
 	}
 	out = append(out, '\n')
-	return os.WriteFile(path, out, 0o644)
+
+	tmp, err := os.CreateTemp(dir, ".summon-settings-*.tmp")
+	if err != nil {
+		return fmt.Errorf("creating temp file for settings: %w", err)
+	}
+	tmpPath := tmp.Name()
+
+	if _, err := tmp.Write(out); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("writing temp settings file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("closing temp settings file: %w", err)
+	}
+	if err := os.Chmod(tmpPath, 0o644); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("setting permissions on temp settings file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("renaming temp settings file: %w", err)
+	}
+	return nil
 }
