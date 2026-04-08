@@ -8,13 +8,16 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/ai-summon/summon/internal/depcheck"
+	"github.com/ai-summon/summon/internal/fsutil"
 	"github.com/ai-summon/summon/internal/manifest"
 	"github.com/ai-summon/summon/internal/platform"
 	"github.com/ai-summon/summon/internal/registry"
+	"github.com/ai-summon/summon/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -25,6 +28,32 @@ func canonicalPluginPath(storeDir, name string) string {
 		p = filepath.Join(resolved, name)
 	}
 	return p
+}
+
+func initGitRepo(t *testing.T, dir string) string {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	cmds := [][]string{
+		{"git", "init", "--quiet", dir},
+		{"git", "-C", dir, "config", "user.email", "test@test.com"},
+		{"git", "-C", dir, "config", "user.name", "Test"},
+	}
+	for _, args := range cmds {
+		cmd := exec.Command(args[0], args[1:]...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git command %v failed: %s %v", args, string(out), err)
+		}
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "summon.yaml"), []byte(`name: test-pkg
+version: "1.0.0"
+description: A test package
+platforms: [claude]
+`), 0o644))
+	add := exec.Command("git", "-C", dir, "add", ".")
+	require.NoError(t, add.Run())
+	commit := exec.Command("git", "-C", dir, "commit", "-m", "initial commit")
+	require.NoError(t, commit.Run())
+	return dir
 }
 
 // ---------------------------------------------------------------------------
@@ -64,6 +93,139 @@ func TestResolvePaths_User(t *testing.T) {
 	assert.Equal(t, filepath.Join(home, ".summon", "user", "platforms"), p.PlatformsDir)
 	assert.Equal(t, platform.ScopeUser, p.Scope)
 	assert.Equal(t, "summon-user", p.MarketplaceName)
+}
+
+func TestMakeScopedTempDir_LocalScopeBase(t *testing.T) {
+	projectDir := t.TempDir()
+	paths := ResolvePaths(platform.ScopeLocal, projectDir)
+
+	tmpDir, err := MakeScopedTempDir(paths, "summon-install-*")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	assert.True(t, strings.HasPrefix(filepath.Clean(tmpDir), filepath.Clean(filepath.Dir(paths.StoreDir))+string(filepath.Separator)))
+}
+
+func TestMakeScopedTempDir_CreatesBaseDir(t *testing.T) {
+	projectDir := t.TempDir()
+	paths := ResolvePaths(platform.ScopeProject, projectDir)
+
+	baseDir := filepath.Dir(paths.StoreDir)
+	require.NoError(t, os.RemoveAll(baseDir))
+
+	tmpDir, err := MakeScopedTempDir(paths, "summon-update-*")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	_, statErr := os.Stat(baseDir)
+	require.NoError(t, statErr)
+}
+
+func TestInstallGitHub_CrossDeviceFallback(t *testing.T) {
+	projectDir := t.TempDir()
+	remote := initGitRepo(t, filepath.Join(t.TempDir(), "remote"))
+	repoURL := "file://" + remote
+
+	fsutil.SetRenameDir(func(oldpath, newpath string) error {
+		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: syscall.EXDEV}
+	})
+	defer fsutil.SetRenameDir(nil)
+
+	err := Install(Options{Package: repoURL, ProjectDir: projectDir, Force: true})
+	require.NoError(t, err)
+
+	storePath := filepath.Join(projectDir, ".summon", "local", "store", "test-pkg")
+	require.FileExists(t, filepath.Join(storePath, "summon.yaml"))
+	require.FileExists(t, filepath.Join(storePath, ".claude-plugin", "plugin.json"))
+
+	reg, err := registry.Load(filepath.Join(projectDir, ".summon", "local", "registry.yaml"))
+	require.NoError(t, err)
+	entry, ok := reg.Get("test-pkg")
+	require.True(t, ok)
+	assert.Equal(t, repoURL, entry.Source.URL)
+	assert.NotEmpty(t, entry.Source.SHA)
+}
+
+func TestInstallGitHub_MultiPluginCrossDeviceFallback(t *testing.T) {
+	projectDir := t.TempDir()
+	remote := filepath.Join(t.TempDir(), "remote")
+	require.NoError(t, os.MkdirAll(remote, 0o755))
+
+	pluginA := filepath.Join(remote, "plugin-a")
+	require.NoError(t, os.MkdirAll(pluginA, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pluginA, "plugin.json"), []byte(`{
+  "name": "plugin-a",
+  "version": "1.0.0",
+  "description": "Plugin A"
+}`), 0o644))
+
+	pluginB := filepath.Join(remote, "plugin-b")
+	require.NoError(t, os.MkdirAll(pluginB, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pluginB, "plugin.json"), []byte(`{
+  "name": "plugin-b",
+  "version": "2.0.0",
+  "description": "Plugin B"
+}`), 0o644))
+
+	marketplaceJSON := `{
+  "name": "multi-plugin-marketplace",
+  "plugins": [
+    {"name": "plugin-a", "source": "./plugin-a"},
+    {"name": "plugin-b", "source": "./plugin-b"}
+  ]
+}`
+	require.NoError(t, os.MkdirAll(filepath.Join(remote, ".claude-plugin"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(remote, ".claude-plugin", "marketplace.json"), []byte(marketplaceJSON), 0o644))
+
+	gitInit := exec.Command("git", "init", "--quiet", remote)
+	require.NoError(t, gitInit.Run())
+	gitConfigEmail := exec.Command("git", "-C", remote, "config", "user.email", "test@test.com")
+	require.NoError(t, gitConfigEmail.Run())
+	gitConfigName := exec.Command("git", "-C", remote, "config", "user.name", "Test")
+	require.NoError(t, gitConfigName.Run())
+	gitAdd := exec.Command("git", "-C", remote, "add", ".")
+	require.NoError(t, gitAdd.Run())
+	gitCommit := exec.Command("git", "-C", remote, "commit", "-m", "initial commit")
+	require.NoError(t, gitCommit.Run())
+
+	repoURL := "file://" + remote
+	fsutil.SetRenameDir(func(oldpath, newpath string) error {
+		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: syscall.EXDEV}
+	})
+	defer fsutil.SetRenameDir(nil)
+
+	err := Install(Options{Package: repoURL, ProjectDir: projectDir, Force: true})
+	require.NoError(t, err)
+
+	for _, pkg := range []string{"plugin-a", "plugin-b"} {
+		storePath := filepath.Join(projectDir, ".summon", "local", "store", pkg)
+		require.DirExists(t, storePath)
+		require.FileExists(t, filepath.Join(storePath, ".claude-plugin", "plugin.json"))
+		reg, err := registry.Load(filepath.Join(projectDir, ".summon", "local", "registry.yaml"))
+		require.NoError(t, err)
+		_, ok := reg.Get(pkg)
+		require.True(t, ok)
+	}
+}
+
+func TestInstallGitHub_PostInstallMarketplaceGenerated(t *testing.T) {
+	projectDir := t.TempDir()
+	remote := initGitRepo(t, filepath.Join(t.TempDir(), "remote"))
+	repoURL := "file://" + remote
+
+	fsutil.SetRenameDir(func(oldpath, newpath string) error {
+		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: syscall.EXDEV}
+	})
+	defer fsutil.SetRenameDir(nil)
+
+	err := Install(Options{Package: repoURL, ProjectDir: projectDir, Force: true})
+	require.NoError(t, err)
+
+	marketplacePath := filepath.Join(projectDir, ".summon", "local", "platforms", "claude", ".claude-plugin", "marketplace.json")
+	require.FileExists(t, marketplacePath)
+	pluginsDir := filepath.Join(projectDir, ".summon", "local", "platforms", "claude", "plugins")
+	_, err = os.Stat(filepath.Join(pluginsDir, "test-pkg"))
+	require.NoError(t, err)
 }
 
 // ---------------------------------------------------------------------------
@@ -1210,4 +1372,89 @@ func TestInstall_MarketplaceExtraction(t *testing.T) {
 	require.True(t, okB, "mp-plugin-b should be in registry")
 	assert.Equal(t, "1.0.0", entryA.Version)
 	assert.Equal(t, "1.0.0", entryB.Version)
+}
+
+// ---------------------------------------------------------------------------
+// T030: Unit regression assertion that local install path remains link-based
+// ---------------------------------------------------------------------------
+
+func TestInstallLocal_RemainsLinkBased(t *testing.T) {
+	projectDir := t.TempDir()
+	pkgDir := filepath.Join(t.TempDir(), "local-pkg")
+	require.NoError(t, os.MkdirAll(pkgDir, 0o755))
+	manifest := "name: local-pkg\nversion: \"1.0.0\"\ndescription: \"Local package\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "summon.yaml"), []byte(manifest), 0o644))
+
+	paths := ResolvePaths(platform.ScopeLocal, projectDir)
+	s := store.New(paths.StoreDir)
+
+	err := Install(Options{
+		Path:       pkgDir,
+		Force:      true,
+		Scope:      platform.ScopeLocal,
+		ProjectDir: projectDir,
+	})
+	require.NoError(t, err)
+
+	// Verify the store entry is a symbolic link (link-based behavior)
+	storePath := s.PackagePath("local-pkg")
+	info, err := os.Lstat(storePath)
+	require.NoError(t, err)
+	assert.Equal(t, os.ModeSymlink, info.Mode()&os.ModeSymlink, "local install should create a symbolic link")
+
+	// Verify link points to original package directory
+	linkTarget, err := os.Readlink(storePath)
+	require.NoError(t, err)
+	assert.Equal(t, pkgDir, linkTarget, "link should point to the original package directory")
+}
+
+// ---------------------------------------------------------------------------
+// T022: Installer retry/cleanup regression tests for failed move scenarios
+// ---------------------------------------------------------------------------
+
+func TestInstallGitHub_MoveFailure_CleanupAndRetry(t *testing.T) {
+	projectDir := t.TempDir()
+	repoDir := initGitRepo(t, t.TempDir())
+
+	paths := ResolvePaths(platform.ScopeLocal, projectDir)
+	s := store.New(paths.StoreDir)
+	reg := registry.New()
+
+	// Make the store directory read-only to cause move failure
+	require.NoError(t, os.MkdirAll(paths.StoreDir, 0o755))
+	require.NoError(t, os.Chmod(paths.StoreDir, 0o444))
+
+	// Attempt install - should fail due to move error
+	err := installGitHub(Options{
+		Package:    "file://" + repoDir,
+		Force:      true,
+		Scope:      platform.ScopeLocal,
+		ProjectDir: projectDir,
+	}, paths, s, reg)
+
+	// Should fail with move error
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "moving to store")
+
+	// Registry should not be updated
+	_, ok := reg.Get("test-pkg")
+	assert.False(t, ok, "registry should not contain package after failed move")
+
+	// Make store writable again
+	require.NoError(t, os.Chmod(paths.StoreDir, 0o755))
+
+	// Retry install - should succeed
+	err = installGitHub(Options{
+		Package:    "file://" + repoDir,
+		Force:      true,
+		Scope:      platform.ScopeLocal,
+		ProjectDir: projectDir,
+	}, paths, s, reg)
+
+	require.NoError(t, err)
+
+	// Registry should now be updated
+	entry, ok := reg.Get("test-pkg")
+	require.True(t, ok, "registry should contain package after successful retry")
+	assert.Equal(t, "1.0.0", entry.Version)
 }

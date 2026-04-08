@@ -171,3 +171,41 @@ func TestList_WithMixedEntries(t *testing.T) {
 	assert.Contains(t, names, "dir-pkg")
 	assert.Contains(t, names, "link-pkg")
 }
+
+func TestMoveFromStage(t *testing.T) {
+	storeDir := filepath.Join(t.TempDir(), "store")
+	s := New(storeDir)
+
+	staged := filepath.Join(t.TempDir(), "staged")
+	require.NoError(t, os.MkdirAll(staged, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(staged, "file.txt"), []byte("data"), 0o644))
+
+	require.NoError(t, s.MoveFromStage("pkg", staged))
+
+	data, err := os.ReadFile(filepath.Join(storeDir, "pkg", "file.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "data", string(data))
+	_, err = os.Stat(staged)
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestMoveFromStage_ReplacesExisting(t *testing.T) {
+	storeDir := filepath.Join(t.TempDir(), "store")
+	s := New(storeDir)
+
+	oldDir := filepath.Join(storeDir, "pkg")
+	require.NoError(t, os.MkdirAll(oldDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(oldDir, "old.txt"), []byte("old"), 0o644))
+
+	staged := filepath.Join(t.TempDir(), "staged")
+	require.NoError(t, os.MkdirAll(staged, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(staged, "new.txt"), []byte("new"), 0o644))
+
+	require.NoError(t, s.MoveFromStage("pkg", staged))
+
+	_, err := os.Stat(filepath.Join(storeDir, "pkg", "old.txt"))
+	assert.True(t, os.IsNotExist(err))
+	data, err := os.ReadFile(filepath.Join(storeDir, "pkg", "new.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "new", string(data))
+}

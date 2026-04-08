@@ -284,6 +284,54 @@ func TestInstall_LocalScope_WritesUserSettings(t *testing.T) {
 		"local-scope package should appear in user-level settings for VS Code activation")
 }
 
+// ---------------------------------------------------------------------------
+// T021: Post-update discovery/activation e2e regression
+// ---------------------------------------------------------------------------
+
+// TestUpdateRemotePackage_PostUpdateDiscoveryActivation verifies that after
+// updating a remote package, it remains discoverable in the registry and
+// activated in VS Code settings.
+func TestUpdateRemotePackage_PostUpdateDiscoveryActivation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping remote update test in short mode")
+	}
+
+	binary := buildBinary(t)
+	projectDir := t.TempDir()
+	vscodeDir := t.TempDir()
+	env := makeEnv("SUMMON_VSCODE_SETTINGS_DIR=" + vscodeDir)
+
+	// Install a remote package (brainstorm as used in quickstart)
+	installCmd := exec.Command(binary, "install", "brainstorm")
+	installCmd.Dir = projectDir
+	installCmd.Env = env
+	out, err := installCmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	assert.Contains(t, string(out), "Installed brainstorm")
+
+	// Update the package
+	updateCmd := exec.Command(binary, "update", "brainstorm")
+	updateCmd.Dir = projectDir
+	updateCmd.Env = env
+	out, err = updateCmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	assert.Contains(t, string(out), "Updated brainstorm")
+
+	// Verify package remains listed in registry
+	listCmd := exec.Command(binary, "list", "--scope", "local")
+	listCmd.Dir = projectDir
+	listOut, err := listCmd.CombinedOutput()
+	require.NoError(t, err)
+	assert.Contains(t, string(listOut), "brainstorm")
+
+	// Verify package remains activated in VS Code settings
+	userSettingsPath := filepath.Join(vscodeDir, "settings.json")
+	data, err := os.ReadFile(userSettingsPath)
+	require.NoError(t, err, "user settings should exist after update")
+	assert.Contains(t, string(data), "brainstorm",
+		"updated remote package should remain in user-level settings for VS Code activation")
+}
+
 func writeExecutableFile(t *testing.T, path, content string) {
 	t.Helper()
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o755))

@@ -35,7 +35,7 @@ summon install github:user/pkg
    │  1. Clone repo → temp dir                         │
    │  2. Resolve version (tag/ref/HEAD)                 │
    │  3. Load manifest (resolution chain below)          │
-   │  4. Move to store (.summon/store/<name>)            │
+   │  4. Move to store (.summon/store/<name>)            │  ← Cross-device-safe: uses rename-first with copy/fallback for different filesystems
    │  5. Generate plugin descriptor if missing           │
    │  6. Record in registry (.summon/registry.yaml)      │
    │  7. Generate marketplace (marketplace.json)         │

@@ -89,6 +89,20 @@ func scopeFromLegacy(global bool, scope platform.Scope) platform.Scope {
 	return platform.ScopeLocal
 }
 
+// MakeScopedTempDir creates a temporary staging directory near the selected
+// scope store so same-filesystem renames remain the fast-path.
+func MakeScopedTempDir(paths Paths, pattern string) (string, error) {
+	base := filepath.Dir(paths.StoreDir)
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		return "", fmt.Errorf("creating staging base dir: %w", err)
+	}
+	tmpDir, err := os.MkdirTemp(base, pattern)
+	if err != nil {
+		return "", fmt.Errorf("creating temp dir: %w", err)
+	}
+	return tmpDir, nil
+}
+
 // Install installs a single package according to opts. It delegates to
 // installLocal when opts.Path is set, or installGitHub otherwise.
 func Install(opts Options) error {
@@ -117,9 +131,9 @@ func installGitHub(opts Options, paths Paths, s *store.Store, reg *registry.Regi
 		return nil
 	}
 
-	tmpDir, err := os.MkdirTemp("", "summon-install-*")
+	tmpDir, err := MakeScopedTempDir(paths, "summon-install-*")
 	if err != nil {
-		return fmt.Errorf("creating temp dir: %w", err)
+		return err
 	}
 	defer os.RemoveAll(tmpDir)
 
@@ -186,16 +200,10 @@ func installGitHub(opts Options, paths Paths, s *store.Store, reg *registry.Regi
 			}
 		}
 
-		if err := s.Remove(m.Name); err != nil {
-			return fmt.Errorf("removing old store entry: %w", err)
-		}
-		storePath := s.PackagePath(m.Name)
-		if err := os.MkdirAll(filepath.Dir(storePath), 0o755); err != nil {
-			return err
-		}
-		if err := os.Rename(pluginRoot, storePath); err != nil {
+		if err := s.MoveFromStage(m.Name, pluginRoot); err != nil {
 			return fmt.Errorf("moving to store: %w", err)
 		}
+		storePath := s.PackagePath(m.Name)
 
 		if !marketplace.PluginJSONExists(storePath) {
 			if err := marketplace.GeneratePluginJSON(storePath, m); err != nil {
@@ -400,7 +408,7 @@ func resolveGitURL(pkg string) (string, error) {
 		path := strings.TrimPrefix(pkg, "github:")
 		return "https://github.com/" + path, nil
 	}
-	if strings.HasPrefix(pkg, "https://") || strings.HasPrefix(pkg, "git@") {
+	if strings.HasPrefix(pkg, "https://") || strings.HasPrefix(pkg, "git@") || strings.HasPrefix(pkg, "file://") {
 		return pkg, nil
 	}
 	cat, err := catalog.LoadDefault()
