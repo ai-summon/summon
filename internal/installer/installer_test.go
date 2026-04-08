@@ -1445,9 +1445,11 @@ func TestInstallGitHub_MoveFailure_CleanupAndRetry(t *testing.T) {
 	s := store.New(paths.StoreDir)
 	reg := registry.New()
 
-	// Make the store directory read-only to cause move failure
-	require.NoError(t, os.MkdirAll(paths.StoreDir, 0o755))
-	require.NoError(t, os.Chmod(paths.StoreDir, 0o444))
+	// Simulate a move failure inside MoveDir in a cross-platform way.
+	fsutil.SetRenameDir(func(oldpath, newpath string) error {
+		return fmt.Errorf("simulated move failure")
+	})
+	defer fsutil.SetRenameDir(nil)
 
 	// Attempt install - should fail due to move error
 	err := installGitHub(Options{
@@ -1465,8 +1467,8 @@ func TestInstallGitHub_MoveFailure_CleanupAndRetry(t *testing.T) {
 	_, ok := reg.Get("test-pkg")
 	assert.False(t, ok, "registry should not contain package after failed move")
 
-	// Make store writable again
-	require.NoError(t, os.Chmod(paths.StoreDir, 0o755))
+	// Retry with real move behavior
+	fsutil.SetRenameDir(nil)
 
 	// Retry install - should succeed
 	err = installGitHub(Options{
