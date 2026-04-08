@@ -463,6 +463,35 @@ func TestInferFromMarketplaceJSON_DuplicateNames(t *testing.T) {
 	assert.Contains(t, err.Error(), "duplicate plugin name")
 }
 
+func TestInferFromMarketplaceJSON_SummonYamlPreferred(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "my-plugin")
+
+	// plugin.json exists but summon.yaml should win
+	writePluginJSON(t, sub, map[string]any{
+		"name": "my-plugin", "version": "1.0.0", "description": "from plugin.json",
+	})
+	require.NoError(t, os.WriteFile(filepath.Join(sub, "summon.yaml"),
+		[]byte("name: my-plugin\nversion: \"2.0.0\"\ndescription: from summon.yaml\nplatforms:\n  - claude\ndependencies:\n  superpowers: \">=5.0.7\"\n"),
+		0o644,
+	))
+	writeMarketplaceJSON(t, dir, map[string]any{
+		"name": "mp",
+		"plugins": []map[string]any{
+			{"name": "my-plugin", "source": "./my-plugin"},
+		},
+	})
+
+	manifests, roots, err := inferFromMarketplaceJSON(dir)
+	require.NoError(t, err)
+	require.Len(t, manifests, 1)
+	assert.Equal(t, "my-plugin", manifests[0].Name)
+	assert.Equal(t, "2.0.0", manifests[0].Version)
+	assert.Equal(t, "from summon.yaml", manifests[0].Description)
+	assert.Equal(t, map[string]string{"superpowers": ">=5.0.7"}, manifests[0].Dependencies)
+	assert.Equal(t, sub, roots[0])
+}
+
 // ---------------------------------------------------------------------------
 // US3: summon.yaml priority tests
 // ---------------------------------------------------------------------------

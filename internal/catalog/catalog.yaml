@@ -1,10 +1,10 @@
 packages:
   - name: superpowers
-    repository: https://github.com/ismaelJimenez/superpowers
+    repository: https://github.com/obra/superpowers
     description: "Core skills library for Claude Code"
     platforms: [claude]
   - name: spex
-    repository: https://github.com/rhuss/cc-spex
+    repository: https://github.com/ismaelJimenez/cc-spex
     description: "Specification framework"
     platforms: [claude]
   - name: get-shit-done
