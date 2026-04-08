@@ -117,7 +117,7 @@ func TestResolveGitURL(t *testing.T) {
 		{
 			name:  "catalog name superpowers",
 			input: "superpowers",
-			want:  "https://github.com/ismaelJimenez/superpowers",
+			want:  "https://github.com/obra/superpowers",
 		},
 		{
 			name:    "unknown catalog name",
