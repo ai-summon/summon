@@ -122,10 +122,25 @@ func TestMakeScopedTempDir_CreatesBaseDir(t *testing.T) {
 	require.NoError(t, statErr)
 }
 
+func fileURL(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	abs = filepath.ToSlash(abs)
+	if runtime.GOOS == "windows" {
+		if strings.HasPrefix(abs, "//") {
+			return "file:" + abs
+		}
+		return "file:///" + abs
+	}
+	return "file://" + abs
+}
+
 func TestInstallGitHub_CrossDeviceFallback(t *testing.T) {
 	projectDir := t.TempDir()
 	remote := initGitRepo(t, filepath.Join(t.TempDir(), "remote"))
-	repoURL := "file://" + remote
+	repoURL := fileURL(remote)
 
 	fsutil.SetRenameDir(func(oldpath, newpath string) error {
 		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: syscall.EXDEV}
@@ -202,7 +217,7 @@ func TestInstallGitHub_MultiPluginCrossDeviceFallback(t *testing.T) {
 	gitCommit := exec.Command("git", "-C", remote, "commit", "-m", "initial commit")
 	require.NoError(t, gitCommit.Run())
 
-	repoURL := "file://" + remote
+	repoURL := fileURL(remote)
 	fsutil.SetRenameDir(func(oldpath, newpath string) error {
 		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: syscall.EXDEV}
 	})
@@ -225,7 +240,7 @@ func TestInstallGitHub_MultiPluginCrossDeviceFallback(t *testing.T) {
 func TestInstallGitHub_PostInstallMarketplaceGenerated(t *testing.T) {
 	projectDir := t.TempDir()
 	remote := initGitRepo(t, filepath.Join(t.TempDir(), "remote"))
-	repoURL := "file://" + remote
+	repoURL := fileURL(remote)
 
 	fsutil.SetRenameDir(func(oldpath, newpath string) error {
 		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: syscall.EXDEV}
@@ -907,11 +922,9 @@ func TestGenerateMarketplaces_CreatesCorrectStructure(t *testing.T) {
 		wrongPath := filepath.Join(platformDir, "marketplace.json")
 		assert.NoFileExists(t, wrongPath, "%s marketplace.json must NOT be at root", pname)
 
-		// Symlink must exist
+		// Link must exist
 		linkPath := filepath.Join(platformDir, "plugins", "my-pkg")
-		fi, err := os.Lstat(linkPath)
-		require.NoError(t, err, "symlink should exist for %s", pname)
-		assert.True(t, fi.Mode()&os.ModeSymlink != 0, "expected symlink for %s", pname)
+		require.True(t, fsutil.IsLink(linkPath), "expected symlink/junction for %s", pname)
 
 		// Source path in marketplace.json must use ./ prefix
 		data, err := os.ReadFile(correctPath)
@@ -1410,14 +1423,12 @@ func TestInstallLocal_RemainsLinkBased(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Verify the store entry is a symbolic link (link-based behavior)
+	// Verify the store entry is a symbolic link or junction (link-based behavior)
 	storePath := s.PackagePath("local-pkg")
-	info, err := os.Lstat(storePath)
-	require.NoError(t, err)
-	assert.Equal(t, os.ModeSymlink, info.Mode()&os.ModeSymlink, "local install should create a symbolic link")
+	require.True(t, fsutil.IsLink(storePath), "local install should create a symbolic link")
 
 	// Verify link points to original package directory
-	linkTarget, err := os.Readlink(storePath)
+	linkTarget, err := fsutil.LinkTarget(storePath)
 	require.NoError(t, err)
 	assert.Equal(t, pkgDir, linkTarget, "link should point to the original package directory")
 }
@@ -1440,7 +1451,7 @@ func TestInstallGitHub_MoveFailure_CleanupAndRetry(t *testing.T) {
 
 	// Attempt install - should fail due to move error
 	err := installGitHub(Options{
-		Package:    "file://" + repoDir,
+		Package:    fileURL(repoDir),
 		Force:      true,
 		Scope:      platform.ScopeLocal,
 		ProjectDir: projectDir,
@@ -1459,7 +1470,7 @@ func TestInstallGitHub_MoveFailure_CleanupAndRetry(t *testing.T) {
 
 	// Retry install - should succeed
 	err = installGitHub(Options{
-		Package:    "file://" + repoDir,
+		Package:    fileURL(repoDir),
 		Force:      true,
 		Scope:      platform.ScopeLocal,
 		ProjectDir: projectDir,
