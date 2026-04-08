@@ -415,7 +415,14 @@ func inferFromMarketplaceJSON(dir string) ([]*Manifest, []string, error) {
 			return nil, nil, fmt.Errorf("marketplace.json plugin source %q does not exist", p.Source)
 		}
 
-		m, err := inferFromPluginJSON(pluginDir)
+		// Prefer summon.yaml over plugin.json in each plugin directory,
+		// mirroring the resolution order used by LoadOrInfer.
+		var m *Manifest
+		if _, statErr := os.Stat(filepath.Join(pluginDir, "summon.yaml")); statErr == nil {
+			m, err = Load(pluginDir)
+		} else {
+			m, err = inferFromPluginJSON(pluginDir)
+		}
 		if err != nil {
 			return nil, nil, fmt.Errorf("plugin at %q: %w", p.Source, err)
 		}
