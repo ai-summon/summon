@@ -128,7 +128,7 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 		if m, err := manifest.Load(storePath); err == nil {
 			for _, a := range platform.DetectActive(projectDir) {
 				if mat, ok := a.(platform.Materializer); ok {
-					_ = mat.RemoveMaterialized(name, m, scope)
+					_ = mat.RemoveMaterialized(name, storePath, m, scope)
 				}
 			}
 		}

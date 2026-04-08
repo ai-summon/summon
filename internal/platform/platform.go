@@ -23,7 +23,7 @@ type Adapter interface {
 // agents into documented customization paths.
 type Materializer interface {
 	MaterializeComponents(pkgDir string, m ComponentsInfo, scope Scope) error
-	RemoveMaterialized(pkgName string, m ComponentsInfo, scope Scope) error
+	RemoveMaterialized(pkgName string, pkgDir string, m ComponentsInfo, scope Scope) error
 }
 
 // Scope represents a writable installation scope.
