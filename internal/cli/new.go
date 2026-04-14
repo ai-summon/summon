@@ -211,26 +211,24 @@ func createProjectStructure(projectPath string, pluginType string) error {
 	return nil
 }
 
-// generateManifest creates the summon.yaml manifest file
+// generateManifest creates the .claude-plugin/plugin.json manifest file.
 func generateManifest(projectPath, pluginName string) error {
-	manifestPath := filepath.Join(projectPath, "summon.yaml")
-
-	// Read template from embedded filesystem
-	templateContent, err := templates.ReadFile("templates/generic/summon.yaml")
-	if err != nil {
-		return fmt.Errorf("failed to read manifest template: %w", err)
+	pluginDir := filepath.Join(projectPath, ".claude-plugin")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		return fmt.Errorf("creating .claude-plugin dir: %w", err)
 	}
 
-	// Substitute template variables
-	content := string(templateContent)
-	content = strings.ReplaceAll(content, "{{NAME}}", pluginName)
-	content = strings.ReplaceAll(content, "{{VERSION}}", "0.1.0")
-	content = strings.ReplaceAll(content, "{{DESCRIPTION}}", fmt.Sprintf("A %s plugin for Summon", pluginName))
-	content = strings.ReplaceAll(content, "{{AUTHOR}}", getAuthorName())
+	pluginJSON := fmt.Sprintf(`{
+  "name": %q,
+  "version": "0.1.0",
+  "description": "A %s plugin for Summon",
+  "author": %q
+}
+`, pluginName, pluginName, getAuthorName())
 
-	// Write manifest file
-	if err := os.WriteFile(manifestPath, []byte(content), 0644); err != nil {
-		return fmt.Errorf("failed to write manifest file: %w", err)
+	pluginPath := filepath.Join(pluginDir, "plugin.json")
+	if err := os.WriteFile(pluginPath, []byte(pluginJSON), 0o644); err != nil {
+		return fmt.Errorf("failed to write plugin.json: %w", err)
 	}
 
 	return nil

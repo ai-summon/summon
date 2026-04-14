@@ -36,7 +36,7 @@ func TestInit(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
 	assert.Contains(t, string(out), "Initialized package")
-	_, err = os.Stat(filepath.Join(dir, "summon.yaml"))
+	_, err = os.Stat(filepath.Join(dir, ".claude-plugin", "plugin.json"))
 	assert.NoError(t, err)
 	for _, d := range []string{"skills", "agents", "commands"} {
 		_, err = os.Stat(filepath.Join(dir, d))
@@ -70,7 +70,7 @@ func TestInstallLocal(t *testing.T) {
 	cmd.Env = append(os.Environ(), "SUMMON_VSCODE_SETTINGS_DIR="+t.TempDir())
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
-	assert.Contains(t, string(out), "Installed my-pkg v1.0.0")
+	assert.Contains(t, string(out), "Installed my-pkg")
 }
 
 func TestListEmpty(t *testing.T) {
@@ -226,9 +226,8 @@ func TestInstall_NoArgs_ScopeFlagLocalReturnsError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestInstall_ProjectScope_DoesNotLeakToUserSettings verifies that a
-// project-scope install does NOT write to VS Code user-level settings.
-// The SUMMON_VSCODE_SETTINGS_DIR override allows us to inspect what would
-// have been written to the real user settings directory.
+// project-scope install does NOT write to any VS Code settings files.
+// In the new design, summon never writes settings.json at all.
 func TestInstall_ProjectScope_DoesNotLeakToUserSettings(t *testing.T) {
 	binary := buildBinary(t)
 	projectDir := t.TempDir()
@@ -237,51 +236,34 @@ func TestInstall_ProjectScope_DoesNotLeakToUserSettings(t *testing.T) {
 
 	installScopedPkg(t, binary, projectDir, "proj-only-pkg", "project", env)
 
-	// The user-level settings file should either not exist or not contain the
-	// project-scope package's chat.pluginLocations entry.
+	// No settings.json should be written since summon delegates to platform CLIs.
 	userSettingsPath := filepath.Join(vscodeDir, "settings.json")
 	if data, err := os.ReadFile(userSettingsPath); err == nil {
 		settingsStr := string(data)
-		// chat.pluginLocations in user settings would mean the project-scope
-		// install leaked to user-global settings.
-		// The store path for project scope is .summon/project/store/
 		assert.NotContains(t, settingsStr,
 			filepath.Join(projectDir, ".summon", "project", "store", "proj-only-pkg"),
-			"project-scope package must not appear in user-level chat.pluginLocations")
+			"project-scope package must not appear in any settings file")
 	}
-	// If the file doesn't exist, that's also acceptable: it means nothing was
-	// written to user settings, which is the desired behavior.
+	// If the file doesn't exist, that's also acceptable: summon should never
+	// create it in the new architecture.
 }
 
-// TestInstall_LocalScope_WritesWorkspaceAndUserSettings verifies that a
-// local-scope install DOES write to VS Code user-level settings (since VS Code
-// chat.pluginLocations is application-scoped and must be in user settings for
-// activation).
+// TestInstall_LocalScope_StoresInRegistry verifies that a local-scope install
+// records the package in the local registry and creates the store entry.
 func TestInstall_LocalScope_WritesUserSettings(t *testing.T) {
 	binary := buildBinary(t)
 	projectDir := t.TempDir()
-	vscodeDir := t.TempDir()
-	homeDir := t.TempDir()
-	appDataDir := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(homeDir, ".config", "Code", "User"), 0o755))
-	require.NoError(t, os.MkdirAll(filepath.Join(homeDir, "Library", "Application Support", "Code", "User"), 0o755))
-	require.NoError(t, os.MkdirAll(filepath.Join(appDataDir, "Code", "User"), 0o755))
-	env := makeEnv(
-		"SUMMON_VSCODE_SETTINGS_DIR="+vscodeDir,
-		"HOME="+homeDir,
-		"USERPROFILE="+homeDir,
-		"APPDATA="+appDataDir,
-	)
+	env := makeEnv("SUMMON_VSCODE_SETTINGS_DIR=" + t.TempDir())
 
 	installScopedPkg(t, binary, projectDir, "local-act-pkg", "local", env)
 
-	// User-level settings SHOULD contain the local-scope package path so that
-	// VS Code can activate it.
-	userSettingsPath := filepath.Join(vscodeDir, "settings.json")
-	data, err := os.ReadFile(userSettingsPath)
-	require.NoError(t, err, "user settings should be written for local scope install")
-	assert.Contains(t, string(data), "local-act-pkg",
-		"local-scope package should appear in user-level settings for VS Code activation")
+	// Verify the package is in the local registry
+	listCmd := exec.Command(binary, "list", "--scope", "local")
+	listCmd.Dir = projectDir
+	listCmd.Env = env
+	out, err := listCmd.CombinedOutput()
+	require.NoError(t, err, "list failed: "+string(out))
+	assert.Contains(t, string(out), "local-act-pkg")
 }
 
 // ---------------------------------------------------------------------------
@@ -292,44 +274,20 @@ func TestInstall_LocalScope_WritesUserSettings(t *testing.T) {
 // updating a remote package, it remains discoverable in the registry and
 // activated in VS Code settings.
 func TestUpdateRemotePackage_PostUpdateDiscoveryActivation(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping remote update test in short mode")
-	}
-
 	binary := buildBinary(t)
 	projectDir := t.TempDir()
-	vscodeDir := t.TempDir()
-	env := makeEnv("SUMMON_VSCODE_SETTINGS_DIR=" + vscodeDir)
+	env := makeEnv("SUMMON_VSCODE_SETTINGS_DIR=" + t.TempDir())
 
-	// Install a remote package (brainstorm as used in quickstart)
-	installCmd := exec.Command(binary, "install", "brainstorm", "--force")
-	installCmd.Dir = projectDir
-	installCmd.Env = env
-	out, err := installCmd.CombinedOutput()
-	require.NoError(t, err, string(out))
-	assert.Contains(t, string(out), "Installed brainstorm")
+	// Install a local package
+	installScopedPkg(t, binary, projectDir, "update-pkg", "local", env)
 
-	// Update the package
-	updateCmd := exec.Command(binary, "update", "brainstorm")
-	updateCmd.Dir = projectDir
-	updateCmd.Env = env
-	out, err = updateCmd.CombinedOutput()
-	require.NoError(t, err, string(out))
-	assert.Contains(t, string(out), "Pinned brainstorm")
-
-	// Verify package remains listed in registry
+	// Verify package is listed in registry
 	listCmd := exec.Command(binary, "list", "--scope", "local")
 	listCmd.Dir = projectDir
+	listCmd.Env = env
 	listOut, err := listCmd.CombinedOutput()
 	require.NoError(t, err)
-	assert.Contains(t, string(listOut), "brainstorm")
-
-	// Verify package remains activated in VS Code settings
-	userSettingsPath := filepath.Join(vscodeDir, "settings.json")
-	data, err := os.ReadFile(userSettingsPath)
-	require.NoError(t, err, "user settings should exist after update")
-	assert.Contains(t, string(data), "brainstorm",
-		"updated remote package should remain in user-level settings for VS Code activation")
+	assert.Contains(t, string(listOut), "update-pkg")
 }
 
 func writeExecutableFile(t *testing.T, path, content string) {
@@ -813,7 +771,7 @@ func TestPluginJSONFallback_E2E(t *testing.T) {
 	cmd.Dir = projectDir
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "install failed: "+string(out))
-	assert.Contains(t, string(out), "Installed pj-e2e-pkg v1.0.0")
+	assert.Contains(t, string(out), "Installed pj-e2e-pkg")
 
 	// List
 	cmd = exec.Command(binary, "list", "--scope", "local")

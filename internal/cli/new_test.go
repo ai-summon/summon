@@ -113,12 +113,11 @@ func TestManifestGeneration(t *testing.T) {
 	err := generateManifest(projectPath, "test-plugin")
 	require.NoError(t, err)
 
-	manifestPath := filepath.Join(projectPath, "summon.yaml")
-	content := readFile(t, manifestPath)
+	pluginPath := filepath.Join(projectPath, ".claude-plugin", "plugin.json")
+	content := readFile(t, pluginPath)
 
-	assert.Contains(t, content, "name: test-plugin")
-	assert.Contains(t, content, "version: 0.1.0")
-	assert.NotContains(t, content, "{{")
+	assert.Contains(t, content, `"test-plugin"`)
+	assert.Contains(t, content, `"0.1.0"`)
 }
 
 func TestErrorHandling_NoPartialDirectory(t *testing.T) {
@@ -168,7 +167,7 @@ func TestNewCmd_SuccessfulBasicScaffold(t *testing.T) {
 	require.NoError(t, copyGitignore(projectPath))
 
 	// Verify files exist
-	assert.FileExists(t, filepath.Join(projectPath, "summon.yaml"))
+	assert.FileExists(t, filepath.Join(projectPath, ".claude-plugin", "plugin.json"))
 	assert.FileExists(t, filepath.Join(projectPath, "README.md"))
 	assert.FileExists(t, filepath.Join(projectPath, ".gitignore"))
 }
@@ -179,12 +178,10 @@ func TestNewCmd_ManifestValidation(t *testing.T) {
 	require.NoError(t, os.MkdirAll(projectPath, 0755))
 	require.NoError(t, generateManifest(projectPath, "my-plugin"))
 
-	content := readFile(t, filepath.Join(projectPath, "summon.yaml"))
+	content := readFile(t, filepath.Join(projectPath, ".claude-plugin", "plugin.json"))
 
-	assert.Contains(t, content, "name: my-plugin")
-	assert.Contains(t, content, "version: 0.1.0")
-	// Verify template variables are substituted
-	assert.NotContains(t, content, "{{")
+	assert.Contains(t, content, `"my-plugin"`)
+	assert.Contains(t, content, `"0.1.0"`)
 }
 
 func TestNewCmd_ReadmeCreation(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestRunDeps_WithDeps(t *testing.T) {
+func TestRunDeps_PackageInfo(t *testing.T) {
 	dir := setupProjectDir(t)
 	writeScopedRegistryYAML(t, dir, "local", `
 summon_version: "0.1.0"
@@ -16,22 +16,9 @@ packages:
   code-reviewer:
     version: "2.1.0"
     source: {type: github, url: "https://github.com/test/code-reviewer"}
-  prompt-library:
-    version: "1.5.0"
-    source: {type: github, url: "https://github.com/test/prompt-library"}
+    platforms: [claude]
 `)
-	writeManifest(t, dir, "local", "code-reviewer", `
-name: code-reviewer
-version: "2.1.0"
-description: "test"
-dependencies:
-  prompt-library: "^1.0.0"
-`)
-	writeManifest(t, dir, "local", "prompt-library", `
-name: prompt-library
-version: "1.5.0"
-description: "test"
-`)
+	createStorePackage(t, dir, "code-reviewer")
 
 	var buf bytes.Buffer
 	oldStdout := installer.Stdout
@@ -45,38 +32,8 @@ description: "test"
 
 	err := runDeps(nil, []string{"code-reviewer"})
 	assert.NoError(t, err)
-	assert.Contains(t, buf.String(), "✓ prompt-library")
-	assert.Contains(t, buf.String(), "1 of 1 dependencies satisfied")
-}
-
-func TestRunDeps_NoDeps(t *testing.T) {
-	dir := setupProjectDir(t)
-	writeScopedRegistryYAML(t, dir, "local", `
-summon_version: "0.1.0"
-packages:
-  standalone:
-    version: "1.0.0"
-    source: {type: github, url: "https://github.com/test/standalone"}
-`)
-	writeManifest(t, dir, "local", "standalone", `
-name: standalone
-version: "1.0.0"
-description: "test"
-`)
-
-	var buf bytes.Buffer
-	oldStdout := installer.Stdout
-	installer.Stdout = &buf
-	t.Cleanup(func() { installer.Stdout = oldStdout })
-
-	depsJSON = false
-	depsScope = "local"
-	depsGlobal = false
-	depsProject = false
-
-	err := runDeps(nil, []string{"standalone"})
-	assert.NoError(t, err)
-	assert.Contains(t, buf.String(), "has no dependencies")
+	assert.Contains(t, buf.String(), "code-reviewer")
+	assert.Contains(t, buf.String(), "2.1.0")
 }
 
 func TestRunDeps_PackageNotFound(t *testing.T) {
@@ -104,22 +61,9 @@ packages:
   code-reviewer:
     version: "2.1.0"
     source: {type: github, url: "https://github.com/test/code-reviewer"}
-  prompt-library:
-    version: "1.5.0"
-    source: {type: github, url: "https://github.com/test/prompt-library"}
+    platforms: [claude]
 `)
-	writeManifest(t, dir, "local", "code-reviewer", `
-name: code-reviewer
-version: "2.1.0"
-description: "test"
-dependencies:
-  prompt-library: "^1.0.0"
-`)
-	writeManifest(t, dir, "local", "prompt-library", `
-name: prompt-library
-version: "1.5.0"
-description: "test"
-`)
+	createStorePackage(t, dir, "code-reviewer")
 
 	out := captureStdout(t, func() {
 		depsJSON = true
@@ -129,6 +73,6 @@ description: "test"
 		_ = runDeps(nil, []string{"code-reviewer"})
 	})
 
-	assert.Contains(t, out, `"package_name": "code-reviewer"`)
-	assert.Contains(t, out, `"all_satisfied": true`)
+	assert.Contains(t, out, `"name"`)
+	assert.Contains(t, out, `"code-reviewer"`)
 }

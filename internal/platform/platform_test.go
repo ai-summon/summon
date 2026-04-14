@@ -64,8 +64,44 @@ func TestAllAdapters_Names(t *testing.T) {
 
 func TestDetectActive(t *testing.T) {
 	// DetectActive may return empty on CI where neither platform is installed.
-	// Just verify it returns a valid subset and doesn't panic.
 	all := AllAdapters("/some/project")
 	active := DetectActive("/some/project")
 	assert.LessOrEqual(t, len(active), len(all))
+}
+
+func TestSupportsScope(t *testing.T) {
+	mock := &MockCmdRunner{}
+	claude := &ClaudeAdapter{ProjectDir: "/test", Runner: mock}
+	copilot := &CopilotAdapter{ProjectDir: "/test", Runner: mock}
+
+	assert.True(t, SupportsScope(claude, ScopeLocal))
+	assert.True(t, SupportsScope(claude, ScopeProject))
+	assert.True(t, SupportsScope(claude, ScopeUser))
+
+	assert.False(t, SupportsScope(copilot, ScopeLocal))
+	assert.False(t, SupportsScope(copilot, ScopeProject))
+	assert.True(t, SupportsScope(copilot, ScopeUser))
+}
+
+func TestDetectedNames(t *testing.T) {
+	// Just verify it returns a string slice and doesn't panic.
+	names := DetectedNames("/some/project")
+	assert.IsType(t, []string{}, names)
+}
+
+func TestCmdRunner_RealRunner(t *testing.T) {
+	runner := &RealCmdRunner{}
+	stdout, _, err := runner.Run("echo", "hello")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "hello")
+}
+
+func TestWithCmdRunner(t *testing.T) {
+	mock := &MockCmdRunner{}
+	adapters := AllAdapters("/test", WithCmdRunner(mock))
+	require.Len(t, adapters, 2)
+	// Verify the mock is wired in by checking adapter types.
+	claude, ok := adapters[0].(*ClaudeAdapter)
+	require.True(t, ok)
+	assert.Equal(t, mock, claude.Runner)
 }

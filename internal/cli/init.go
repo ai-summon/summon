@@ -7,13 +7,12 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Scaffold a new package",
-	Long:  "Create a new summon package with summon.yaml and standard directory structure.",
+	Long:  "Create a new summon package with .claude-plugin/plugin.json and standard directory structure.",
 	RunE:  runInit,
 }
 
@@ -29,7 +28,7 @@ func init() {
 }
 
 // runInit scaffolds a new summon package in the current directory.
-// It creates summon.yaml, standard subdirectories (skills/, agents/, commands/),
+// It creates .claude-plugin/plugin.json, standard subdirectories (skills/, agents/, commands/),
 // and a README.md. If --name is not provided, the directory name is sanitized
 // and used as the package name.
 func runInit(cmd *cobra.Command, args []string) error {
@@ -47,25 +46,28 @@ func runInit(cmd *cobra.Command, args []string) error {
 		name = strings.ReplaceAll(name, "_", "-")
 	}
 
-	manifestPath := filepath.Join(dir, "summon.yaml")
-	if _, err := os.Stat(manifestPath); err == nil {
-		return fmt.Errorf("summon.yaml already exists in this directory")
+	pluginDir := filepath.Join(dir, ".claude-plugin")
+	pluginPath := filepath.Join(pluginDir, "plugin.json")
+	if _, err := os.Stat(pluginPath); err == nil {
+		return fmt.Errorf(".claude-plugin/plugin.json already exists in this directory")
 	}
 
-	m := map[string]interface{}{
-		"name":        name,
-		"version":     "0.1.0",
-		"description": fmt.Sprintf("%s package", name),
-	}
-	if len(initPlatform) > 0 {
-		m["platforms"] = initPlatform
+	// Also check for legacy summon.yaml
+	if _, err := os.Stat(filepath.Join(dir, "summon.yaml")); err == nil {
+		return fmt.Errorf("summon.yaml already exists; consider migrating to .claude-plugin/plugin.json")
 	}
 
-	data, err := yaml.Marshal(m)
-	if err != nil {
-		return fmt.Errorf("marshaling summon.yaml: %w", err)
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		return err
 	}
-	if err := os.WriteFile(manifestPath, data, 0o644); err != nil {
+
+	pluginJSON := fmt.Sprintf(`{
+  "name": %q,
+  "version": "0.1.0",
+  "description": "%s package"
+}
+`, name, name)
+	if err := os.WriteFile(pluginPath, []byte(pluginJSON), 0o644); err != nil {
 		return err
 	}
 
@@ -89,6 +91,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Fprintf(os.Stdout, "Initialized package %q\n", name)
-	fmt.Fprintln(os.Stdout, "Created: summon.yaml, skills/, agents/, commands/, README.md")
+	fmt.Fprintln(os.Stdout, "Created: .claude-plugin/plugin.json, skills/, agents/, commands/, README.md")
 	return nil
 }

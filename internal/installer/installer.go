@@ -1,22 +1,17 @@
 // Package installer handles the installation, restoration, and management of
 // summon packages. It supports installing packages from GitHub repositories,
-// local filesystem paths, and the built-in catalog. Installed packages are
-// tracked in a registry and integrated with supported AI platforms (e.g.
-// Claude Code, VS Code Copilot).
+// local filesystem paths, and the summon marketplace. Installed packages are
+// tracked in a registry and integrated with supported AI platforms via their
+// CLIs — summon never reads or writes any platform configuration file.
 package installer
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/ai-summon/summon/internal/catalog"
-	"github.com/ai-summon/summon/internal/depcheck"
 	"github.com/ai-summon/summon/internal/git"
-	"github.com/ai-summon/summon/internal/manifest"
-	"github.com/ai-summon/summon/internal/marketplace"
 	"github.com/ai-summon/summon/internal/platform"
 	"github.com/ai-summon/summon/internal/registry"
 	"github.com/ai-summon/summon/internal/resolver"
@@ -25,9 +20,8 @@ import (
 )
 
 // Options configures a single package installation. Package is a git URL,
-// catalog name, or GitHub shorthand; Path is set for local installs instead.
-// Ref pins a specific git tag/branch, Force bypasses compatibility and
-// duplicate-version checks, and Global selects user-wide vs project-local scope.
+// marketplace name, or GitHub shorthand; Path is set for local installs instead.
+// Ref pins a specific git tag/branch, Force bypasses compatibility checks.
 type Options struct {
 	Package       string
 	Path          string
@@ -37,45 +31,34 @@ type Options struct {
 	Scope         platform.Scope
 	ProjectDir    string
 	SummonVersion string
-	StrictDeps    bool
 }
 
 // Paths holds the resolved filesystem locations used during installation.
 // StoreDir is where package contents live, RegistryPath points to the YAML
-// registry file, PlatformsDir holds per-platform marketplace data, Scope
-// indicates global vs local, and MarketplaceName is the marketplace identifier
-// registered with each platform.
+// registry file, and Scope indicates the installation scope.
 type Paths struct {
-	StoreDir        string
-	RegistryPath    string
-	PlatformsDir    string
-	Scope           platform.Scope
-	MarketplaceName string
+	StoreDir     string
+	RegistryPath string
+	Scope        platform.Scope
 }
 
-// ResolvePaths computes the store, registry, and platform directories for one
-// writable scope.
+// ResolvePaths computes the store and registry directories for one writable scope.
 func ResolvePaths(scope platform.Scope, projectDir string) Paths {
 	if scope == platform.ScopeUser {
 		home, _ := os.UserHomeDir()
 		base := filepath.Join(home, ".summon", "user")
 		return Paths{
-			StoreDir:        filepath.Join(base, "store"),
-			RegistryPath:    filepath.Join(base, "registry.yaml"),
-			PlatformsDir:    filepath.Join(base, "platforms"),
-			Scope:           platform.ScopeUser,
-			MarketplaceName: "summon-user",
+			StoreDir:     filepath.Join(base, "store"),
+			RegistryPath: filepath.Join(base, "registry.yaml"),
+			Scope:        platform.ScopeUser,
 		}
 	}
 
 	base := filepath.Join(projectDir, ".summon", scope.String())
-	marketplaceName := "summon-" + scope.String()
 	return Paths{
-		StoreDir:        filepath.Join(base, "store"),
-		RegistryPath:    filepath.Join(base, "registry.yaml"),
-		PlatformsDir:    filepath.Join(base, "platforms"),
-		Scope:           scope,
-		MarketplaceName: marketplaceName,
+		StoreDir:     filepath.Join(base, "store"),
+		RegistryPath: filepath.Join(base, "registry.yaml"),
+		Scope:        scope,
 	}
 }
 
@@ -104,7 +87,8 @@ func MakeScopedTempDir(paths Paths, pattern string) (string, error) {
 }
 
 // Install installs a single package according to opts. It delegates to
-// installLocal when opts.Path is set, or installGitHub otherwise.
+// installLocal when opts.Path is set, installMarketplace for bare names,
+// or installGitHub for github: prefixed or URL packages.
 func Install(opts Options) error {
 	paths := ResolvePaths(scopeFromLegacy(opts.Global, opts.Scope), opts.ProjectDir)
 	s := store.New(paths.StoreDir)
@@ -113,13 +97,42 @@ func Install(opts Options) error {
 		return fmt.Errorf("loading registry: %w", err)
 	}
 	reg.Scope = paths.Scope.String()
-	if opts.Path != "" {
-		return installLocal(opts, paths, s, reg)
+
+	// Detect platforms and enforce prerequisites.
+	activePlatforms := platform.DetectActive(opts.ProjectDir)
+	if len(activePlatforms) == 0 {
+		return fmt.Errorf("No supported AI platform detected.\n\n" +
+			"Summon requires at least one of the following:\n" +
+			"  • Claude Code (https://code.claude.com)\n" +
+			"  • GitHub Copilot CLI (https://github.com/features/copilot)\n\n" +
+			"Install one of the above platforms and try again.")
 	}
-	return installGitHub(opts, paths, s, reg)
+
+	// Scope validation: skip platforms that don't support the requested scope.
+	var compatiblePlatforms []platform.Adapter
+	var skippedPlatforms []string
+	for _, a := range activePlatforms {
+		if platform.SupportsScope(a, paths.Scope) {
+			compatiblePlatforms = append(compatiblePlatforms, a)
+		} else {
+			skippedPlatforms = append(skippedPlatforms, a.Name())
+			StatusErr("Info", "%s does not support %s scope. Skipping %s.", a.Name(), paths.Scope, a.Name())
+		}
+	}
+	if len(compatiblePlatforms) == 0 {
+		return fmt.Errorf("No platform supports %s scope.\n\n"+
+			"GitHub Copilot only supports user scope.\n"+
+			"To install for Copilot, use:\n"+
+			"  summon install <package> --scope user", paths.Scope)
+	}
+
+	if opts.Path != "" {
+		return installLocal(opts, paths, s, reg, compatiblePlatforms)
+	}
+	return installGitHub(opts, paths, s, reg, compatiblePlatforms)
 }
 
-func installGitHub(opts Options, paths Paths, s *store.Store, reg *registry.Registry) error {
+func installGitHub(opts Options, paths Paths, s *store.Store, reg *registry.Registry, platforms []platform.Adapter) error {
 	gitURL, err := resolveGitURL(opts.Package)
 	if err != nil {
 		return err
@@ -165,171 +178,84 @@ func installGitHub(opts Options, paths Paths, s *store.Store, reg *registry.Regi
 		return nil
 	}
 
-	manifests, pluginRoots, err := manifest.LoadOrInfer(cloneDest)
-	if err != nil {
-		return fmt.Errorf("loading manifest: %w", err)
+	if err := s.MoveFromStage(name, cloneDest); err != nil {
+		return fmt.Errorf("moving to store: %w", err)
+	}
+	storePath := s.PackagePath(name)
+
+	if err := expandHookVariables(storePath); err != nil {
+		return fmt.Errorf("expanding hook variables: %w", err)
 	}
 
-	for i, m := range manifests {
-		pluginRoot := pluginRoots[i]
-		hasSummonYAML := fileExists(filepath.Join(pluginRoot, "summon.yaml"))
-
-		if hasSummonYAML {
-			if errs := m.ValidateFull(pluginRoot); len(errs) > 0 {
-				for _, e := range errs {
-					StatusErr("Warning", "%s", e)
-				}
-			}
-		}
-
-		if opts.SummonVersion != "" {
-			if ok, msg := manifest.CheckSummonVersion(m.SummonVersion, opts.SummonVersion); !ok {
-				return fmt.Errorf("version constraint: %s", msg)
-			}
-		}
-
-		activePlatforms := platform.DetectActive(opts.ProjectDir)
-		compatiblePlatforms := filterCompatible(m.Platforms, activePlatforms)
-		if len(compatiblePlatforms) == 0 && !opts.Force {
-			return fmt.Errorf("no compatible platform detected for %s (supports: %v). Use --force to install anyway", m.Name, m.Platforms)
-		}
-		if len(compatiblePlatforms) == 0 {
-			StatusErr("Warning", "no compatible platform detected, installing with --force")
-			if len(m.Platforms) > 0 {
-				compatiblePlatforms = makePlatformList(m.Platforms, opts.ProjectDir)
-			}
-		}
-
-		if err := s.MoveFromStage(m.Name, pluginRoot); err != nil {
-			return fmt.Errorf("moving to store: %w", err)
-		}
-		storePath := s.PackagePath(m.Name)
-
-		if !marketplace.PluginJSONExists(storePath) {
-			if err := marketplace.GeneratePluginJSON(storePath, m); err != nil {
-				return fmt.Errorf("generating plugin.json: %w", err)
-			}
-		}
-		if err := expandHookVariables(storePath); err != nil {
-			return fmt.Errorf("expanding hook variables: %w", err)
-		}
-
-		platformNames := getPlatformNames(compatiblePlatforms)
-		reg.Add(m.Name, registry.Entry{
-			Version: m.Version,
-			Source: registry.Source{
-				Type: "github",
-				URL:  gitURL,
-				Ref:  ref,
-				SHA:  sha,
-			},
-			Platforms: platformNames,
-		})
-		if err := reg.Save(paths.RegistryPath); err != nil {
-			return fmt.Errorf("saving registry: %w", err)
-		}
-
-		if err := generateMarketplaces(paths, reg); err != nil {
-			return fmt.Errorf("generating marketplace: %w", err)
-		}
-		registerPlatforms(paths, compatiblePlatforms)
-		enablePlugins(m.Name, paths, compatiblePlatforms)
-		materializeComponents(storePath, m, paths, compatiblePlatforms)
-
-		Status("Installed", "%s v%s (%s) → %s scope", m.Name, m.Version, sha[:8], paths.Scope.String())
-		unsatisfied, err := reportDependencies(m, paths.Scope, opts.ProjectDir, opts.StrictDeps)
-		if err != nil {
-			return err
-		}
-		if len(unsatisfied) > 0 && !opts.StrictDeps {
-			if toInstall := PromptInstallDeps(unsatisfied); len(toInstall) > 0 {
-				InstallDeps(toInstall, paths.Scope, opts.ProjectDir, opts.SummonVersion)
-			}
-		}
+	version := ref
+	if version == "HEAD" {
+		version = sha[:8]
 	}
+
+	platformNames := getPlatformNames(platforms)
+	reg.Add(name, registry.Entry{
+		Version: version,
+		Source: registry.Source{
+			Type: "github",
+			URL:  gitURL,
+			Ref:  ref,
+			SHA:  sha,
+		},
+		Platforms: platformNames,
+	})
+	if err := reg.Save(paths.RegistryPath); err != nil {
+		return fmt.Errorf("saving registry: %w", err)
+	}
+
+	discoverOnPlatforms(name, storePath, paths.Scope, platforms)
+
+	Status("Installed", "%s %s (%s) → %s scope", name, version, sha[:8], paths.Scope.String())
 	return nil
 }
 
-func installLocal(opts Options, paths Paths, s *store.Store, reg *registry.Registry) error {
+func installLocal(opts Options, paths Paths, s *store.Store, reg *registry.Registry, platforms []platform.Adapter) error {
 	absPath, err := filepath.Abs(opts.Path)
 	if err != nil {
 		return fmt.Errorf("resolving path: %w", err)
 	}
-	manifests, pluginRoots, err := manifest.LoadOrInfer(absPath)
-	if err != nil {
-		return err
+
+	name := filepath.Base(absPath)
+	if err := s.Link(name, absPath); err != nil {
+		return fmt.Errorf("linking to store: %w", err)
 	}
 
-	for i, m := range manifests {
-		pluginRoot := pluginRoots[i]
-		hasSummonYAML := fileExists(filepath.Join(pluginRoot, "summon.yaml"))
-
-		if hasSummonYAML {
-			if errs := m.ValidateFull(pluginRoot); len(errs) > 0 {
-				for _, e := range errs {
-					StatusErr("Warning", "%s", e)
-				}
-			}
-		}
-
-		if opts.SummonVersion != "" {
-			if ok, msg := manifest.CheckSummonVersion(m.SummonVersion, opts.SummonVersion); !ok {
-				return fmt.Errorf("version constraint: %s", msg)
-			}
-		}
-
-		activePlatforms := platform.DetectActive(opts.ProjectDir)
-		compatiblePlatforms := filterCompatible(m.Platforms, activePlatforms)
-		if len(compatiblePlatforms) == 0 && !opts.Force {
-			return fmt.Errorf("no compatible platform detected for %s (supports: %v). Use --force to install anyway", m.Name, m.Platforms)
-		}
-
-		if err := s.Link(m.Name, pluginRoot); err != nil {
-			return fmt.Errorf("linking to store: %w", err)
-		}
-
-		storePath := s.PackagePath(m.Name)
-		if !marketplace.PluginJSONExists(storePath) {
-			if err := marketplace.GeneratePluginJSON(storePath, m); err != nil {
-				return fmt.Errorf("generating plugin.json: %w", err)
-			}
-		}
-		if err := expandHookVariables(storePath); err != nil {
-			return fmt.Errorf("expanding hook variables: %w", err)
-		}
-
-		platformNames := getPlatformNames(compatiblePlatforms)
-		reg.Add(m.Name, registry.Entry{
-			Version: m.Version,
-			Source: registry.Source{
-				Type: "local",
-				URL:  pluginRoot,
-			},
-			Platforms: platformNames,
-		})
-		if err := reg.Save(paths.RegistryPath); err != nil {
-			return fmt.Errorf("saving registry: %w", err)
-		}
-
-		if err := generateMarketplaces(paths, reg); err != nil {
-			return fmt.Errorf("generating marketplace: %w", err)
-		}
-		registerPlatforms(paths, compatiblePlatforms)
-		enablePlugins(m.Name, paths, compatiblePlatforms)
-		materializeComponents(storePath, m, paths, compatiblePlatforms)
-
-		Status("Installed", "%s v%s (local) → %s scope", m.Name, m.Version, paths.Scope.String())
-		unsatisfied, err := reportDependencies(m, paths.Scope, opts.ProjectDir, opts.StrictDeps)
-		if err != nil {
-			return err
-		}
-		if len(unsatisfied) > 0 && !opts.StrictDeps {
-			if toInstall := PromptInstallDeps(unsatisfied); len(toInstall) > 0 {
-				InstallDeps(toInstall, paths.Scope, opts.ProjectDir, opts.SummonVersion)
-			}
-		}
+	storePath := s.PackagePath(name)
+	if err := expandHookVariables(storePath); err != nil {
+		return fmt.Errorf("expanding hook variables: %w", err)
 	}
+
+	platformNames := getPlatformNames(platforms)
+	reg.Add(name, registry.Entry{
+		Version: "local",
+		Source: registry.Source{
+			Type: "local",
+			URL:  absPath,
+		},
+		Platforms: platformNames,
+	})
+	if err := reg.Save(paths.RegistryPath); err != nil {
+		return fmt.Errorf("saving registry: %w", err)
+	}
+
+	discoverOnPlatforms(name, storePath, paths.Scope, platforms)
+
+	Status("Installed", "%s (local) → %s scope", name, paths.Scope.String())
 	return nil
+}
+
+// discoverOnPlatforms calls DiscoverPackage on each platform adapter.
+// Errors are logged as warnings but do not fail the install.
+func discoverOnPlatforms(name, pkgPath string, scope platform.Scope, platforms []platform.Adapter) {
+	for _, a := range platforms {
+		if err := a.DiscoverPackage(name, pkgPath, scope); err != nil {
+			StatusErr("Warning", "failed to register with %s: %v", a.Name(), err)
+		}
+	}
 }
 
 // RestoreAll re-fetches every package recorded in the registry that is not
@@ -353,6 +279,8 @@ func RestoreScope(scope platform.Scope, projectDir string) error {
 	}
 
 	s := store.New(paths.StoreDir)
+	activePlatforms := platform.DetectActive(projectDir)
+
 	for name, entry := range reg.Packages {
 		if s.Has(name) {
 			Status("Up-to-date", "%s already in store, skipping", name)
@@ -381,28 +309,23 @@ func RestoreScope(scope platform.Scope, projectDir string) error {
 			}
 		}
 		storePath := s.PackagePath(name)
-		m, mErr := manifest.Load(storePath)
-		if mErr == nil {
-			if !marketplace.PluginJSONExists(storePath) {
-				_ = marketplace.GeneratePluginJSON(storePath, m)
+		_ = expandHookVariables(storePath)
+
+		// Re-register with platforms
+		for _, a := range activePlatforms {
+			if platform.SupportsScope(a, scope) {
+				_ = a.DiscoverPackage(name, storePath, scope)
 			}
-			_ = expandHookVariables(storePath)
 		}
 	}
-
-	if err := generateMarketplaces(paths, reg); err != nil {
-		return fmt.Errorf("generating marketplaces: %w", err)
-	}
-	activePlatforms := platform.DetectActive(projectDir)
-	registerPlatforms(paths, activePlatforms)
 
 	Status("Restored", "all packages in %s scope", scope.String())
 	return nil
 }
 
 // resolveGitURL converts a package specifier into a cloneable git URL.
-// It recognises "github:user/repo" shorthand, full https:// or git@ URLs,
-// and bare catalog names that are looked up via catalog.LoadDefault.
+// It recognises "github:user/repo" shorthand and full https:// or git@ URLs.
+// Bare names are not yet supported (marketplace resolution is planned).
 func resolveGitURL(pkg string) (string, error) {
 	if strings.HasPrefix(pkg, "github:") {
 		path := strings.TrimPrefix(pkg, "github:")
@@ -411,15 +334,8 @@ func resolveGitURL(pkg string) (string, error) {
 	if strings.HasPrefix(pkg, "https://") || strings.HasPrefix(pkg, "git@") || strings.HasPrefix(pkg, "file://") {
 		return pkg, nil
 	}
-	cat, err := catalog.LoadDefault()
-	if err != nil {
-		return "", fmt.Errorf("loading catalog: %w", err)
-	}
-	entry, ok := cat.Lookup(pkg)
-	if !ok {
-		return "", fmt.Errorf("package %q not found in catalog. Use github:user/repo for direct GitHub URLs", pkg)
-	}
-	return entry.Repository, nil
+	// Bare name: assume GitHub org ai-summon (marketplace convention)
+	return "https://github.com/ai-summon/" + pkg, nil
 }
 
 // packageNameFromURL extracts a short package name from a git URL by taking
@@ -432,42 +348,6 @@ func packageNameFromURL(url string) string {
 	return url
 }
 
-// filterCompatible returns the subset of active platform adapters whose names
-// appear in manifestPlatforms. If the manifest declares no platforms, all
-// active adapters are considered compatible.
-func filterCompatible(manifestPlatforms []string, active []platform.Adapter) []platform.Adapter {
-	if len(manifestPlatforms) == 0 {
-		return active
-	}
-	var compatible []platform.Adapter
-	for _, a := range active {
-		for _, p := range manifestPlatforms {
-			if a.Name() == p {
-				compatible = append(compatible, a)
-				break
-			}
-		}
-	}
-	return compatible
-}
-
-// makePlatformList returns adapters for the named platforms regardless of
-// whether they are currently detected. This is used with --force to install
-// a package even when the target platform is not active.
-func makePlatformList(platforms []string, projectDir string) []platform.Adapter {
-	all := platform.AllAdapters(projectDir)
-	var result []platform.Adapter
-	for _, a := range all {
-		for _, p := range platforms {
-			if a.Name() == p {
-				result = append(result, a)
-				break
-			}
-		}
-	}
-	return result
-}
-
 // getPlatformNames extracts the Name() string from each adapter.
 func getPlatformNames(adapters []platform.Adapter) []string {
 	var names []string
@@ -477,72 +357,16 @@ func getPlatformNames(adapters []platform.Adapter) []string {
 	return names
 }
 
-// generateMarketplaces regenerates the marketplace index for every known
-// platform so that each platform's plugin registry reflects the current
-// set of installed packages.
-func generateMarketplaces(paths Paths, reg *registry.Registry) error {
-	for _, a := range platform.AllAdapters("") {
-		platformDir := filepath.Join(paths.PlatformsDir, a.Name())
-		if err := marketplace.Generate(a.Name(), paths.MarketplaceName, paths.StoreDir, platformDir, reg); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// registerPlatforms tells each compatible platform adapter about the
-// marketplace directory so the platform can discover installed plugins.
-// Errors from individual adapters are logged as warnings but do not fail
-// the install.
-func registerPlatforms(paths Paths, adapters []platform.Adapter) {
-	for _, a := range adapters {
-		platformDir := filepath.Join(paths.PlatformsDir, a.Name())
-		if err := a.Register(platformDir, paths.MarketplaceName, paths.Scope); err != nil {
-			StatusErr("Warning", "failed to register with %s: %v", a.Name(), err)
-		}
-	}
-}
-
-// enablePlugins auto-enables a plugin on each compatible platform so the user
-// does not need an additional manual step after summon install. Errors from
-// individual adapters are logged as warnings but do not fail the install.
-func enablePlugins(pluginName string, paths Paths, adapters []platform.Adapter) {
-	for _, a := range adapters {
-		if err := a.EnablePlugin(pluginName, paths.MarketplaceName, paths.StoreDir, paths.Scope); err != nil {
-			StatusErr("Warning", "failed to enable plugin on %s: %v", a.Name(), err)
-		}
-	}
-}
-
-// materializeComponents calls MaterializeComponents on any adapter that
-// implements the Materializer interface, for project and local scopes where
-// workspace-visible component paths can be created. Errors logged as warnings.
-func materializeComponents(storePath string, m *manifest.Manifest, paths Paths, adapters []platform.Adapter) {
-	if paths.Scope != platform.ScopeProject && paths.Scope != platform.ScopeLocal {
-		return
-	}
-	for _, a := range adapters {
-		mat, ok := a.(platform.Materializer)
-		if !ok {
-			continue
-		}
-		if err := mat.MaterializeComponents(storePath, m, paths.Scope); err != nil {
-			StatusErr("Warning", "Copilot workspace materialization for %s: %v", m.Name, err)
-		}
-	}
-}
-
 // EnsureGitignore appends scope-specific .summon/ entries to
 // <projectDir>/.gitignore, creating the file if it does not exist.
-// The local scope directory is fully gitignored; only project/store/ and
-// project/platforms/ are gitignored (project/registry.yaml may be committed).
+// The local scope directory is fully gitignored; only project/store/ is
+// gitignored (project/registry.yaml may be committed).
 // Entries that already appear in the file are not duplicated.
 func EnsureGitignore(projectDir string) error {
 	gitignorePath := filepath.Join(projectDir, ".gitignore")
 	entries := []string{
 		".summon/local/",
 		".summon/project/store/",
-		".summon/project/platforms/",
 	}
 	existing, err := os.ReadFile(gitignorePath)
 	if err != nil && !os.IsNotExist(err) {
@@ -576,78 +400,6 @@ func EnsureGitignore(projectDir string) error {
 	return nil
 }
 
-// reportDependencies checks manifest dependencies against all visible
-// registries using depcheck, reports results, and optionally blocks if
-// strictDeps is true and any dependency is unsatisfied.
-// Returns the list of depcheck.Result entries and an error if strict mode
-// is active and unsatisfied deps are found.
-func reportDependencies(m *manifest.Manifest, scope platform.Scope, projectDir string, strictDeps bool) ([]depcheck.Result, error) {
-	if len(m.Dependencies) == 0 {
-		return nil, nil
-	}
-
-	// Build a registry view across all scopes
-	allScopes := platform.ScopePrecedence()
-	registries := make(map[platform.Scope]*registry.Registry)
-	for _, s := range allScopes {
-		p := ResolvePaths(s, projectDir)
-		reg, err := registry.Load(p.RegistryPath)
-		if err != nil {
-			continue
-		}
-		registries[s] = reg
-	}
-
-	view := depcheck.NewRegistryView(registries)
-	result := depcheck.CheckPackage(m, scope, view)
-
-	if result.AllSatisfied {
-		return result.Results, nil
-	}
-
-	// Collect unsatisfied
-	var unsatisfied []depcheck.Result
-	for _, r := range result.Results {
-		if r.Status != depcheck.Satisfied {
-			unsatisfied = append(unsatisfied, r)
-		}
-	}
-
-	if strictDeps {
-		StatusErr("Error", "missing required dependencies:")
-		for _, r := range unsatisfied {
-			switch r.Status {
-			case depcheck.Missing:
-				fmt.Fprintf(Stderr, "%*s - %s %s (not installed)\n", statusLabelWidth, "", r.DependencyName, r.Constraint)
-			case depcheck.VersionMismatch:
-				fmt.Fprintf(Stderr, "%*s - %s %s (installed %s, requires %s)\n", statusLabelWidth, "", r.DependencyName, r.Constraint, r.InstalledVersion, r.Constraint)
-			case depcheck.UnparseableConstraint:
-				fmt.Fprintf(Stderr, "%*s - %s %s (%s)\n", statusLabelWidth, "", r.DependencyName, r.Constraint, r.Message)
-			}
-		}
-		fmt.Fprintf(Stderr, "\n%*s Install the missing dependencies first, or remove --strict-deps to install with warnings.\n", statusLabelWidth, "")
-		return unsatisfied, fmt.Errorf("missing required dependencies")
-	}
-
-	// Non-strict: warn and continue (default behavior)
-	StatusErr("Warning", "missing dependencies:")
-	for _, r := range unsatisfied {
-		switch r.Status {
-		case depcheck.Missing:
-			if r.Constraint != "" {
-				fmt.Fprintf(Stderr, "%*s - %s %s (not installed)\n", statusLabelWidth, "", r.DependencyName, r.Constraint)
-			} else {
-				fmt.Fprintf(Stderr, "%*s - %s (not installed)\n", statusLabelWidth, "", r.DependencyName)
-			}
-		case depcheck.VersionMismatch:
-			fmt.Fprintf(Stderr, "%*s - %s: installed %s, requires %s\n", statusLabelWidth, "", r.DependencyName, r.InstalledVersion, r.Constraint)
-		case depcheck.UnparseableConstraint:
-			fmt.Fprintf(Stderr, "%*s - %s: %s\n", statusLabelWidth, "", r.DependencyName, r.Message)
-		}
-	}
-	return unsatisfied, nil
-}
-
 // Stdin is the reader used for interactive prompts. Tests can replace this.
 var Stdin *os.File = os.Stdin
 
@@ -658,80 +410,6 @@ func IsInteractive() bool {
 		return false
 	}
 	return term.IsTerminal(int(Stdin.Fd()))
-}
-
-// PromptInstallDeps asks the user whether to install missing dependencies.
-// Returns the list of dependency names to install. Returns nil if the user
-// declines or stdin is not interactive.
-func PromptInstallDeps(unsatisfied []depcheck.Result) []string {
-	if !IsInteractive() {
-		return nil
-	}
-
-	// Only offer to install missing deps (not version mismatches — those need manual update)
-	var installable []depcheck.Result
-	for _, r := range unsatisfied {
-		if r.Status == depcheck.Missing {
-			installable = append(installable, r)
-		}
-	}
-	if len(installable) == 0 {
-		return nil
-	}
-
-	fmt.Fprintf(Stderr, "\n%*s Install missing dependencies? [Y/n/s(elect)] ", statusLabelWidth, "")
-
-	scanner := bufio.NewScanner(Stdin)
-	if !scanner.Scan() {
-		return nil
-	}
-	answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
-
-	switch answer {
-	case "", "y", "yes":
-		// Install all missing
-		names := make([]string, 0, len(installable))
-		for _, r := range installable {
-			names = append(names, r.DependencyName)
-		}
-		return names
-
-	case "s", "select":
-		// Prompt individually
-		var names []string
-		for _, r := range installable {
-			fmt.Fprintf(Stderr, "%*s Install %s %s? [Y/n] ", statusLabelWidth, "", r.DependencyName, r.Constraint)
-			if !scanner.Scan() {
-				break
-			}
-			a := strings.TrimSpace(strings.ToLower(scanner.Text()))
-			if a == "" || a == "y" || a == "yes" {
-				names = append(names, r.DependencyName)
-			}
-		}
-		return names
-
-	default:
-		// n or anything else — decline
-		return nil
-	}
-}
-
-// InstallDeps installs a list of packages as dependencies at the given scope.
-func InstallDeps(deps []string, scope platform.Scope, projectDir, summonVersion string) {
-	for _, dep := range deps {
-		depOpts := Options{
-			Package:       dep,
-			Scope:         scope,
-			ProjectDir:    projectDir,
-			SummonVersion: summonVersion,
-		}
-		if err := Install(depOpts); err != nil {
-			StatusErr("Warning", "failed to install dependency %s: %v", dep, err)
-		}
-	}
-
-	// Report version mismatch deps that were skipped
 }
 
 func fileExists(path string) bool {

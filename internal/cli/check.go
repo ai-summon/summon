@@ -5,18 +5,17 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ai-summon/summon/internal/depcheck"
 	"github.com/ai-summon/summon/internal/installer"
-	"github.com/ai-summon/summon/internal/manifest"
 	"github.com/ai-summon/summon/internal/platform"
 	"github.com/ai-summon/summon/internal/registry"
+	"github.com/ai-summon/summon/internal/store"
 	"github.com/spf13/cobra"
 )
 
 var checkCmd = &cobra.Command{
 	Use:   "check",
-	Short: "Check dependency health of installed packages",
-	Long:  "Validates that all installed packages have their declared dependencies satisfied. Reports missing and version-incompatible dependencies across all scopes.",
+	Short: "Check health of installed packages",
+	Long:  "Validates that all installed packages are present in the store and have valid platform registrations. Reports broken links and missing store entries.",
 	Example: `  summon check
   summon check --scope user
   summon check -g
@@ -41,6 +40,13 @@ func init() {
 	rootCmd.AddCommand(checkCmd)
 }
 
+type checkResult struct {
+	Name    string `json:"name"`
+	Scope   string `json:"scope"`
+	Status  string `json:"status"`
+	Message string `json:"message,omitempty"`
+}
+
 func runCheck(cmd *cobra.Command, args []string) error {
 	projectDir, err := os.Getwd()
 	if err != nil {
@@ -52,102 +58,67 @@ func runCheck(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Load registries for all scopes (need full view for cross-scope satisfaction)
-	allScopes := platform.ScopePrecedence()
-	registries := make(map[platform.Scope]*registry.Registry)
-	for _, scope := range allScopes {
+	activePlatforms := platform.DetectActive(projectDir)
+
+	var results []checkResult
+	brokenCount := 0
+
+	for _, scope := range scopes {
 		paths := installer.ResolvePaths(scope, projectDir)
 		reg, err := registry.Load(paths.RegistryPath)
 		if err != nil {
-			continue // Registry doesn't exist yet — skip
+			continue
 		}
-		registries[scope] = reg
-	}
 
-	result := depcheck.CheckAll(
-		scopes,
-		registries,
-		func(scope platform.Scope, name string) string {
-			paths := installer.ResolvePaths(scope, projectDir)
-			return paths.StoreDir + "/" + name
-		},
-		func(pkgDir string) (*manifest.Manifest, error) {
-			return manifest.Load(pkgDir)
-		},
-	)
+		s := store.New(paths.StoreDir)
+		for name := range reg.Packages {
+			r := checkResult{Name: name, Scope: scope.String()}
+			if !s.Has(name) {
+				r.Status = "missing"
+				r.Message = "not found in store"
+				brokenCount++
+			} else if s.IsBrokenLink(name) {
+				r.Status = "broken"
+				r.Message = "broken symlink"
+				brokenCount++
+			} else {
+				r.Status = "ok"
+			}
+			results = append(results, r)
+		}
+	}
 
 	if checkJSON {
-		return printCheckJSON(result)
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(results)
 	}
-	return printCheckHuman(result)
-}
 
-func printCheckJSON(result depcheck.CheckAllResult) error {
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(result)
-}
-
-func printCheckHuman(result depcheck.CheckAllResult) error {
-	if len(result.Packages) == 0 {
+	if len(results) == 0 {
 		installer.Status("Check", "no packages installed — nothing to check")
 		return nil
 	}
 
-	installer.Status("Checking", "dependency health across all scopes...")
+	installer.Status("Checking", "package health...")
+	fmt.Fprintln(installer.Stdout)
+	for _, r := range results {
+		switch r.Status {
+		case "ok":
+			fmt.Fprintf(installer.Stdout, "     ✓ %s (%s)\n", r.Name, r.Scope)
+		default:
+			fmt.Fprintf(installer.Stdout, "     ✗ %s (%s) — %s\n", r.Name, r.Scope, r.Message)
+		}
+	}
 	fmt.Fprintln(installer.Stdout)
 
-	unsatisfiedCount := 0
-	for _, pkg := range result.Packages {
-		if len(pkg.Results) == 0 {
-			continue // No dependencies declared — skip from output
-		}
-		satisfied := 0
-		for _, r := range pkg.Results {
-			if r.Status == depcheck.Satisfied {
-				satisfied++
-			}
-		}
-		total := len(pkg.Results)
-
-		if pkg.AllSatisfied {
-			fmt.Fprintf(installer.Stdout, "     ✓ %s (%s) — all %d dependencies satisfied\n",
-				pkg.PackageName, pkg.PackageScope, total)
-		} else {
-			unsatisfiedCount++
-			fmt.Fprintf(installer.Stdout, "     ✗ %s (%s) — %d of %d dependencies unsatisfied\n",
-				pkg.PackageName, pkg.PackageScope, total-satisfied, total)
-			for _, r := range pkg.Results {
-				if r.Status == depcheck.Satisfied {
-					continue
-				}
-				switch r.Status {
-				case depcheck.Missing:
-					fmt.Fprintf(installer.Stdout, "         ✗ %s: not installed (install with: summon install %s)\n",
-						r.DependencyName, r.DependencyName)
-				case depcheck.VersionMismatch:
-					fmt.Fprintf(installer.Stdout, "         ✗ %s: installed %s, requires %s\n",
-						r.DependencyName, r.InstalledVersion, r.Constraint)
-				case depcheck.UnparseableConstraint:
-					fmt.Fprintf(installer.Stdout, "         ✗ %s: %s\n",
-						r.DependencyName, r.Message)
-				}
-			}
-		}
+	if len(activePlatforms) == 0 {
+		installer.StatusErr("Warning", "no AI platform detected")
 	}
 
-	fmt.Fprintln(installer.Stdout)
-
-	// Display circular dependency warnings
-	for _, w := range result.Warnings {
-		installer.StatusErr("Warning", "%s", w)
+	if brokenCount > 0 {
+		installer.StatusErr("Result", "%d package(s) have issues", brokenCount)
+		return fmt.Errorf("%d package(s) have issues", brokenCount)
 	}
-
-	if unsatisfiedCount > 0 {
-		installer.StatusErr("Result", "%d package(s) have unsatisfied dependencies", unsatisfiedCount)
-		// Return a sentinel error so cobra sets non-zero exit code.
-		return fmt.Errorf("%d package(s) have unsatisfied dependencies", unsatisfiedCount)
-	}
-	installer.Status("Result", "all dependencies satisfied")
+	installer.Status("Result", "all %d packages healthy", len(results))
 	return nil
 }

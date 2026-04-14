@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 )
 
 // newInitCmd returns a fresh init cobra.Command wired to runInit so tests
@@ -33,11 +33,11 @@ func TestRunInit_ScaffoldsPackage(t *testing.T) {
 	cmd.SetArgs([]string{"--name", "my-pkg"})
 	require.NoError(t, cmd.Execute())
 
-	// summon.yaml should exist with correct name.
-	data, err := os.ReadFile(filepath.Join(dir, "summon.yaml"))
+	// .claude-plugin/plugin.json should exist with correct name.
+	data, err := os.ReadFile(filepath.Join(dir, ".claude-plugin", "plugin.json"))
 	require.NoError(t, err)
 	var m map[string]interface{}
-	require.NoError(t, yaml.Unmarshal(data, &m))
+	require.NoError(t, json.Unmarshal(data, &m))
 	assert.Equal(t, "my-pkg", m["name"])
 	assert.Equal(t, "0.1.0", m["version"])
 
@@ -70,37 +70,19 @@ func TestRunInit_DeriveNameFromDir(t *testing.T) {
 	cmd.SetArgs([]string{})
 	require.NoError(t, cmd.Execute())
 
-	data, err := os.ReadFile(filepath.Join(sub, "summon.yaml"))
+	data, err := os.ReadFile(filepath.Join(sub, ".claude-plugin", "plugin.json"))
 	require.NoError(t, err)
 	var m map[string]interface{}
-	require.NoError(t, yaml.Unmarshal(data, &m))
+	require.NoError(t, json.Unmarshal(data, &m))
 	assert.Equal(t, "my-cool-package", m["name"])
 }
 
-func TestRunInit_WithPlatforms(t *testing.T) {
-	_ = setupProjectDir(t)
-
-	initName = ""
-	initPlatform = nil
-
-	cmd := newInitCmd()
-	cmd.SetArgs([]string{"--name", "plat-pkg", "--platform", "claude", "--platform", "copilot"})
-	require.NoError(t, cmd.Execute())
-
-	data, err := os.ReadFile("summon.yaml")
-	require.NoError(t, err)
-	var m map[string]interface{}
-	require.NoError(t, yaml.Unmarshal(data, &m))
-
-	platforms, ok := m["platforms"].([]interface{})
-	require.True(t, ok, "platforms key should be a list")
-	assert.Len(t, platforms, 2)
-}
-
-func TestRunInit_FailsWhenManifestExists(t *testing.T) {
+func TestRunInit_FailsWhenPluginExists(t *testing.T) {
 	dir := setupProjectDir(t)
 
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "summon.yaml"), []byte("existing"), 0o644))
+	pluginDir := filepath.Join(dir, ".claude-plugin")
+	require.NoError(t, os.MkdirAll(pluginDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pluginDir, "plugin.json"), []byte("{}"), 0o644))
 
 	initName = ""
 	initPlatform = nil
@@ -110,6 +92,21 @@ func TestRunInit_FailsWhenManifestExists(t *testing.T) {
 	err := cmd.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "already exists")
+}
+
+func TestRunInit_FailsWhenLegacyManifestExists(t *testing.T) {
+	dir := setupProjectDir(t)
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "summon.yaml"), []byte("existing"), 0o644))
+
+	initName = ""
+	initPlatform = nil
+
+	cmd := newInitCmd()
+	cmd.SetArgs([]string{"--name", "legacy"})
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "summon.yaml already exists")
 }
 
 func TestRunInit_PreservesExistingReadme(t *testing.T) {

@@ -1,29 +1,40 @@
 // Package platform provides adapters for integrating summon with AI coding
-// platforms such as Claude Code and VS Code Copilot. Each adapter knows how
-// to detect the platform, locate its settings file, and register or
-// unregister summon marketplaces.
+// platforms such as Claude Code and GitHub Copilot. Each adapter delegates to
+// the platform's own CLI for plugin management — summon never reads or writes
+// any platform configuration file.
 package platform
 
-import "fmt"
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"os/exec"
+	"time"
+)
 
 // Adapter defines the interface for platform-specific behavior.
+// Implementations MUST NOT read or write any platform configuration files.
 type Adapter interface {
+	// Name returns the platform identifier (e.g., "claude", "copilot").
 	Name() string
-	Detect() bool
-	SettingsPath(scope Scope) string
-	Register(marketplacePath string, marketplaceName string, scope Scope) error
-	Unregister(marketplaceName string, scope Scope) error
-	EnablePlugin(pluginName string, marketplaceName string, storeDir string, scope Scope) error
-	DisablePlugin(pluginName string, marketplaceName string, storeDir string, scope Scope) error
-}
 
-// Materializer is an optional extension to Adapter that supports workspace
-// component materialization for project and local scopes. Adapters implementing
-// this interface can create and remove workspace-visible symlinks for skills and
-// agents into documented customization paths.
-type Materializer interface {
-	MaterializeComponents(pkgDir string, m ComponentsInfo, scope Scope) error
-	RemoveMaterialized(pkgName string, pkgDir string, m ComponentsInfo, scope Scope) error
+	// Detect returns true if the platform is installed on this machine.
+	// Detection MUST use binary/directory presence only, not config file reads.
+	Detect() bool
+
+	// SupportedScopes returns the scopes this platform natively supports.
+	SupportedScopes() []Scope
+
+	// DiscoverPackage makes a package visible to the platform at the given scope
+	// by delegating to the platform's CLI commands.
+	DiscoverPackage(pkgPath string, pkgName string, scope Scope) error
+
+	// RemovePackage removes a package from the platform's discovery at the given scope
+	// by delegating to the platform's CLI commands.
+	RemovePackage(pkgName string, scope Scope) error
+
+	// CleanOrphans removes artifacts for this platform if it is no longer detected.
+	CleanOrphans() error
 }
 
 // Scope represents a writable installation scope.
@@ -77,15 +88,14 @@ func ScopePrecedence() []Scope {
 type AdapterOption func(*adapterConfig)
 
 type adapterConfig struct {
-	globalSettingsDir string
+	cmdRunner CmdRunner
 }
 
-// WithGlobalSettingsDir overrides the VS Code user settings directory
-// on the CopilotAdapter. This is used in tests to avoid writing to
-// real user settings.
-func WithGlobalSettingsDir(dir string) AdapterOption {
+// WithCmdRunner overrides the command runner used by adapters.
+// This is primarily for testing to mock CLI invocations.
+func WithCmdRunner(runner CmdRunner) AdapterOption {
 	return func(c *adapterConfig) {
-		c.globalSettingsDir = dir
+		c.cmdRunner = runner
 	}
 }
 
@@ -95,9 +105,13 @@ func AllAdapters(projectDir string, opts ...AdapterOption) []Adapter {
 	for _, o := range opts {
 		o(cfg)
 	}
+	runner := cfg.cmdRunner
+	if runner == nil {
+		runner = &RealCmdRunner{}
+	}
 	return []Adapter{
-		&ClaudeAdapter{ProjectDir: projectDir},
-		&CopilotAdapter{ProjectDir: projectDir, GlobalSettingsDir: cfg.globalSettingsDir},
+		&ClaudeAdapter{ProjectDir: projectDir, Runner: runner},
+		&CopilotAdapter{ProjectDir: projectDir, Runner: runner},
 	}
 }
 
@@ -110,4 +124,61 @@ func DetectActive(projectDir string, opts ...AdapterOption) []Adapter {
 		}
 	}
 	return active
+}
+
+// DetectedNames returns the names of all detected platforms.
+func DetectedNames(projectDir string, opts ...AdapterOption) []string {
+	var names []string
+	for _, a := range DetectActive(projectDir, opts...) {
+		names = append(names, a.Name())
+	}
+	return names
+}
+
+// SupportsScope returns true if the given scope is in the adapter's supported scopes list.
+func SupportsScope(a Adapter, scope Scope) bool {
+	for _, s := range a.SupportedScopes() {
+		if s == scope {
+			return true
+		}
+	}
+	return false
+}
+
+// CmdRunner abstracts command execution for testability.
+type CmdRunner interface {
+	Run(name string, args ...string) (stdout string, stderr string, err error)
+}
+
+// RealCmdRunner executes commands via os/exec with a timeout.
+type RealCmdRunner struct{}
+
+const cmdTimeout = 60 * time.Second
+
+func (r *RealCmdRunner) Run(name string, args ...string) (string, string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), cmdTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, name, args...)
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+
+	err := cmd.Run()
+	if err != nil {
+		return outBuf.String(), errBuf.String(),
+			fmt.Errorf("command %q failed: %w\nstderr: %s", name+" "+joinArgs(args), err, errBuf.String())
+	}
+	return outBuf.String(), errBuf.String(), nil
+}
+
+func joinArgs(args []string) string {
+	result := ""
+	for i, a := range args {
+		if i > 0 {
+			result += " "
+		}
+		result += a
+	}
+	return result
 }

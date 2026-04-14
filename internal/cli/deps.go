@@ -5,18 +5,15 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ai-summon/summon/internal/depcheck"
 	"github.com/ai-summon/summon/internal/installer"
-	"github.com/ai-summon/summon/internal/manifest"
-	"github.com/ai-summon/summon/internal/platform"
 	"github.com/ai-summon/summon/internal/registry"
 	"github.com/spf13/cobra"
 )
 
 var depsCmd = &cobra.Command{
 	Use:   "deps <package>",
-	Short: "Show dependencies of an installed package",
-	Long:  "Displays the declared dependencies of a specific installed package, including version constraints, installed versions, and satisfaction status.",
+	Short: "Show details of an installed package",
+	Long:  "Displays the details of a specific installed package including version, source, and platform information.",
 	Example: `  summon deps code-reviewer
   summon deps prompt-library --json
   summon deps -g my-package`,
@@ -47,81 +44,46 @@ func runDeps(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("getting working directory: %w", err)
 	}
 
-	// Find the package's scope
 	scope, err := resolveExistingPackageScope(projectDir, name, depsScope, depsGlobal, depsProject)
 	if err != nil {
 		return err
 	}
 
-	// Load the package's manifest from the store
 	paths := installer.ResolvePaths(scope, projectDir)
-	storePath := paths.StoreDir + "/" + name
-	m, err := manifest.Load(storePath)
+	reg, err := registry.Load(paths.RegistryPath)
 	if err != nil {
-		return fmt.Errorf("loading manifest for %s: %w", name, err)
+		return fmt.Errorf("loading registry: %w", err)
 	}
 
-	// Build registry view across all scopes for cross-scope satisfaction
-	allScopes := platform.ScopePrecedence()
-	registries := make(map[platform.Scope]*registry.Registry)
-	for _, s := range allScopes {
-		p := installer.ResolvePaths(s, projectDir)
-		reg, loadErr := registry.Load(p.RegistryPath)
-		if loadErr != nil {
-			continue
-		}
-		registries[s] = reg
+	entry, ok := reg.Get(name)
+	if !ok {
+		return fmt.Errorf("package %q not found in %s registry", name, scope.String())
 	}
 
-	view := depcheck.NewRegistryView(registries)
-	result := depcheck.CheckPackage(m, scope, view)
+	info := map[string]interface{}{
+		"name":      name,
+		"version":   entry.Version,
+		"scope":     scope.String(),
+		"source":    entry.Source,
+		"platforms": entry.Platforms,
+	}
 
 	if depsJSON {
-		return printDepsJSON(result)
-	}
-	return printDepsHuman(result)
-}
-
-func printDepsJSON(result depcheck.PackageCheckResult) error {
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(result)
-}
-
-func printDepsHuman(result depcheck.PackageCheckResult) error {
-	if len(result.Results) == 0 {
-		installer.Status("Info", "%s@%s (%s) has no dependencies",
-			result.PackageName, result.Version, result.PackageScope)
-		return nil
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(info)
 	}
 
-	fmt.Fprintf(installer.Stdout, "   Dependencies for %s@%s (%s):\n\n",
-		result.PackageName, result.Version, result.PackageScope)
-
-	satisfied := 0
-	for _, r := range result.Results {
-		constraint := r.Constraint
-		if constraint == "" {
-			constraint = `""`
-		}
-		switch r.Status {
-		case depcheck.Satisfied:
-			satisfied++
-			fmt.Fprintf(installer.Stdout, "     ✓ %s %s — satisfied by %s (%s)\n",
-				r.DependencyName, constraint, r.InstalledVersion, r.InstalledScope)
-		case depcheck.Missing:
-			fmt.Fprintf(installer.Stdout, "     ✗ %s %s — not installed\n",
-				r.DependencyName, constraint)
-		case depcheck.VersionMismatch:
-			fmt.Fprintf(installer.Stdout, "     ✗ %s %s — installed %s (%s), does not satisfy\n",
-				r.DependencyName, constraint, r.InstalledVersion, r.InstalledScope)
-		case depcheck.UnparseableConstraint:
-			fmt.Fprintf(installer.Stdout, "     ✗ %s %s — %s\n",
-				r.DependencyName, constraint, r.Message)
-		}
+	installer.Status("Package", "%s@%s (%s scope)", name, entry.Version, scope.String())
+	fmt.Fprintf(installer.Stdout, "   Source: %s %s\n", entry.Source.Type, entry.Source.URL)
+	if entry.Source.Ref != "" {
+		fmt.Fprintf(installer.Stdout, "   Ref: %s\n", entry.Source.Ref)
 	}
-
-	fmt.Fprintf(installer.Stdout, "\n   %d of %d dependencies satisfied\n",
-		satisfied, len(result.Results))
+	if entry.Source.SHA != "" {
+		fmt.Fprintf(installer.Stdout, "   SHA: %s\n", entry.Source.SHA)
+	}
+	if len(entry.Platforms) > 0 {
+		fmt.Fprintf(installer.Stdout, "   Platforms: %v\n", entry.Platforms)
+	}
 	return nil
 }

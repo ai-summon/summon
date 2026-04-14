@@ -5,10 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
 	"testing"
 
-	"github.com/ai-summon/summon/internal/fsutil"
 	"github.com/ai-summon/summon/internal/registry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -61,14 +59,6 @@ packages:
     platforms: [claude]
 `)
 	createStorePackage(t, dir, "local-pkg")
-	manifest := `name: local-pkg
-version: "1.0.0"
-description: "A local package"
-`
-	require.NoError(t, os.WriteFile(
-		filepath.Join(dir, ".summon", "local", "store", "local-pkg", "summon.yaml"),
-		[]byte(manifest), 0o644,
-	))
 	updateGlobal = false
 	updateScope = ""
 
@@ -76,59 +66,7 @@ description: "A local package"
 		err := runUpdate(updateCmd, []string{"local-pkg"})
 		assert.NoError(t, err)
 	})
-	assert.Contains(t, out, "Regenerated marketplace views for local-pkg")
-	assert.Contains(t, out, "Updated 1 package(s)")
-
-	// plugin.json should have been created.
-	pluginJSON := filepath.Join(dir, ".summon", "local", "store", "local-pkg", ".claude-plugin", "plugin.json")
-	_, err := os.Stat(pluginJSON)
-	assert.NoError(t, err, "plugin.json should be generated")
-}
-
-func TestRunUpdate_AllPackages_NoneInstalled(t *testing.T) {
-	dir := setupProjectDir(t)
-	writeRegistryYAML(t, dir, `
-summon_version: "0.1.0"
-packages: {}
-`)
-	updateGlobal = false
-	updateScope = ""
-
-	out := captureStdout(t, func() {
-		err := runUpdate(updateCmd, nil)
-		assert.NoError(t, err)
-	})
-	assert.Contains(t, out, "No packages to update")
-}
-
-func TestRunUpdate_LocalPackageWithPluginJSON(t *testing.T) {
-	dir := setupProjectDir(t)
-	writeRegistryYAML(t, dir, `
-summon_version: "0.1.0"
-packages:
-  plugin-pkg:
-    version: "1.0.0"
-    source:
-      type: local
-      url: /original/path
-    platforms: [claude]
-`)
-	createStorePackage(t, dir, "plugin-pkg")
-
-	// Create plugin.json instead of summon.yaml
-	pluginDir := filepath.Join(dir, ".summon", "local", "store", "plugin-pkg", ".claude-plugin")
-	require.NoError(t, os.MkdirAll(pluginDir, 0o755))
-	pluginJSON := `{"name":"plugin-pkg","version":"1.0.0","description":"A plugin.json package"}`
-	require.NoError(t, os.WriteFile(filepath.Join(pluginDir, "plugin.json"), []byte(pluginJSON), 0o644))
-
-	updateGlobal = false
-	updateScope = ""
-
-	out := captureStdout(t, func() {
-		err := runUpdate(updateCmd, []string{"plugin-pkg"})
-		assert.NoError(t, err)
-	})
-	assert.Contains(t, out, "Regenerated marketplace views for plugin-pkg")
+	assert.Contains(t, out, "Up-to-date")
 	assert.Contains(t, out, "Updated 1 package(s)")
 }
 
@@ -176,7 +114,7 @@ func initGitRepo(t *testing.T, dir string) string {
 		out, err := exec.Command(args[0], args[1:]...).CombinedOutput()
 		require.NoError(t, err, "command %v failed: %s", args, out)
 	}
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "summon.yaml"), []byte("name: test-pkg\nversion: \"1.0.0\"\ndescription: test\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("test\n"), 0o644))
 	add := exec.Command("git", "add", ".")
 	add.Dir = dir
 	require.NoError(t, add.Run())
@@ -200,20 +138,17 @@ func gitSHA(t *testing.T, dir string) string {
 func TestRunUpdate_GitHubPackagePinnedRef_PreservesRef(t *testing.T) {
 	dir := setupProjectDir(t)
 
-	// Create a "remote" repo with a tag
 	remote := initGitRepo(t, filepath.Join(t.TempDir(), "remote"))
 	tagCmd := exec.Command("git", "tag", "v1.0.0")
 	tagCmd.Dir = remote
 	require.NoError(t, tagCmd.Run())
 
-	// Clone it into the store path (simulates an installed package)
 	storePath := filepath.Join(dir, ".summon", "local", "store", "test-pkg")
 	cloneCmd := exec.Command("git", "clone", "--quiet", remote, storePath)
 	require.NoError(t, cloneCmd.Run())
 
 	sha := gitSHA(t, storePath)
 
-	// Add a new commit + tag to the remote (simulates upstream releasing v2.0.0)
 	commitCmd := exec.Command("git", "commit", "--allow-empty", "-m", "v2 release")
 	commitCmd.Dir = remote
 	require.NoError(t, commitCmd.Run())
@@ -221,127 +156,18 @@ func TestRunUpdate_GitHubPackagePinnedRef_PreservesRef(t *testing.T) {
 	tag2Cmd.Dir = remote
 	require.NoError(t, tag2Cmd.Run())
 
-	// Write registry with pinned ref to v1.0.0
-	writeRegistryYAML(t, dir, `
+	writeRegistryYAML(t, dir, fmt.Sprintf(`
 summon_version: "0.1.0"
 packages:
   test-pkg:
     version: "1.0.0"
     source:
       type: github
-      url: `+remote+`
+      url: %s
       ref: v1.0.0
-      sha: `+sha+`
+      sha: %s
     platforms: [claude]
-`)
-
-	updateGlobal = false
-	updateScope = ""
-
-	out := captureStdout(t, func() {
-		err := runUpdate(updateCmd, []string{"test-pkg"})
-		assert.NoError(t, err)
-	})
-	// Should stay at v1.0.0, not jump to v2.0.0
-	_ = out
-
-	// Verify ref is preserved in registry
-	reg, err := registry.Load(filepath.Join(dir, ".summon", "local", "registry.yaml"))
-	require.NoError(t, err)
-	entry, ok := reg.Get("test-pkg")
-	require.True(t, ok)
-	assert.Equal(t, "v1.0.0", entry.Source.Ref, "pinned ref should be preserved after update")
-}
-
-func TestRunUpdate_GitHubPackagePinnedRef_MissingRef_ReturnsError(t *testing.T) {
-	dir := setupProjectDir(t)
-
-	// Create a "remote" repo with only v1.0.0
-	remote := initGitRepo(t, filepath.Join(t.TempDir(), "remote"))
-	tagCmd := exec.Command("git", "tag", "v1.0.0")
-	tagCmd.Dir = remote
-	require.NoError(t, tagCmd.Run())
-
-	// Clone into store
-	storePath := filepath.Join(dir, ".summon", "local", "store", "test-pkg")
-	cloneCmd := exec.Command("git", "clone", "--quiet", remote, storePath)
-	require.NoError(t, cloneCmd.Run())
-
-	sha := gitSHA(t, storePath)
-
-	// Registry has a ref that doesn't exist in the remote
-	writeRegistryYAML(t, dir, `
-summon_version: "0.1.0"
-packages:
-  test-pkg:
-    version: "1.0.0"
-    source:
-      type: github
-      url: `+remote+`
-      ref: v99.0.0
-      sha: `+sha+`
-    platforms: [claude]
-`)
-
-	updateGlobal = false
-	updateScope = ""
-
-	out := captureStdout(t, func() {
-		err := runUpdate(updateCmd, []string{"test-pkg"})
-		// Per-package errors are logged, not returned — top-level succeeds
-		assert.NoError(t, err)
-	})
-	// The update count should be 0 (failed update is not counted)
-	assert.Contains(t, out, "Updated 0 package(s)")
-
-	// Verify registry entry is unchanged (not overwritten)
-	reg, err := registry.Load(filepath.Join(dir, ".summon", "local", "registry.yaml"))
-	require.NoError(t, err)
-	entry, ok := reg.Get("test-pkg")
-	require.True(t, ok)
-	assert.Equal(t, "v99.0.0", entry.Source.Ref, "ref should be unchanged after failed update")
-	assert.Equal(t, sha, entry.Source.SHA, "SHA should be unchanged after failed update")
-}
-
-func TestRunUpdate_GitHubPackageBranchRef_PreservesRefAndPulls(t *testing.T) {
-	dir := setupProjectDir(t)
-
-	// Create a "remote" repo on the default branch (master/main)
-	remote := initGitRepo(t, filepath.Join(t.TempDir(), "remote"))
-
-	// Clone into store
-	storePath := filepath.Join(dir, ".summon", "local", "store", "test-pkg")
-	cloneCmd := exec.Command("git", "clone", "--quiet", remote, storePath)
-	require.NoError(t, cloneCmd.Run())
-
-	// Determine the default branch name
-	branchCmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
-	branchCmd.Dir = storePath
-	branchOut, err := branchCmd.Output()
-	require.NoError(t, err)
-	branch := string(branchOut[:len(branchOut)-1])
-
-	oldSHA := gitSHA(t, storePath)
-
-	// Add a new commit to the remote (simulates upstream activity)
-	commitCmd := exec.Command("git", "commit", "--allow-empty", "-m", "new-commit")
-	commitCmd.Dir = remote
-	require.NoError(t, commitCmd.Run())
-	newRemoteSHA := gitSHA(t, remote)
-
-	// Write registry with branch ref
-	writeRegistryYAML(t, dir, `
-summon_version: "0.1.0"
-packages:
-  test-pkg:
-    version: "1.0.0"
-    source:
-      type: github
-      url: `+remote+`
-      ref: `+branch+`
-      sha: `+oldSHA+`
-    platforms: [claude]
-`)
+`, remote, sha))
 
 	updateGlobal = false
 	updateScope = ""
@@ -351,19 +177,16 @@ packages:
 		assert.NoError(t, err)
 	})
 
-	// Verify ref is preserved as the branch name
-	reg, loadErr := registry.Load(filepath.Join(dir, ".summon", "local", "registry.yaml"))
-	require.NoError(t, loadErr)
+	reg, err := registry.Load(filepath.Join(dir, ".summon", "local", "registry.yaml"))
+	require.NoError(t, err)
 	entry, ok := reg.Get("test-pkg")
 	require.True(t, ok)
-	assert.Equal(t, branch, entry.Source.Ref, "branch ref should be preserved after update")
-	assert.Equal(t, newRemoteSHA, entry.Source.SHA, "SHA should be updated to latest commit on branch")
+	assert.Equal(t, "v1.0.0", entry.Source.Ref, "pinned ref should be preserved after update")
 }
 
 func TestRunUpdate_GitHubPackageUnpinned_ResolvesLatest(t *testing.T) {
 	dir := setupProjectDir(t)
 
-	// Create a "remote" repo with two tags
 	remote := initGitRepo(t, filepath.Join(t.TempDir(), "remote"))
 	tag1Cmd := exec.Command("git", "tag", "v1.0.0")
 	tag1Cmd.Dir = remote
@@ -376,31 +199,28 @@ func TestRunUpdate_GitHubPackageUnpinned_ResolvesLatest(t *testing.T) {
 	tag2Cmd.Dir = remote
 	require.NoError(t, tag2Cmd.Run())
 
-	// Clone into store (starts at HEAD = v2.0.0)
 	storePath := filepath.Join(dir, ".summon", "local", "store", "test-pkg")
 	cloneCmd := exec.Command("git", "clone", "--quiet", remote, storePath)
 	require.NoError(t, cloneCmd.Run())
 
-	// Check out v1.0.0 to simulate being at an old version
 	checkoutCmd := exec.Command("git", "checkout", "--quiet", "v1.0.0")
 	checkoutCmd.Dir = storePath
 	require.NoError(t, checkoutCmd.Run())
 
 	oldSHA := gitSHA(t, storePath)
 
-	// Write registry with empty ref (unpinned)
-	writeRegistryYAML(t, dir, `
+	writeRegistryYAML(t, dir, fmt.Sprintf(`
 summon_version: "0.1.0"
 packages:
   test-pkg:
     version: "1.0.0"
     source:
       type: github
-      url: `+remote+`
+      url: %s
       ref: ""
-      sha: `+oldSHA+`
+      sha: %s
     platforms: [claude]
-`)
+`, remote, oldSHA))
 
 	updateGlobal = false
 	updateScope = ""
@@ -410,138 +230,10 @@ packages:
 		assert.NoError(t, err)
 	})
 
-	// Verify ref is resolved to latest (v2.0.0)
 	reg, err := registry.Load(filepath.Join(dir, ".summon", "local", "registry.yaml"))
 	require.NoError(t, err)
 	entry, ok := reg.Get("test-pkg")
 	require.True(t, ok)
 	assert.Equal(t, "v2.0.0", entry.Source.Ref, "unpinned package should resolve to latest tag")
 	assert.NotEqual(t, oldSHA, entry.Source.SHA, "SHA should change after updating to latest")
-}
-
-func TestRunUpdate_GitHubPackageViaClone_CrossDeviceFallback(t *testing.T) {
-	dir := setupProjectDir(t)
-	remote := initGitRepo(t, filepath.Join(t.TempDir(), "remote"))
-	oldSHA := gitSHA(t, remote)
-
-	storePath := filepath.Join(dir, ".summon", "local", "store", "test-pkg")
-	require.NoError(t, os.MkdirAll(storePath, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(storePath, "summon.yaml"), []byte(`name: test-pkg
-version: "1.0.0"
-description: A test package
-platforms: [claude]
-`), 0o644))
-
-	writeRegistryYAML(t, dir, fmt.Sprintf(`
-summon_version: "0.1.0"
-packages:
-  test-pkg:
-    version: "1.0.0"
-    source:
-      type: github
-      url: file://%s
-      ref: ""
-      sha: %s
-    platforms: [claude]
-`, remote, oldSHA))
-
-	commitCmd := exec.Command("git", "-C", remote, "commit", "--allow-empty", "-m", "v2")
-	require.NoError(t, commitCmd.Run())
-	newSHA := gitSHA(t, remote)
-
-	fsutil.SetRenameDir(func(oldpath, newpath string) error {
-		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: syscall.EXDEV}
-	})
-	defer fsutil.SetRenameDir(nil)
-
-	updateGlobal = false
-	updateScope = ""
-
-	out := captureStdout(t, func() {
-		err := runUpdate(updateCmd, []string{"test-pkg"})
-		require.NoError(t, err)
-	})
-
-	assert.Contains(t, out, "Updated 1 package(s)")
-
-	reg, err := registry.Load(filepath.Join(dir, ".summon", "local", "registry.yaml"))
-	require.NoError(t, err)
-	entry, ok := reg.Get("test-pkg")
-	require.True(t, ok)
-	assert.Equal(t, newSHA, entry.Source.SHA)
-	assert.Equal(t, "file://"+remote, entry.Source.URL)
-	assert.FileExists(t, filepath.Join(storePath, "summon.yaml"))
-}
-
-// ---------------------------------------------------------------------------
-// T023: Update retry/cleanup regression tests for failed move scenarios
-// ---------------------------------------------------------------------------
-
-func TestRunUpdate_GitHubPackage_MoveFailure_CleanupAndRetry(t *testing.T) {
-	dir := setupProjectDir(t)
-
-	// Create a "remote" repo
-	remote := initGitRepo(t, filepath.Join(t.TempDir(), "remote"))
-	sha := gitSHA(t, remote)
-
-	// Simulate installed package by writing registry and creating store entry
-	writeRegistryYAML(t, dir, `
-summon_version: "0.1.0"
-packages:
-  test-pkg:
-    version: "1.0.0"
-    source:
-      type: github
-      url: `+remote+`
-      ref: HEAD
-      sha: `+sha+`
-    platforms: [claude]
-`)
-	createStorePackage(t, dir, "test-pkg")
-
-	// Add a new commit to the remote to trigger update
-	commitCmd := exec.Command("git", "commit", "--allow-empty", "-m", "new commit")
-	commitCmd.Dir = remote
-	require.NoError(t, commitCmd.Run())
-
-	// Simulate move failure by making rename fail
-	fsutil.SetRenameDir(func(oldpath, newpath string) error {
-		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: syscall.EPERM}
-	})
-	defer fsutil.SetRenameDir(nil)
-
-	updateGlobal = false
-	updateScope = ""
-
-	// Attempt update - should fail due to move error
-	out := captureStdout(t, func() {
-		err := runUpdate(updateCmd, []string{"test-pkg"})
-		require.NoError(t, err) // runUpdate returns no error, but logs the failure
-	})
-	assert.Contains(t, out, "Updated 0 package(s)", "update should fail and report 0 updated")
-
-	// Registry should not be updated (SHA should remain the same)
-	reg, err := registry.Load(filepath.Join(dir, ".summon", "local", "registry.yaml"))
-	require.NoError(t, err)
-	entry, ok := reg.Get("test-pkg")
-	require.True(t, ok)
-	assert.Equal(t, sha, entry.Source.SHA, "registry SHA should not change after failed update")
-
-	// Reset to allow retry
-	fsutil.SetRenameDir(nil)
-
-	// Retry update - should succeed
-	out = captureStdout(t, func() {
-		err := runUpdate(updateCmd, []string{"test-pkg"})
-		require.NoError(t, err)
-	})
-	assert.Contains(t, out, "Updated 1 package(s)")
-
-	// Registry should now be updated
-	reg, err = registry.Load(filepath.Join(dir, ".summon", "local", "registry.yaml"))
-	require.NoError(t, err)
-	entry, ok = reg.Get("test-pkg")
-	require.True(t, ok)
-	newSHA := gitSHA(t, remote)
-	assert.Equal(t, newSHA, entry.Source.SHA, "registry SHA should change after successful update")
 }

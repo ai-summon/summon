@@ -38,11 +38,12 @@ func init() {
 
 // listEntry is the display/serialization model for "summon list".
 type listEntry struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-	Scope   string `json:"scope"`
-	Source  string `json:"source"`
-	Broken  bool   `json:"broken,omitempty"`
+	Name      string   `json:"name"`
+	Version   string   `json:"version"`
+	Scope     string   `json:"scope"`
+	Source    string   `json:"source"`
+	Platforms []string `json:"platforms,omitempty"`
+	Broken    bool     `json:"broken,omitempty"`
 }
 
 // runList prints every installed package in either tab-aligned text or JSON.
@@ -74,11 +75,12 @@ func runList(cmd *cobra.Command, args []string) error {
 			}
 
 			entries = append(entries, listEntry{
-				Name:    name,
-				Version: entry.Version,
-				Scope:   scope.String(),
-				Source:  src,
-				Broken:  s.IsBrokenLink(name),
+				Name:      name,
+				Version:   entry.Version,
+				Scope:     scope.String(),
+				Source:    src,
+				Platforms: entry.Platforms,
+				Broken:    s.IsBrokenLink(name),
 			})
 		}
 	}

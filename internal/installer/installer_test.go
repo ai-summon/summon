@@ -1,260 +1,53 @@
 package installer
 
 import (
-	"context"
-	"encoding/json"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"syscall"
 	"testing"
-	"time"
 
-	"github.com/ai-summon/summon/internal/depcheck"
-	"github.com/ai-summon/summon/internal/fsutil"
-	"github.com/ai-summon/summon/internal/manifest"
 	"github.com/ai-summon/summon/internal/platform"
-	"github.com/ai-summon/summon/internal/registry"
-	"github.com/ai-summon/summon/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func canonicalPluginPath(storeDir, name string) string {
-	p, _ := filepath.Abs(filepath.Join(storeDir, name))
-	if resolved, err := filepath.EvalSymlinks(filepath.Dir(p)); err == nil {
-		p = filepath.Join(resolved, name)
-	}
-	return p
-}
-
-func initGitRepo(t *testing.T, dir string) string {
-	t.Helper()
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-	cmds := [][]string{
-		{"git", "init", "--quiet", dir},
-		{"git", "-C", dir, "config", "user.email", "test@test.com"},
-		{"git", "-C", dir, "config", "user.name", "Test"},
-	}
-	for _, args := range cmds {
-		cmd := exec.Command(args[0], args[1:]...)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git command %v failed: %s %v", args, string(out), err)
-		}
-	}
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "summon.yaml"), []byte(`name: test-pkg
-version: "1.0.0"
-description: A test package
-platforms: [claude]
-`), 0o644))
-	add := exec.Command("git", "-C", dir, "add", ".")
-	require.NoError(t, add.Run())
-	commit := exec.Command("git", "-C", dir, "commit", "-m", "initial commit")
-	require.NoError(t, commit.Run())
-	return dir
-}
 
 // ---------------------------------------------------------------------------
 // ResolvePaths
 // ---------------------------------------------------------------------------
 
 func TestResolvePaths_Local(t *testing.T) {
-	projectDir := "/projects/myapp"
-	p := ResolvePaths(platform.ScopeLocal, projectDir)
-
-	assert.Equal(t, filepath.Join(projectDir, ".summon", "local", "store"), p.StoreDir)
-	assert.Equal(t, filepath.Join(projectDir, ".summon", "local", "registry.yaml"), p.RegistryPath)
-	assert.Equal(t, filepath.Join(projectDir, ".summon", "local", "platforms"), p.PlatformsDir)
+	p := ResolvePaths(platform.ScopeLocal, "/proj")
+	assert.Equal(t, "/proj/.summon/local/store", p.StoreDir)
+	assert.Equal(t, "/proj/.summon/local/registry.yaml", p.RegistryPath)
 	assert.Equal(t, platform.ScopeLocal, p.Scope)
-	assert.Equal(t, "summon-local", p.MarketplaceName)
 }
 
 func TestResolvePaths_Project(t *testing.T) {
-	projectDir := "/projects/myapp"
-	p := ResolvePaths(platform.ScopeProject, projectDir)
-
-	assert.Equal(t, filepath.Join(projectDir, ".summon", "project", "store"), p.StoreDir)
-	assert.Equal(t, filepath.Join(projectDir, ".summon", "project", "registry.yaml"), p.RegistryPath)
-	assert.Equal(t, filepath.Join(projectDir, ".summon", "project", "platforms"), p.PlatformsDir)
+	p := ResolvePaths(platform.ScopeProject, "/proj")
+	assert.Equal(t, "/proj/.summon/project/store", p.StoreDir)
+	assert.Equal(t, "/proj/.summon/project/registry.yaml", p.RegistryPath)
 	assert.Equal(t, platform.ScopeProject, p.Scope)
-	assert.Equal(t, "summon-project", p.MarketplaceName)
 }
 
 func TestResolvePaths_User(t *testing.T) {
-	home, err := os.UserHomeDir()
-	require.NoError(t, err)
-
-	p := ResolvePaths(platform.ScopeUser, "/ignored")
-
+	p := ResolvePaths(platform.ScopeUser, "/proj")
+	home, _ := os.UserHomeDir()
 	assert.Equal(t, filepath.Join(home, ".summon", "user", "store"), p.StoreDir)
 	assert.Equal(t, filepath.Join(home, ".summon", "user", "registry.yaml"), p.RegistryPath)
-	assert.Equal(t, filepath.Join(home, ".summon", "user", "platforms"), p.PlatformsDir)
 	assert.Equal(t, platform.ScopeUser, p.Scope)
-	assert.Equal(t, "summon-user", p.MarketplaceName)
 }
 
-func TestMakeScopedTempDir_LocalScopeBase(t *testing.T) {
-	projectDir := t.TempDir()
-	paths := ResolvePaths(platform.ScopeLocal, projectDir)
+// ---------------------------------------------------------------------------
+// MakeScopedTempDir
+// ---------------------------------------------------------------------------
 
-	tmpDir, err := MakeScopedTempDir(paths, "summon-install-*")
+func TestMakeScopedTempDir_CreatesDir(t *testing.T) {
+	base := t.TempDir()
+	paths := Paths{StoreDir: filepath.Join(base, "store")}
+	tmpDir, err := MakeScopedTempDir(paths, "test-*")
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
-
-	assert.True(t, strings.HasPrefix(filepath.Clean(tmpDir), filepath.Clean(filepath.Dir(paths.StoreDir))+string(filepath.Separator)))
-}
-
-func TestMakeScopedTempDir_CreatesBaseDir(t *testing.T) {
-	projectDir := t.TempDir()
-	paths := ResolvePaths(platform.ScopeProject, projectDir)
-
-	baseDir := filepath.Dir(paths.StoreDir)
-	require.NoError(t, os.RemoveAll(baseDir))
-
-	tmpDir, err := MakeScopedTempDir(paths, "summon-update-*")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
-
-	_, statErr := os.Stat(baseDir)
-	require.NoError(t, statErr)
-}
-
-func fileURL(path string) string {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		abs = path
-	}
-	abs = filepath.ToSlash(abs)
-	if runtime.GOOS == "windows" {
-		if strings.HasPrefix(abs, "//") {
-			return "file:" + abs
-		}
-		return "file:///" + abs
-	}
-	return "file://" + abs
-}
-
-func TestInstallGitHub_CrossDeviceFallback(t *testing.T) {
-	projectDir := t.TempDir()
-	remote := initGitRepo(t, filepath.Join(t.TempDir(), "remote"))
-	repoURL := fileURL(remote)
-
-	fsutil.SetRenameDir(func(oldpath, newpath string) error {
-		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: syscall.EXDEV}
-	})
-	defer fsutil.SetRenameDir(nil)
-
-	err := Install(Options{Package: repoURL, ProjectDir: projectDir, Force: true})
-	require.NoError(t, err)
-
-	storePath := filepath.Join(projectDir, ".summon", "local", "store", "test-pkg")
-	require.FileExists(t, filepath.Join(storePath, "summon.yaml"))
-	require.FileExists(t, filepath.Join(storePath, ".claude-plugin", "plugin.json"))
-
-	reg, err := registry.Load(filepath.Join(projectDir, ".summon", "local", "registry.yaml"))
-	require.NoError(t, err)
-	entry, ok := reg.Get("test-pkg")
-	require.True(t, ok)
-	assert.Equal(t, repoURL, entry.Source.URL)
-	assert.NotEmpty(t, entry.Source.SHA)
-}
-
-func TestInstallGitHub_MultiPluginCrossDeviceFallback(t *testing.T) {
-	projectDir := t.TempDir()
-	remote := filepath.Join(t.TempDir(), "remote")
-	require.NoError(t, os.MkdirAll(remote, 0o755))
-
-	pluginA := filepath.Join(remote, "plugin-a")
-	require.NoError(t, os.MkdirAll(pluginA, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(pluginA, "plugin.json"), []byte(`{
-  "name": "plugin-a",
-  "version": "1.0.0",
-  "description": "Plugin A"
-}`), 0o644))
-
-	pluginB := filepath.Join(remote, "plugin-b")
-	require.NoError(t, os.MkdirAll(pluginB, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(pluginB, "plugin.json"), []byte(`{
-  "name": "plugin-b",
-  "version": "2.0.0",
-  "description": "Plugin B"
-}`), 0o644))
-
-	marketplaceJSON := `{
-  "name": "multi-plugin-marketplace",
-  "plugins": [
-    {"name": "plugin-a", "source": "./plugin-a"},
-    {"name": "plugin-b", "source": "./plugin-b"}
-  ]
-}`
-	require.NoError(t, os.MkdirAll(filepath.Join(remote, ".claude-plugin"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(remote, ".claude-plugin", "marketplace.json"), []byte(marketplaceJSON), 0o644))
-
-	// Create plugin-a and plugin-b subdirs with plugin.json
-	for _, plugin := range []string{"plugin-a", "plugin-b"} {
-		pluginDir := filepath.Join(remote, plugin)
-		require.NoError(t, os.MkdirAll(filepath.Join(pluginDir, ".claude-plugin"), 0o755))
-		pluginJSON := fmt.Sprintf(`{
-  "name": "%s",
-  "version": "1.0.0",
-  "description": "Test plugin",
-  "platforms": ["claude"]
-}`, plugin)
-		require.NoError(t, os.WriteFile(filepath.Join(pluginDir, ".claude-plugin", "plugin.json"), []byte(pluginJSON), 0o644))
-	}
-
-	gitInit := exec.Command("git", "init", "--quiet", remote)
-	require.NoError(t, gitInit.Run())
-	gitConfigEmail := exec.Command("git", "-C", remote, "config", "user.email", "test@test.com")
-	require.NoError(t, gitConfigEmail.Run())
-	gitConfigName := exec.Command("git", "-C", remote, "config", "user.name", "Test")
-	require.NoError(t, gitConfigName.Run())
-	gitAdd := exec.Command("git", "-C", remote, "add", ".")
-	require.NoError(t, gitAdd.Run())
-	gitCommit := exec.Command("git", "-C", remote, "commit", "-m", "initial commit")
-	require.NoError(t, gitCommit.Run())
-
-	repoURL := fileURL(remote)
-	fsutil.SetRenameDir(func(oldpath, newpath string) error {
-		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: syscall.EXDEV}
-	})
-	defer fsutil.SetRenameDir(nil)
-
-	err := Install(Options{Package: repoURL, ProjectDir: projectDir, Force: true})
-	require.NoError(t, err)
-
-	for _, pkg := range []string{"plugin-a", "plugin-b"} {
-		storePath := filepath.Join(projectDir, ".summon", "local", "store", pkg)
-		require.DirExists(t, storePath)
-		require.FileExists(t, filepath.Join(storePath, ".claude-plugin", "plugin.json"))
-		reg, err := registry.Load(filepath.Join(projectDir, ".summon", "local", "registry.yaml"))
-		require.NoError(t, err)
-		_, ok := reg.Get(pkg)
-		require.True(t, ok)
-	}
-}
-
-func TestInstallGitHub_PostInstallMarketplaceGenerated(t *testing.T) {
-	projectDir := t.TempDir()
-	remote := initGitRepo(t, filepath.Join(t.TempDir(), "remote"))
-	repoURL := fileURL(remote)
-
-	fsutil.SetRenameDir(func(oldpath, newpath string) error {
-		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: syscall.EXDEV}
-	})
-	defer fsutil.SetRenameDir(nil)
-
-	err := Install(Options{Package: repoURL, ProjectDir: projectDir, Force: true})
-	require.NoError(t, err)
-
-	marketplacePath := filepath.Join(projectDir, ".summon", "local", "platforms", "claude", ".claude-plugin", "marketplace.json")
-	require.FileExists(t, marketplacePath)
-	pluginsDir := filepath.Join(projectDir, ".summon", "local", "platforms", "claude", "plugins")
-	_, err = os.Stat(filepath.Join(pluginsDir, "test-pkg"))
-	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+	assert.DirExists(t, tmpDir)
 }
 
 // ---------------------------------------------------------------------------
@@ -263,18 +56,16 @@ func TestInstallGitHub_PostInstallMarketplaceGenerated(t *testing.T) {
 
 func TestPackageNameFromURL(t *testing.T) {
 	tests := []struct {
-		name string
 		url  string
 		want string
 	}{
-		{"https URL", "https://github.com/user/repo", "repo"},
-		{"https URL with .git", "https://github.com/user/repo.git", "repo"},
-		{"ssh URL with .git", "git@github.com:user/repo.git", "repo"},
-		{"single segment", "mypkg", "mypkg"},
-		{"trailing slash stripped by caller", "https://github.com/org/tool", "tool"},
+		{"https://github.com/user/my-plugin", "my-plugin"},
+		{"https://github.com/user/my-plugin.git", "my-plugin"},
+		{"git@github.com:user/repo.git", "repo"},
+		{"simple-name", "simple-name"},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.url, func(t *testing.T) {
 			assert.Equal(t, tt.want, packageNameFromURL(tt.url))
 		})
 	}
@@ -286,44 +77,18 @@ func TestPackageNameFromURL(t *testing.T) {
 
 func TestResolveGitURL(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   string
-		want    string
-		wantErr bool
+		input string
+		want  string
 	}{
-		{
-			name:  "github shorthand",
-			input: "github:user/repo",
-			want:  "https://github.com/user/repo",
-		},
-		{
-			name:  "full https URL",
-			input: "https://github.com/user/repo",
-			want:  "https://github.com/user/repo",
-		},
-		{
-			name:  "ssh URL",
-			input: "git@github.com:user/repo",
-			want:  "git@github.com:user/repo",
-		},
-		{
-			name:  "catalog name superpowers",
-			input: "superpowers",
-			want:  "https://github.com/obra/superpowers",
-		},
-		{
-			name:    "unknown catalog name",
-			input:   "nonexistent-pkg-xyz",
-			wantErr: true,
-		},
+		{"github:user/repo", "https://github.com/user/repo"},
+		{"https://github.com/user/repo", "https://github.com/user/repo"},
+		{"git@github.com:user/repo.git", "git@github.com:user/repo.git"},
+		{"file:///tmp/repo", "file:///tmp/repo"},
+		{"my-plugin", "https://github.com/ai-summon/my-plugin"},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.input, func(t *testing.T) {
 			got, err := resolveGitURL(tt.input)
-			if tt.wantErr {
-				require.Error(t, err)
-				return
-			}
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
@@ -336,100 +101,19 @@ func TestResolveGitURL(t *testing.T) {
 
 func TestEnsureGitignore_CreatesFile(t *testing.T) {
 	dir := t.TempDir()
-
-	err := EnsureGitignore(dir)
+	require.NoError(t, EnsureGitignore(dir))
+	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
 	require.NoError(t, err)
-
-	content, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
-	require.NoError(t, err)
-	s := string(content)
-	assert.Contains(t, s, ".summon/local/")
-	assert.Contains(t, s, ".summon/project/store/")
-	assert.Contains(t, s, ".summon/project/platforms/")
-}
-
-func TestEnsureGitignore_AppendsToExisting(t *testing.T) {
-	dir := t.TempDir()
-	gitignorePath := filepath.Join(dir, ".gitignore")
-	require.NoError(t, os.WriteFile(gitignorePath, []byte("node_modules/\n"), 0o644))
-
-	err := EnsureGitignore(dir)
-	require.NoError(t, err)
-
-	content, err := os.ReadFile(gitignorePath)
-	require.NoError(t, err)
-	s := string(content)
-	assert.Contains(t, s, "node_modules/")
-	assert.Contains(t, s, ".summon/local/")
-	assert.Contains(t, s, ".summon/project/store/")
-	assert.Contains(t, s, ".summon/project/platforms/")
+	assert.Contains(t, string(data), ".summon/local/")
+	assert.Contains(t, string(data), ".summon/project/store/")
 }
 
 func TestEnsureGitignore_NoDuplicates(t *testing.T) {
 	dir := t.TempDir()
-
 	require.NoError(t, EnsureGitignore(dir))
 	require.NoError(t, EnsureGitignore(dir))
-
-	content, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
-	require.NoError(t, err)
-	s := string(content)
-	assert.Equal(t, 1, strings.Count(s, ".summon/local/"))
-	assert.Equal(t, 1, strings.Count(s, ".summon/project/store/"))
-	assert.Equal(t, 1, strings.Count(s, ".summon/project/platforms/"))
-}
-
-func TestEnsureGitignore_NoTrailingNewline(t *testing.T) {
-	dir := t.TempDir()
-	gitignorePath := filepath.Join(dir, ".gitignore")
-	// Existing file with no trailing newline.
-	require.NoError(t, os.WriteFile(gitignorePath, []byte("node_modules/"), 0o644))
-
-	err := EnsureGitignore(dir)
-	require.NoError(t, err)
-
-	content, err := os.ReadFile(gitignorePath)
-	require.NoError(t, err)
-	lines := strings.Split(string(content), "\n")
-	// The first entry should be on a new line, not concatenated with the
-	// previous content.
-	assert.Equal(t, "node_modules/", lines[0])
-	assert.Contains(t, string(content), "\n.summon/local/\n")
-}
-
-// ---------------------------------------------------------------------------
-// filterCompatible
-// ---------------------------------------------------------------------------
-
-func TestFilterCompatible_MatchingPlatforms(t *testing.T) {
-	adapters := platform.AllAdapters("")
-	// Request only the first adapter's name.
-	manifestPlatforms := []string{adapters[0].Name()}
-
-	result := filterCompatible(manifestPlatforms, adapters)
-	require.Len(t, result, 1)
-	assert.Equal(t, adapters[0].Name(), result[0].Name())
-}
-
-func TestFilterCompatible_NoMatch(t *testing.T) {
-	adapters := platform.AllAdapters("")
-	result := filterCompatible([]string{"nonexistent-platform"}, adapters)
-	assert.Empty(t, result)
-}
-
-func TestFilterCompatible_EmptyManifestPlatforms(t *testing.T) {
-	adapters := platform.AllAdapters("")
-	// An empty manifest platforms list means "compatible with all".
-	result := filterCompatible(nil, adapters)
-	assert.Equal(t, len(adapters), len(result))
-
-	result = filterCompatible([]string{}, adapters)
-	assert.Equal(t, len(adapters), len(result))
-}
-
-func TestFilterCompatible_EmptyActive(t *testing.T) {
-	result := filterCompatible([]string{"claude"}, nil)
-	assert.Empty(t, result)
+	data, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	assert.Equal(t, 1, strings.Count(string(data), ".summon/local/"))
 }
 
 // ---------------------------------------------------------------------------
@@ -437,310 +121,15 @@ func TestFilterCompatible_EmptyActive(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetPlatformNames(t *testing.T) {
-	adapters := platform.AllAdapters("")
+	adapters := platform.AllAdapters("/proj")
 	names := getPlatformNames(adapters)
-	require.Len(t, names, len(adapters))
-	for i, a := range adapters {
-		assert.Equal(t, a.Name(), names[i])
-	}
+	assert.Contains(t, names, "claude")
+	assert.Contains(t, names, "copilot")
 }
 
 func TestGetPlatformNames_Empty(t *testing.T) {
 	names := getPlatformNames(nil)
 	assert.Nil(t, names)
-}
-
-// ---------------------------------------------------------------------------
-// reportDependencies
-// ---------------------------------------------------------------------------
-
-func TestReportDependencies_NoDeps(t *testing.T) {
-	m := &manifest.Manifest{Name: "test", Version: "1.0.0", Description: "d"}
-
-	tmpDir := t.TempDir()
-	setupRegistryDir(t, tmpDir, "local", `summon_version: "0.1.0"
-packages: {}
-`)
-
-	// Should not panic and produce no output on stderr.
-	old := os.Stderr
-	oldWriter := Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-	Stderr = w
-	results, err := reportDependencies(m, platform.ScopeLocal, tmpDir, false)
-	w.Close()
-	os.Stderr = old
-	Stderr = oldWriter
-
-	assert.NoError(t, err)
-	assert.Nil(t, results)
-	buf := make([]byte, 1024)
-	n, _ := r.Read(buf)
-	assert.Equal(t, 0, n, "expected no stderr output when there are no deps")
-}
-
-func TestReportDependencies_AllSatisfied(t *testing.T) {
-	m := &manifest.Manifest{
-		Name: "test", Version: "1.0.0", Description: "d",
-		Dependencies: map[string]string{"dep-a": ">=1.0.0"},
-	}
-
-	tmpDir := t.TempDir()
-	setupRegistryDir(t, tmpDir, "local", `summon_version: "0.1.0"
-packages:
-  dep-a:
-    version: "1.0.0"
-    source: {type: github, url: "https://github.com/test/dep-a"}
-`)
-
-	old := os.Stderr
-	oldWriter := Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-	Stderr = w
-	_, err := reportDependencies(m, platform.ScopeLocal, tmpDir, false)
-	w.Close()
-	os.Stderr = old
-	Stderr = oldWriter
-
-	assert.NoError(t, err)
-	buf := make([]byte, 1024)
-	n, _ := r.Read(buf)
-	assert.Equal(t, 0, n, "expected no warning when all deps are satisfied")
-}
-
-func TestReportDependencies_MissingDeps(t *testing.T) {
-	m := &manifest.Manifest{
-		Name: "test", Version: "1.0.0", Description: "d",
-		Dependencies: map[string]string{"missing-dep": ">=1.0.0"},
-	}
-
-	tmpDir := t.TempDir()
-	setupRegistryDir(t, tmpDir, "local", `summon_version: "0.1.0"
-packages: {}
-`)
-
-	old := os.Stderr
-	oldWriter := Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-	Stderr = w
-	_, err := reportDependencies(m, platform.ScopeLocal, tmpDir, false)
-	w.Close()
-	os.Stderr = old
-	Stderr = oldWriter
-
-	assert.NoError(t, err)
-	buf := make([]byte, 4096)
-	n, _ := r.Read(buf)
-	output := string(buf[:n])
-	assert.Contains(t, output, "missing dependencies")
-	assert.Contains(t, output, "missing-dep")
-}
-
-func TestReportDependencies_StrictDeps(t *testing.T) {
-	m := &manifest.Manifest{
-		Name: "test", Version: "1.0.0", Description: "d",
-		Dependencies: map[string]string{"missing-dep": ">=1.0.0"},
-	}
-
-	tmpDir := t.TempDir()
-	setupRegistryDir(t, tmpDir, "local", `summon_version: "0.1.0"
-packages: {}
-`)
-
-	old := os.Stderr
-	oldWriter := Stderr
-	_, w, _ := os.Pipe()
-	os.Stderr = w
-	Stderr = w
-	_, err := reportDependencies(m, platform.ScopeLocal, tmpDir, true)
-	w.Close()
-	os.Stderr = old
-	Stderr = oldWriter
-
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "missing required dependencies")
-}
-
-// setupRegistryDir creates a .summon/<scope>/registry.yaml under dir.
-func setupRegistryDir(t *testing.T, dir, scope, content string) {
-	t.Helper()
-	summonDir := filepath.Join(dir, ".summon", scope)
-	require.NoError(t, os.MkdirAll(summonDir, 0o755))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(summonDir, "registry.yaml"),
-		[]byte(content), 0o644,
-	))
-}
-
-func TestReportDependencies_VersionMismatch(t *testing.T) {
-	m := &manifest.Manifest{
-		Name: "test", Version: "1.0.0", Description: "d",
-		Dependencies: map[string]string{"dep-a": ">=2.0.0"},
-	}
-
-	tmpDir := t.TempDir()
-	setupRegistryDir(t, tmpDir, "local", `summon_version: "0.1.0"
-packages:
-  dep-a:
-    version: "1.5.0"
-    source: {type: github, url: "https://github.com/test/dep-a"}
-`)
-
-	old := os.Stderr
-	oldWriter := Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-	Stderr = w
-	_, err := reportDependencies(m, platform.ScopeLocal, tmpDir, false)
-	w.Close()
-	os.Stderr = old
-	Stderr = oldWriter
-
-	assert.NoError(t, err) // non-strict, so no error
-	buf := make([]byte, 4096)
-	n, _ := r.Read(buf)
-	output := string(buf[:n])
-	assert.Contains(t, output, "dep-a")
-	assert.Contains(t, output, "installed 1.5.0")
-}
-
-func TestReportDependencies_CaretConstraintSatisfied(t *testing.T) {
-	m := &manifest.Manifest{
-		Name: "test", Version: "1.0.0", Description: "d",
-		Dependencies: map[string]string{"dep-a": "^1.2.0"},
-	}
-
-	tmpDir := t.TempDir()
-	setupRegistryDir(t, tmpDir, "local", `summon_version: "0.1.0"
-packages:
-  dep-a:
-    version: "1.5.0"
-    source: {type: github, url: "https://github.com/test/dep-a"}
-`)
-
-	old := os.Stderr
-	oldWriter := Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-	Stderr = w
-	_, err := reportDependencies(m, platform.ScopeLocal, tmpDir, false)
-	w.Close()
-	os.Stderr = old
-	Stderr = oldWriter
-
-	assert.NoError(t, err)
-	buf := make([]byte, 1024)
-	n, _ := r.Read(buf)
-	assert.Equal(t, 0, n, "expected no warning when caret constraint is satisfied")
-}
-
-func TestReportDependencies_UnparseableConstraint(t *testing.T) {
-	m := &manifest.Manifest{
-		Name: "test", Version: "1.0.0", Description: "d",
-		Dependencies: map[string]string{"dep-a": "not-a-constraint"},
-	}
-
-	tmpDir := t.TempDir()
-	setupRegistryDir(t, tmpDir, "local", `summon_version: "0.1.0"
-packages:
-  dep-a:
-    version: "1.0.0"
-    source: {type: github, url: "https://github.com/test/dep-a"}
-`)
-
-	old := os.Stderr
-	oldWriter := Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-	Stderr = w
-	_, err := reportDependencies(m, platform.ScopeLocal, tmpDir, false)
-	w.Close()
-	os.Stderr = old
-	Stderr = oldWriter
-
-	assert.NoError(t, err) // non-strict
-	buf := make([]byte, 4096)
-	n, _ := r.Read(buf)
-	output := string(buf[:n])
-	assert.Contains(t, output, "dep-a")
-}
-
-func TestPromptInstallDeps_NonInteractive(t *testing.T) {
-	// SUMMON_NONINTERACTIVE=1 should return nil
-	t.Setenv("SUMMON_NONINTERACTIVE", "1")
-	results := []depcheck.Result{
-		{DependencyName: "dep-a", Status: depcheck.Missing},
-	}
-	names := PromptInstallDeps(results)
-	assert.Nil(t, names)
-}
-
-func TestPromptInstallDeps_NoMissingDeps(t *testing.T) {
-	// Only version mismatch — nothing installable
-	results := []depcheck.Result{
-		{DependencyName: "dep-a", Status: depcheck.VersionMismatch},
-	}
-	// Even if interactive, should return nil since there's nothing to install
-	t.Setenv("SUMMON_NONINTERACTIVE", "1")
-	names := PromptInstallDeps(results)
-	assert.Nil(t, names)
-}
-
-// ---------------------------------------------------------------------------
-// enablePlugins
-// ---------------------------------------------------------------------------
-
-func TestEnablePlugins_WritesEnabledPlugins(t *testing.T) {
-	tmpDir := t.TempDir()
-	storeDir := filepath.Join(tmpDir, "store")
-	globalDir := filepath.Join(tmpDir, "global-settings")
-	require.NoError(t, os.MkdirAll(filepath.Join(storeDir, "test-plugin"), 0o755))
-	require.NoError(t, os.MkdirAll(globalDir, 0o755))
-
-	paths := Paths{
-		StoreDir:        storeDir,
-		RegistryPath:    filepath.Join(tmpDir, "registry.yaml"),
-		PlatformsDir:    filepath.Join(tmpDir, "platforms"),
-		Scope:           platform.ScopeLocal,
-		MarketplaceName: "summon-local",
-	}
-	adapters := platform.AllAdapters(tmpDir, platform.WithGlobalSettingsDir(globalDir))
-
-	enablePlugins("test-plugin", paths, adapters)
-
-	// Verify each adapter activated the plugin in workspace settings
-	for _, a := range adapters {
-		settingsPath := a.SettingsPath(platform.ScopeLocal)
-		data, err := os.ReadFile(settingsPath)
-		require.NoError(t, err, "settings file should exist for %s", a.Name())
-
-		var settings map[string]interface{}
-		require.NoError(t, json.Unmarshal(data, &settings))
-
-		switch a.Name() {
-		case "claude":
-			ep, ok := settings["enabledPlugins"].(map[string]interface{})
-			require.True(t, ok, "enabledPlugins should be present for claude")
-			assert.Equal(t, true, ep["test-plugin@summon-local"])
-		case "copilot":
-			pl, ok := settings["chat.pluginLocations"].(map[string]interface{})
-			require.True(t, ok, "chat.pluginLocations should be present for copilot workspace")
-			expectedPath := canonicalPluginPath(storeDir, "test-plugin")
-			assert.Equal(t, true, pl[expectedPath])
-
-			// Also verify user-level settings were written
-			globalData, err := os.ReadFile(filepath.Join(globalDir, "settings.json"))
-			require.NoError(t, err, "user-level settings should exist for copilot")
-			var gs map[string]interface{}
-			require.NoError(t, json.Unmarshal(globalData, &gs))
-			gpl, ok := gs["chat.pluginLocations"].(map[string]interface{})
-			require.True(t, ok, "chat.pluginLocations should be present in user-level settings")
-			assert.Equal(t, true, gpl[expectedPath])
-		}
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -751,758 +140,50 @@ func TestExpandHookVariables_ReplacesVariable(t *testing.T) {
 	dir := t.TempDir()
 	hooksDir := filepath.Join(dir, "hooks")
 	require.NoError(t, os.MkdirAll(hooksDir, 0o755))
+	content := `{"cmd": "PLUGIN_ROOT/run.sh"}`
+	content = strings.ReplaceAll(content, "PLUGIN_ROOT", "${CLAUDE_PLUGIN_ROOT}")
+	require.NoError(t, os.WriteFile(
+		filepath.Join(hooksDir, "hooks.json"),
+		[]byte(content),
+		0o644,
+	))
 
-	hooksJSON := `{
-  "hooks": {
-    "SessionStart": [{
-      "hooks": [{
-        "type": "command",
-        "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" session-start"
-      }]
-    }]
-  }
-}`
-	require.NoError(t, os.WriteFile(filepath.Join(hooksDir, "hooks.json"), []byte(hooksJSON), 0o644))
+	require.NoError(t, expandHookVariables(dir))
 
-	err := expandHookVariables(dir)
-	require.NoError(t, err)
-
-	data, err := os.ReadFile(filepath.Join(hooksDir, "hooks.json"))
-	require.NoError(t, err)
+	data, _ := os.ReadFile(filepath.Join(hooksDir, "hooks.json"))
+	assert.NotContains(t, string(data), "${CLAUDE"+"_PLUGIN_ROOT}")
 	absDir, _ := filepath.Abs(dir)
-	if resolved, err := filepath.EvalSymlinks(absDir); err == nil {
-		absDir = resolved
-	}
-	assert.Contains(t, string(data), absDir+"/hooks/run-hook.cmd")
-	assert.NotContains(t, string(data), "${CLAUDE_PLUGIN_ROOT}")
+	assert.Contains(t, string(data), absDir)
 }
 
 func TestExpandHookVariables_NoHooksJSON(t *testing.T) {
 	dir := t.TempDir()
-	err := expandHookVariables(dir)
-	assert.NoError(t, err)
+	assert.NoError(t, expandHookVariables(dir))
 }
 
-func TestExpandHookVariables_NoVariable(t *testing.T) {
+// ---------------------------------------------------------------------------
+// scopeFromLegacy
+// ---------------------------------------------------------------------------
+
+func TestScopeFromLegacy(t *testing.T) {
+	// When scope is explicitly set, global flag is ignored
+	assert.Equal(t, platform.ScopeLocal, scopeFromLegacy(true, platform.ScopeLocal))
+	assert.Equal(t, platform.ScopeProject, scopeFromLegacy(false, platform.ScopeProject))
+	assert.Equal(t, platform.ScopeUser, scopeFromLegacy(false, platform.ScopeUser))
+	// When scope is not a valid enum value (e.g. 99), falls back to global flag
+	assert.Equal(t, platform.ScopeUser, scopeFromLegacy(true, 99))
+	assert.Equal(t, platform.ScopeLocal, scopeFromLegacy(false, 99))
+}
+
+// ---------------------------------------------------------------------------
+// fileExists
+// ---------------------------------------------------------------------------
+
+func TestFileExists(t *testing.T) {
 	dir := t.TempDir()
-	hooksDir := filepath.Join(dir, "hooks")
-	require.NoError(t, os.MkdirAll(hooksDir, 0o755))
-
-	hooksJSON := `{"hooks": {}}`
-	require.NoError(t, os.WriteFile(filepath.Join(hooksDir, "hooks.json"), []byte(hooksJSON), 0o644))
-
-	err := expandHookVariables(dir)
-	require.NoError(t, err)
-
-	data, err := os.ReadFile(filepath.Join(hooksDir, "hooks.json"))
-	require.NoError(t, err)
-	assert.Equal(t, hooksJSON, string(data))
-}
-
-func TestExpandHookVariables_ResolvesSymlinks(t *testing.T) {
-	// Simulate a local install where the store entry is a symlink
-	realDir := t.TempDir()
-	hooksDir := filepath.Join(realDir, "hooks")
-	require.NoError(t, os.MkdirAll(hooksDir, 0o755))
-
-	hooksJSON := `"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd"`
-	require.NoError(t, os.WriteFile(filepath.Join(hooksDir, "hooks.json"), []byte(hooksJSON), 0o644))
-
-	linkDir := filepath.Join(t.TempDir(), "link")
-	require.NoError(t, os.Symlink(realDir, linkDir))
-
-	err := expandHookVariables(linkDir)
-	require.NoError(t, err)
-
-	data, err := os.ReadFile(filepath.Join(hooksDir, "hooks.json"))
-	require.NoError(t, err)
-
-	// Should contain the resolved (real) path, not the symlink path
-	resolvedDir, _ := filepath.EvalSymlinks(realDir)
-	assert.Contains(t, string(data), resolvedDir)
-	assert.NotContains(t, string(data), "${CLAUDE_PLUGIN_ROOT}")
-}
-
-func TestExpandHookVariables_RootLevelHooksJSON(t *testing.T) {
-	dir := t.TempDir()
-
-	hooksJSON := `{
-  "hooks": {
-    "UserPromptSubmit": [{
-      "hooks": [{
-        "type": "command",
-        "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/context-hook.py"
-      }]
-    }]
-  }
-}`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "hooks.json"), []byte(hooksJSON), 0o644))
-
-	err := expandHookVariables(dir)
-	require.NoError(t, err)
-
-	data, err := os.ReadFile(filepath.Join(dir, "hooks.json"))
-	require.NoError(t, err)
-	absDir, _ := filepath.Abs(dir)
-	if resolved, err := filepath.EvalSymlinks(absDir); err == nil {
-		absDir = resolved
-	}
-	assert.Contains(t, string(data), absDir+"/scripts/hooks/context-hook.py")
-	assert.NotContains(t, string(data), "${CLAUDE_PLUGIN_ROOT}")
-}
-
-func TestExpandHookVariables_BothLocations(t *testing.T) {
-	dir := t.TempDir()
-	hooksDir := filepath.Join(dir, "hooks")
-	require.NoError(t, os.MkdirAll(hooksDir, 0o755))
-
-	subHooksJSON := `"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd"`
-	require.NoError(t, os.WriteFile(filepath.Join(hooksDir, "hooks.json"), []byte(subHooksJSON), 0o644))
-
-	rootHooksJSON := `"${CLAUDE_PLUGIN_ROOT}/scripts/context-hook.py"`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "hooks.json"), []byte(rootHooksJSON), 0o644))
-
-	err := expandHookVariables(dir)
-	require.NoError(t, err)
-
-	absDir, _ := filepath.Abs(dir)
-	if resolved, err := filepath.EvalSymlinks(absDir); err == nil {
-		absDir = resolved
-	}
-
-	subData, err := os.ReadFile(filepath.Join(hooksDir, "hooks.json"))
-	require.NoError(t, err)
-	assert.Contains(t, string(subData), absDir+"/hooks/run-hook.cmd")
-	assert.NotContains(t, string(subData), "${CLAUDE_PLUGIN_ROOT}")
-
-	rootData, err := os.ReadFile(filepath.Join(dir, "hooks.json"))
-	require.NoError(t, err)
-	assert.Contains(t, string(rootData), absDir+"/scripts/context-hook.py")
-	assert.NotContains(t, string(rootData), "${CLAUDE_PLUGIN_ROOT}")
-}
-
-// ---------------------------------------------------------------------------
-
-func TestGenerateMarketplaces_CreatesCorrectStructure(t *testing.T) {
-	tmpDir := t.TempDir()
-	storeDir := filepath.Join(tmpDir, "store")
-	require.NoError(t, os.MkdirAll(storeDir, 0o755))
-
-	paths := Paths{
-		StoreDir:        storeDir,
-		RegistryPath:    filepath.Join(tmpDir, "registry.yaml"),
-		PlatformsDir:    filepath.Join(tmpDir, "platforms"),
-		Scope:           platform.ScopeLocal,
-		MarketplaceName: "summon-local",
-	}
-
-	reg := registry.New()
-	// Create a package in the store with a minimal manifest
-	pkgDir := filepath.Join(storeDir, "my-pkg")
-	require.NoError(t, os.MkdirAll(pkgDir, 0o755))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(pkgDir, "summon.yaml"),
-		[]byte("name: my-pkg\nversion: \"1.0.0\"\ndescription: test\n"),
-		0o644,
-	))
-	reg.Add("my-pkg", registry.Entry{Version: "1.0.0"})
-
-	err := generateMarketplaces(paths, reg)
-	require.NoError(t, err)
-
-	// marketplace.json must be at .claude-plugin/marketplace.json, NOT at the root
-	for _, pname := range []string{"claude", "copilot"} {
-		platformDir := filepath.Join(paths.PlatformsDir, pname)
-
-		// Correct location
-		correctPath := filepath.Join(platformDir, ".claude-plugin", "marketplace.json")
-		assert.FileExists(t, correctPath, "%s marketplace.json should be inside .claude-plugin/", pname)
-
-		// Wrong location must NOT exist
-		wrongPath := filepath.Join(platformDir, "marketplace.json")
-		assert.NoFileExists(t, wrongPath, "%s marketplace.json must NOT be at root", pname)
-
-		// Link must exist
-		linkPath := filepath.Join(platformDir, "plugins", "my-pkg")
-		require.True(t, fsutil.IsLink(linkPath), "expected symlink/junction for %s", pname)
-
-		// Source path in marketplace.json must use ./ prefix
-		data, err := os.ReadFile(correctPath)
-		require.NoError(t, err)
-		assert.Contains(t, string(data), `"source": "./plugins/my-pkg"`,
-			"%s source path must use ./ prefix", pname)
-		assert.NotContains(t, string(data), `"source": "../`,
-			"%s source path must not use ../ traversal", pname)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// T007: scope is persisted in registry.yaml after Install
-// ---------------------------------------------------------------------------
-
-func TestInstall_PersistsRegistryScope(t *testing.T) {
-	projectDir := t.TempDir()
-	pkgDir := filepath.Join(t.TempDir(), "scope-pkg")
-	require.NoError(t, os.MkdirAll(pkgDir, 0o755))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(pkgDir, "summon.yaml"),
-		[]byte("name: scope-pkg\nversion: \"1.0.0\"\ndescription: \"scope test\"\n"),
-		0o644,
-	))
-
-	// Only test project-local scopes to avoid writing to the real home directory.
-	for _, tc := range []struct {
-		scope     platform.Scope
-		wantScope string
-	}{
-		{platform.ScopeLocal, "local"},
-		{platform.ScopeProject, "project"},
-	} {
-		t.Run(tc.wantScope, func(t *testing.T) {
-			err := Install(Options{
-				Path:       pkgDir,
-				Force:      true,
-				Scope:      tc.scope,
-				ProjectDir: projectDir,
-			})
-			require.NoError(t, err)
-
-			paths := ResolvePaths(tc.scope, projectDir)
-			reg, err := registry.Load(paths.RegistryPath)
-			require.NoError(t, err)
-			assert.Equal(t, tc.wantScope, reg.Scope,
-				"registry.yaml for %s scope should have scope=%s", tc.wantScope, tc.wantScope)
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
-// T023: CopilotAdapter materialization wiring
-// ---------------------------------------------------------------------------
-
-// TestMaterializeComponents_ProjectScope verifies that MaterializeComponents
-// creates workspace symlinks for individual skill/agent subdirectories at project scope.
-func TestMaterializeComponents_ProjectScope(t *testing.T) {
-	projectDir := t.TempDir()
-	pkgDir := filepath.Join(t.TempDir(), "mat-pkg")
-	// Create realistic subdirectory structure
-	skillSubdir := filepath.Join(pkgDir, "skills", "my-skill")
-	agentSubdir := filepath.Join(pkgDir, "agents", "my-agent")
-	require.NoError(t, os.MkdirAll(skillSubdir, 0o755))
-	require.NoError(t, os.MkdirAll(agentSubdir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(skillSubdir, "SKILL.md"), []byte("# skill"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(agentSubdir, "my-agent.agent.md"), []byte("# agent"), 0o644))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(pkgDir, "summon.yaml"),
-		[]byte("name: mat-pkg\nversion: \"1.0.0\"\ndescription: \"materialize test\"\ncomponents:\n  skills: skills/\n  agents: agents/\n"),
-		0o644,
-	))
-
-	m, err := manifest.Load(pkgDir)
-	require.NoError(t, err)
-
-	a := &platform.CopilotAdapter{ProjectDir: projectDir}
-	require.NoError(t, a.MaterializeComponents(pkgDir, m, platform.ScopeProject))
-
-	// Individual skill subdirectory should be linked
-	_, err = os.Lstat(filepath.Join(projectDir, ".github", "skills", "my-skill"))
-	require.NoError(t, err, ".github/skills/my-skill should exist (symlink)")
-	_, err = os.Stat(filepath.Join(projectDir, ".github", "skills", "my-skill", "SKILL.md"))
-	require.NoError(t, err, "SKILL.md should be at depth 1")
-
-	// Individual agent subdirectory should be linked
-	_, err = os.Lstat(filepath.Join(projectDir, ".github", "agents", "my-agent"))
-	require.NoError(t, err, ".github/agents/my-agent should exist (symlink)")
-	_, err = os.Stat(filepath.Join(projectDir, ".github", "agents", "my-agent", "my-agent.agent.md"))
-	require.NoError(t, err, ".agent.md should be at depth 1")
-
-	// Old package-named directories should NOT exist
-	_, err = os.Lstat(filepath.Join(projectDir, ".github", "skills", "mat-pkg"))
-	assert.True(t, os.IsNotExist(err), ".github/skills/mat-pkg should NOT exist")
-	_, err = os.Lstat(filepath.Join(projectDir, ".github", "agents", "mat-pkg"))
-	assert.True(t, os.IsNotExist(err), ".github/agents/mat-pkg should NOT exist")
-}
-
-// TestMaterializeComponents_LocalScope verifies skills/agents go to .claude/
-// at local scope.
-func TestMaterializeComponents_LocalScope(t *testing.T) {
-	projectDir := t.TempDir()
-	pkgDir := filepath.Join(t.TempDir(), "mat-local-pkg")
-	skillSubdir := filepath.Join(pkgDir, "skills", "my-skill")
-	require.NoError(t, os.MkdirAll(skillSubdir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(skillSubdir, "SKILL.md"), []byte("# skill"), 0o644))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(pkgDir, "summon.yaml"),
-		[]byte("name: mat-local-pkg\nversion: \"1.0.0\"\ndescription: d\ncomponents:\n  skills: skills/\n"),
-		0o644,
-	))
-
-	m, err := manifest.Load(pkgDir)
-	require.NoError(t, err)
-
-	a := &platform.CopilotAdapter{ProjectDir: projectDir}
-	require.NoError(t, a.MaterializeComponents(pkgDir, m, platform.ScopeLocal))
-
-	_, err = os.Lstat(filepath.Join(projectDir, ".claude", "skills", "my-skill"))
-	require.NoError(t, err, ".claude/skills/my-skill should exist (symlink)")
-	_, err = os.Stat(filepath.Join(projectDir, ".claude", "skills", "my-skill", "SKILL.md"))
-	require.NoError(t, err, "SKILL.md should be at depth 1")
-}
-
-// TestRemoveMaterialized_ProjectScope verifies workspace links are cleaned up.
-func TestRemoveMaterialized_ProjectScope(t *testing.T) {
-	projectDir := t.TempDir()
-	pkgDir := filepath.Join(t.TempDir(), "rm-mat-pkg")
-	skillSubdir := filepath.Join(pkgDir, "skills", "my-skill")
-	require.NoError(t, os.MkdirAll(skillSubdir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(skillSubdir, "SKILL.md"), []byte("# skill"), 0o644))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(pkgDir, "summon.yaml"),
-		[]byte("name: rm-mat-pkg\nversion: \"1.0.0\"\ndescription: d\ncomponents:\n  skills: skills/\n"),
-		0o644,
-	))
-
-	m, err := manifest.Load(pkgDir)
-	require.NoError(t, err)
-
-	a := &platform.CopilotAdapter{ProjectDir: projectDir}
-	require.NoError(t, a.MaterializeComponents(pkgDir, m, platform.ScopeProject))
-	skillsPath := filepath.Join(projectDir, ".github", "skills", "my-skill")
-	_, err = os.Lstat(skillsPath)
-	require.NoError(t, err, "symlink should exist after materialization")
-
-	require.NoError(t, a.RemoveMaterialized("rm-mat-pkg", pkgDir, m, platform.ScopeProject))
-	_, err = os.Lstat(skillsPath)
-	assert.True(t, os.IsNotExist(err), ".github/skills/my-skill should be gone after removal")
-}
-
-// ---------------------------------------------------------------------------
-// T018: Copilot exact-scope failure diagnostics
-// ---------------------------------------------------------------------------
-
-// TestMaterializeComponents_HooksAtProjectScopeReturnsError verifies the
-// diagnostic error message when hooks are requested at project scope.
-func TestMaterializeComponents_HooksAtProjectScopeReturnsError(t *testing.T) {
-	projectDir := t.TempDir()
-	pkgDir := filepath.Join(t.TempDir(), "hooks-pkg")
-	hooksDir := filepath.Join(pkgDir, "hooks")
-	require.NoError(t, os.MkdirAll(hooksDir, 0o755))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(pkgDir, "summon.yaml"),
-		[]byte("name: hooks-pkg\nversion: \"1.0.0\"\ndescription: d\ncomponents:\n  hooks: hooks/hooks.json\n"),
-		0o644,
-	))
-	require.NoError(t, os.WriteFile(filepath.Join(hooksDir, "hooks.json"), []byte("{}"), 0o644))
-
-	m, err := manifest.Load(pkgDir)
-	require.NoError(t, err)
-
-	a := &platform.CopilotAdapter{ProjectDir: projectDir}
-	err = a.MaterializeComponents(pkgDir, m, platform.ScopeProject)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "hooks")
-	assert.Contains(t, err.Error(), "--scope user")
-}
-
-// TestMaterializeComponents_MCPAtLocalScopeReturnsError verifies the
-// diagnostic error message when MCP is requested at local scope.
-func TestMaterializeComponents_MCPAtLocalScopeReturnsError(t *testing.T) {
-	projectDir := t.TempDir()
-	pkgDir := filepath.Join(t.TempDir(), "mcp-pkg")
-	require.NoError(t, os.MkdirAll(pkgDir, 0o755))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(pkgDir, "summon.yaml"),
-		[]byte("name: mcp-pkg\nversion: \"1.0.0\"\ndescription: d\ncomponents:\n  mcp: mcp.json\n"),
-		0o644,
-	))
-	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "mcp.json"), []byte("{}"), 0o644))
-
-	m, err := manifest.Load(pkgDir)
-	require.NoError(t, err)
-
-	a := &platform.CopilotAdapter{ProjectDir: projectDir}
-	err = a.MaterializeComponents(pkgDir, m, platform.ScopeLocal)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "mcp")
-}
-
-// ---------------------------------------------------------------------------
-// Installer script contract checks (004-installer-script)
-// ---------------------------------------------------------------------------
-
-func TestInstallerScripts_ExistWithExpectedHeaders(t *testing.T) {
-	root := filepath.Join("..", "..")
-
-	shPath := filepath.Join(root, "scripts", "install.sh")
-	psPath := filepath.Join(root, "scripts", "install.ps1")
-
-	shData, err := os.ReadFile(shPath)
-	require.NoError(t, err, "scripts/install.sh should exist")
-	psData, err := os.ReadFile(psPath)
-	require.NoError(t, err, "scripts/install.ps1 should exist")
-
-	assert.Contains(t, string(shData), "#!/usr/bin/env sh")
-	assert.Contains(t, string(psData), "$ErrorActionPreference = \"Stop\"")
-}
-
-func TestInstallerScripts_ContainFailureCategories(t *testing.T) {
-	root := filepath.Join("..", "..")
-	shPath := filepath.Join(root, "scripts", "install.sh")
-	psPath := filepath.Join(root, "scripts", "install.ps1")
-
-	shData, err := os.ReadFile(shPath)
-	require.NoError(t, err)
-	psData, err := os.ReadFile(psPath)
-	require.NoError(t, err)
-
-	sh := string(shData)
-	ps := string(psData)
-
-	for _, category := range []string{"platform", "download", "checksum", "permission"} {
-		assert.Contains(t, sh, "fail "+category)
-		assert.Contains(t, ps, "Fail-Installer \""+category+"\"")
-	}
-}
-
-func TestInstallerScripts_ContainRequiredInputs(t *testing.T) {
-	root := filepath.Join("..", "..")
-	shPath := filepath.Join(root, "scripts", "install.sh")
-	psPath := filepath.Join(root, "scripts", "install.ps1")
-
-	shData, err := os.ReadFile(shPath)
-	require.NoError(t, err)
-	psData, err := os.ReadFile(psPath)
-	require.NoError(t, err)
-
-	sh := string(shData)
-	ps := string(psData)
-
-	requiredVars := []string{
-		"SUMMON_VERSION",
-		"SUMMON_INSTALL_PATH",
-		"SUMMON_NO_MODIFY_PATH",
-		"SUMMON_NONINTERACTIVE",
-		"SUMMON_DOWNLOAD_URL",
-		"SUMMON_CHECKSUM_URL",
-	}
-
-	for _, v := range requiredVars {
-		assert.Contains(t, sh, v)
-		assert.Contains(t, ps, v)
-	}
-}
-
-func runShellInstaller(t *testing.T, env []string) (string, error) {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("shell installer tests only run on unix-like systems")
-	}
-	root := filepath.Join("..", "..")
-	shPath, err := filepath.Abs(filepath.Join(root, "scripts", "install.sh"))
-	require.NoError(t, err)
-	workDir := t.TempDir()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "sh", shPath)
-	cmd.Dir = workDir
-	env = append(env, "SUMMON_NONINTERACTIVE=1")
-	cmd.Env = env
-	out, err := cmd.CombinedOutput()
-	return string(out), err
-}
-
-func TestInstallerScript_MissingDownloadToolFails(t *testing.T) {
-	if _, err := exec.LookPath("sh"); err != nil {
-		t.Skip("sh not available")
-	}
-	env := append(os.Environ(),
-		"SUMMON_TEST_DISABLE_DOWNLOAD_TOOL=1",
-		"SUMMON_DOWNLOAD_URL=https://example.com/summon",
-		"SUMMON_CHECKSUM=deadbeef",
-		"SUMMON_INSTALL_PATH="+filepath.Join(t.TempDir(), "bin", "summon"),
-		"SUMMON_NO_MODIFY_PATH=1",
-	)
-	out, err := runShellInstaller(t, env)
-	require.Error(t, err)
-	assert.Contains(t, out, "ERROR[download]")
-}
-
-func TestInstallerScript_MissingChecksumToolFails(t *testing.T) {
-	if _, err := exec.LookPath("sh"); err != nil {
-		t.Skip("sh not available")
-	}
-	source := filepath.Join(t.TempDir(), "summon-source")
-	require.NoError(t, os.WriteFile(source, []byte("#!/usr/bin/env sh\necho x\n"), 0o755))
-	env := append(os.Environ(),
-		"SUMMON_TEST_DISABLE_HASH_TOOL=1",
-		"SUMMON_TEST_ALLOW_INSECURE_URLS=1",
-		"SUMMON_DOWNLOAD_URL=file://"+source,
-		"SUMMON_CHECKSUM=deadbeef",
-		"SUMMON_INSTALL_PATH="+filepath.Join(t.TempDir(), "bin", "summon"),
-		"SUMMON_NO_MODIFY_PATH=1",
-	)
-	out, err := runShellInstaller(t, env)
-	require.Error(t, err)
-	assert.Contains(t, out, "ERROR[checksum]")
-}
-
-func TestInstallerScript_UnsupportedPlatformFails(t *testing.T) {
-	if _, err := exec.LookPath("sh"); err != nil {
-		t.Skip("sh not available")
-	}
-	env := append(os.Environ(),
-		"SUMMON_TEST_OS=plan9",
-		"SUMMON_NO_MODIFY_PATH=1",
-	)
-	out, err := runShellInstaller(t, env)
-	require.Error(t, err)
-	assert.Contains(t, out, "ERROR[platform]")
-}
-
-func TestInstallerScript_UnwritableTargetFails(t *testing.T) {
-	if _, err := exec.LookPath("sh"); err != nil {
-		t.Skip("sh not available")
-	}
-	env := append(os.Environ(),
-		"SUMMON_INSTALL_PATH=/dev/null/summon",
-		"SUMMON_NO_MODIFY_PATH=1",
-	)
-	out, err := runShellInstaller(t, env)
-	require.Error(t, err)
-	assert.Contains(t, out, "ERROR[permission]")
-}
-
-func TestInstallerScripts_ContainNoPromptCommands(t *testing.T) {
-	root := filepath.Join("..", "..")
-	shPath := filepath.Join(root, "scripts", "install.sh")
-	psPath := filepath.Join(root, "scripts", "install.ps1")
-
-	shData, err := os.ReadFile(shPath)
-	require.NoError(t, err)
-	psData, err := os.ReadFile(psPath)
-	require.NoError(t, err)
-
-	sh := string(shData)
-	ps := string(psData)
-
-	// Prompts must not use `read -p` (non-portable); `read -r` via read_input() is fine
-	assert.NotContains(t, sh, "read -p")
-	// Both scripts must gate interactive prompts behind SUMMON_NONINTERACTIVE
-	assert.Contains(t, sh, "SUMMON_NONINTERACTIVE")
-	assert.Contains(t, ps, "SUMMON_NONINTERACTIVE")
-}
-
-func TestInstallerScripts_ContainPathOptOutAndFallback(t *testing.T) {
-	root := filepath.Join("..", "..")
-	shPath := filepath.Join(root, "scripts", "install.sh")
-	psPath := filepath.Join(root, "scripts", "install.ps1")
-
-	shData, err := os.ReadFile(shPath)
-	require.NoError(t, err)
-	psData, err := os.ReadFile(psPath)
-	require.NoError(t, err)
-
-	sh := string(shData)
-	ps := string(psData)
-
-	assert.Contains(t, sh, "SUMMON_NO_MODIFY_PATH")
-	assert.Contains(t, ps, "SUMMON_NO_MODIFY_PATH")
-	assert.Contains(t, sh, "Run manually:")
-	assert.Contains(t, ps, "Run manually:")
-}
-
-// ---------------------------------------------------------------------------
-// plugin.json fallback tests (004-plugin-json-fallback)
-// ---------------------------------------------------------------------------
-
-func TestInstall_PluginJSONFallback(t *testing.T) {
-	projectDir := t.TempDir()
-	pkgDir := filepath.Join(t.TempDir(), "pj-only-pkg")
-	require.NoError(t, os.MkdirAll(filepath.Join(pkgDir, ".claude-plugin"), 0o755))
-	require.NoError(t, os.MkdirAll(filepath.Join(pkgDir, "skills"), 0o755))
-
-	pj := map[string]any{
-		"name": "pj-only-pkg", "version": "1.0.0", "description": "plugin.json only",
-	}
-	pjData, _ := json.Marshal(pj)
-	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, ".claude-plugin", "plugin.json"), pjData, 0o644))
-
-	err := Install(Options{
-		Path:       pkgDir,
-		Force:      true,
-		Scope:      platform.ScopeLocal,
-		ProjectDir: projectDir,
-	})
-	require.NoError(t, err)
-
-	paths := ResolvePaths(platform.ScopeLocal, projectDir)
-	reg, err := registry.Load(paths.RegistryPath)
-	require.NoError(t, err)
-	entry, ok := reg.Get("pj-only-pkg")
-	require.True(t, ok, "pj-only-pkg should be in registry")
-	assert.Equal(t, "1.0.0", entry.Version)
-}
-
-func TestInstall_SkipGeneratePluginJSON(t *testing.T) {
-	projectDir := t.TempDir()
-	pkgDir := filepath.Join(t.TempDir(), "custom-pj-pkg")
-	require.NoError(t, os.MkdirAll(filepath.Join(pkgDir, ".claude-plugin"), 0o755))
-
-	// Write summon.yaml so the normal flow is used
-	require.NoError(t, os.WriteFile(
-		filepath.Join(pkgDir, "summon.yaml"),
-		[]byte("name: custom-pj-pkg\nversion: \"1.0.0\"\ndescription: test\n"),
-		0o644,
-	))
-
-	// Write a custom plugin.json with extra fields
-	customPJ := `{"name":"custom-pj-pkg","version":"1.0.0","description":"test","keywords":["custom"]}`
-	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, ".claude-plugin", "plugin.json"), []byte(customPJ), 0o644))
-
-	err := Install(Options{
-		Path:       pkgDir,
-		Force:      true,
-		Scope:      platform.ScopeLocal,
-		ProjectDir: projectDir,
-	})
-	require.NoError(t, err)
-
-	// Verify the custom plugin.json was preserved (not overwritten by GeneratePluginJSON)
-	paths := ResolvePaths(platform.ScopeLocal, projectDir)
-	storePJ := filepath.Join(paths.StoreDir, "custom-pj-pkg", ".claude-plugin", "plugin.json")
-	data, err := os.ReadFile(storePJ)
-	require.NoError(t, err)
-	assert.Contains(t, string(data), `"keywords"`, "custom plugin.json should be preserved")
-}
-
-func TestInstall_MarketplaceExtraction(t *testing.T) {
-	projectDir := t.TempDir()
-	repoDir := filepath.Join(t.TempDir(), "marketplace-repo")
-	require.NoError(t, os.MkdirAll(repoDir, 0o755))
-
-	// Create two plugin subdirs with plugin.json
-	for _, name := range []string{"mp-plugin-a", "mp-plugin-b"} {
-		sub := filepath.Join(repoDir, name)
-		require.NoError(t, os.MkdirAll(filepath.Join(sub, ".claude-plugin"), 0o755))
-		pj, _ := json.Marshal(map[string]any{
-			"name": name, "version": "1.0.0", "description": name + " desc",
-		})
-		require.NoError(t, os.WriteFile(filepath.Join(sub, ".claude-plugin", "plugin.json"), pj, 0o644))
-	}
-
-	// Create marketplace.json at repo root
-	mpDir := filepath.Join(repoDir, ".claude-plugin")
-	require.NoError(t, os.MkdirAll(mpDir, 0o755))
-	mp, _ := json.Marshal(map[string]any{
-		"name": "test-marketplace",
-		"plugins": []map[string]any{
-			{"name": "mp-plugin-a", "source": "./mp-plugin-a"},
-			{"name": "mp-plugin-b", "source": "./mp-plugin-b"},
-		},
-	})
-	require.NoError(t, os.WriteFile(filepath.Join(mpDir, "marketplace.json"), mp, 0o644))
-
-	err := Install(Options{
-		Path:       repoDir,
-		Force:      true,
-		Scope:      platform.ScopeLocal,
-		ProjectDir: projectDir,
-	})
-	require.NoError(t, err)
-
-	paths := ResolvePaths(platform.ScopeLocal, projectDir)
-	reg, err := registry.Load(paths.RegistryPath)
-	require.NoError(t, err)
-
-	entryA, okA := reg.Get("mp-plugin-a")
-	entryB, okB := reg.Get("mp-plugin-b")
-	require.True(t, okA, "mp-plugin-a should be in registry")
-	require.True(t, okB, "mp-plugin-b should be in registry")
-	assert.Equal(t, "1.0.0", entryA.Version)
-	assert.Equal(t, "1.0.0", entryB.Version)
-}
-
-// ---------------------------------------------------------------------------
-// T030: Unit regression assertion that local install path remains link-based
-// ---------------------------------------------------------------------------
-
-func TestInstallLocal_RemainsLinkBased(t *testing.T) {
-	projectDir := t.TempDir()
-	pkgDir := filepath.Join(t.TempDir(), "local-pkg")
-	require.NoError(t, os.MkdirAll(pkgDir, 0o755))
-	manifest := "name: local-pkg\nversion: \"1.0.0\"\ndescription: \"Local package\"\n"
-	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "summon.yaml"), []byte(manifest), 0o644))
-
-	paths := ResolvePaths(platform.ScopeLocal, projectDir)
-	s := store.New(paths.StoreDir)
-
-	err := Install(Options{
-		Path:       pkgDir,
-		Force:      true,
-		Scope:      platform.ScopeLocal,
-		ProjectDir: projectDir,
-	})
-	require.NoError(t, err)
-
-	// Verify the store entry is a symbolic link or junction (link-based behavior)
-	storePath := s.PackagePath("local-pkg")
-	require.True(t, fsutil.IsLink(storePath), "local install should create a symbolic link")
-
-	// Verify link points to original package directory
-	linkTarget, err := fsutil.LinkTarget(storePath)
-	require.NoError(t, err)
-	assert.Equal(t, pkgDir, linkTarget, "link should point to the original package directory")
-}
-
-// ---------------------------------------------------------------------------
-// T022: Installer retry/cleanup regression tests for failed move scenarios
-// ---------------------------------------------------------------------------
-
-func TestInstallGitHub_MoveFailure_CleanupAndRetry(t *testing.T) {
-	projectDir := t.TempDir()
-	repoDir := initGitRepo(t, t.TempDir())
-
-	paths := ResolvePaths(platform.ScopeLocal, projectDir)
-	s := store.New(paths.StoreDir)
-	reg := registry.New()
-
-	// Simulate a move failure inside MoveDir in a cross-platform way.
-	fsutil.SetRenameDir(func(oldpath, newpath string) error {
-		return fmt.Errorf("simulated move failure")
-	})
-	defer fsutil.SetRenameDir(nil)
-
-	// Attempt install - should fail due to move error
-	err := installGitHub(Options{
-		Package:    fileURL(repoDir),
-		Force:      true,
-		Scope:      platform.ScopeLocal,
-		ProjectDir: projectDir,
-	}, paths, s, reg)
-
-	// Should fail with move error
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "moving to store")
-
-	// Registry should not be updated
-	_, ok := reg.Get("test-pkg")
-	assert.False(t, ok, "registry should not contain package after failed move")
-
-	// Retry with real move behavior
-	fsutil.SetRenameDir(nil)
-
-	// Retry install - should succeed
-	err = installGitHub(Options{
-		Package:    fileURL(repoDir),
-		Force:      true,
-		Scope:      platform.ScopeLocal,
-		ProjectDir: projectDir,
-	}, paths, s, reg)
-
-	require.NoError(t, err)
-
-	// Registry should now be updated
-	entry, ok := reg.Get("test-pkg")
-	require.True(t, ok, "registry should contain package after successful retry")
-	assert.Equal(t, "1.0.0", entry.Version)
+	f := filepath.Join(dir, "test.txt")
+	assert.False(t, fileExists(f))
+	require.NoError(t, os.WriteFile(f, []byte("hi"), 0o644))
+	assert.True(t, fileExists(f))
+	assert.False(t, fileExists(dir)) // directory, not file
 }

@@ -12,26 +12,24 @@ import (
 var installCmd = &cobra.Command{
 	Use:   "install [package]",
 	Short: "Install a package",
-	Long:  "Install a package from the catalog, GitHub, or a local path. Run without arguments to restore from registry.yaml.",
-	Example: `  summon install superpowers
-  summon install github:obra/superpowers
+	Long:  "Install a package from GitHub or a local path. Run without arguments to restore from registry.yaml.",
+	Example: `  summon install github:obra/superpowers
   summon install --path ../superpowers
-	summon install --scope project superpowers
-  summon install -g superpowers
-  summon install --ref v5.0.7 superpowers
+	summon install --scope project github:user/repo
+  summon install -g github:user/repo
+  summon install --ref v5.0.7 github:user/repo
   summon install`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runInstall,
 }
 
 var (
-	installPath       string
-	installGlobal     bool
-	installProject    bool
-	installScope      string
-	installRef        string
-	installForce      bool
-	installStrictDeps bool
+	installPath    string
+	installGlobal  bool
+	installProject bool
+	installScope   string
+	installRef     string
+	installForce   bool
 )
 
 func init() {
@@ -41,7 +39,6 @@ func init() {
 	installCmd.Flags().StringVar(&installScope, "scope", "", "Installation target scope. One of local, project, user")
 	installCmd.Flags().StringVar(&installRef, "ref", "", "Pin to specific git tag, branch, or commit")
 	installCmd.Flags().BoolVar(&installForce, "force", false, "Install even if no compatible platform is active")
-	installCmd.Flags().BoolVar(&installStrictDeps, "strict-deps", false, "Fail installation if any declared dependencies are missing or version-incompatible")
 	installCmd.MarkFlagsMutuallyExclusive("scope", "global", "project")
 	rootCmd.AddCommand(installCmd)
 }
@@ -114,7 +111,6 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		Scope:         scope,
 		ProjectDir:    projectDir,
 		SummonVersion: version,
-		StrictDeps:    installStrictDeps,
 	}
 
 	if err := installer.Install(opts); err != nil {
