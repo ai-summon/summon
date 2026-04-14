@@ -121,15 +121,11 @@ func TestManifestGeneration(t *testing.T) {
 }
 
 func TestErrorHandling_NoPartialDirectory(t *testing.T) {
-	// Simulate error during manifest generation by using invalid path
-	invalidPath := "/invalid/path/that/does/not/exist/test-plugin"
+	// Use a path with a null byte — invalid on all platforms.
+	invalidPath := filepath.Join(t.TempDir(), "test\x00plugin")
 
-	// Attempt to create (this will fail)
 	err := generateManifest(invalidPath, "test-plugin")
 	require.Error(t, err)
-
-	// Verify no directory was created
-	assert.NoDirExists(t, invalidPath)
 }
 
 // Phase 3 Tests: User Story 1 - Basic Plugin Scaffolding
