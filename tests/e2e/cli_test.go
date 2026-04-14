@@ -28,6 +28,25 @@ func buildBinary(t *testing.T) string {
 	return binary
 }
 
+// fakeHomeEnv returns an env slice with HOME pointing to a temp directory
+// that contains a .claude directory, making Claude platform detection pass.
+// This allows e2e install tests to run in CI where no real platform is installed.
+func fakeHomeEnv(t *testing.T, extra ...string) []string {
+	t.Helper()
+	home := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".claude"), 0o755))
+	env := []string{"HOME=" + home, "USERPROFILE=" + home}
+	// Preserve PATH and other essentials from real env.
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "HOME=") || strings.HasPrefix(e, "USERPROFILE=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	env = append(env, extra...)
+	return env
+}
+
 func TestInit(t *testing.T) {
 	binary := buildBinary(t)
 	dir := t.TempDir()
@@ -67,7 +86,7 @@ func TestInstallLocal(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "summon.yaml"), []byte(manifest), 0o644))
 	cmd := exec.Command(binary, "install", "--path", pkgDir, "--force")
 	cmd.Dir = projectDir
-	cmd.Env = append(os.Environ(), "SUMMON_VSCODE_SETTINGS_DIR="+t.TempDir())
+	cmd.Env = fakeHomeEnv(t)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
 	assert.Contains(t, string(out), "Installed my-pkg")
@@ -90,10 +109,10 @@ func TestListJSON(t *testing.T) {
 	require.NoError(t, os.MkdirAll(pkgDir, 0o755))
 	manifest := "name: json-pkg\nversion: \"1.0.0\"\ndescription: \"Test\"\n"
 	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "summon.yaml"), []byte(manifest), 0o644))
-	vscodeDir := t.TempDir()
+	env := fakeHomeEnv(t)
 	installCmd := exec.Command(binary, "install", "--path", pkgDir, "--force")
 	installCmd.Dir = projectDir
-	installCmd.Env = append(os.Environ(), "SUMMON_VSCODE_SETTINGS_DIR="+vscodeDir)
+	installCmd.Env = env
 	_, err := installCmd.CombinedOutput()
 	require.NoError(t, err)
 	cmd := exec.Command(binary, "list", "--json")
@@ -111,16 +130,15 @@ func TestUninstall(t *testing.T) {
 	require.NoError(t, os.MkdirAll(pkgDir, 0o755))
 	manifest := "name: rm-pkg\nversion: \"1.0.0\"\ndescription: \"Test\"\n"
 	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "summon.yaml"), []byte(manifest), 0o644))
-	vscodeDir := t.TempDir()
-	envWithOverride := append(os.Environ(), "SUMMON_VSCODE_SETTINGS_DIR="+vscodeDir)
+	env := fakeHomeEnv(t)
 	installCmd := exec.Command(binary, "install", "--path", pkgDir, "--force")
 	installCmd.Dir = projectDir
-	installCmd.Env = envWithOverride
+	installCmd.Env = env
 	_, err := installCmd.CombinedOutput()
 	require.NoError(t, err)
 	cmd := exec.Command(binary, "uninstall", "rm-pkg")
 	cmd.Dir = projectDir
-	cmd.Env = envWithOverride
+	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
 	assert.Contains(t, string(out), "Uninstalled rm-pkg")
@@ -164,10 +182,21 @@ func installScopedPkg(t *testing.T, binary, projectDir, pkgName, scope string, e
 	require.NoError(t, err, "install %s --scope %s: %s", pkgName, scope, out)
 }
 
-// makeEnv returns a copy of the process environment with the given key=value
-// overrides appended.
+// makeEnv returns a fakeHomeEnv with the given key=value overrides appended.
 func makeEnv(overrides ...string) []string {
-	return append(os.Environ(), overrides...)
+	// We need a testing.T for fakeHomeEnv but makeEnv is called without one.
+	// Instead, build a minimal env with fake HOME containing .claude dir.
+	home, _ := os.MkdirTemp("", "summon-e2e-home-*")
+	os.MkdirAll(filepath.Join(home, ".claude"), 0o755)
+	env := []string{"HOME=" + home, "USERPROFILE=" + home}
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "HOME=") || strings.HasPrefix(e, "USERPROFILE=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	env = append(env, overrides...)
+	return env
 }
 
 // ---------------------------------------------------------------------------
@@ -757,6 +786,7 @@ func TestInstallerScript_NoColorDisablesANSI(t *testing.T) {
 func TestPluginJSONFallback_E2E(t *testing.T) {
 	binary := buildBinary(t)
 	projectDir := t.TempDir()
+	env := fakeHomeEnv(t)
 
 	// Create a local package with only .claude-plugin/plugin.json
 	pkgDir := filepath.Join(t.TempDir(), "pj-e2e-pkg")
@@ -769,6 +799,7 @@ func TestPluginJSONFallback_E2E(t *testing.T) {
 	// Install
 	cmd := exec.Command(binary, "install", "--path", pkgDir, "--scope", "local", "--force")
 	cmd.Dir = projectDir
+	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "install failed: "+string(out))
 	assert.Contains(t, string(out), "Installed pj-e2e-pkg")
@@ -783,6 +814,7 @@ func TestPluginJSONFallback_E2E(t *testing.T) {
 	// Uninstall
 	cmd = exec.Command(binary, "uninstall", "pj-e2e-pkg", "--scope", "local")
 	cmd.Dir = projectDir
+	cmd.Env = env
 	out, err = cmd.CombinedOutput()
 	require.NoError(t, err, "uninstall failed: "+string(out))
 
@@ -801,8 +833,7 @@ func TestPluginJSONFallback_E2E(t *testing.T) {
 func TestInstall_ProjectFlag(t *testing.T) {
 	binary := buildBinary(t)
 	projectDir := t.TempDir()
-	vscodeDir := t.TempDir()
-	env := makeEnv("SUMMON_VSCODE_SETTINGS_DIR=" + vscodeDir)
+	env := fakeHomeEnv(t)
 
 	pkgDir := filepath.Join(t.TempDir(), "pflag-pkg")
 	require.NoError(t, os.MkdirAll(pkgDir, 0o755))
