@@ -2,26 +2,101 @@ package marketplace
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestFetchIndex_ValidJSON(t *testing.T) {
+// --- Fake HTTP Client for registry tests ---
+
+type fakeRegistryHTTPClient struct {
+	responses map[string]*http.Response
+}
+
+func newFakeRegistryHTTPClient() *fakeRegistryHTTPClient {
+	return &fakeRegistryHTTPClient{
+		responses: make(map[string]*http.Response),
+	}
+}
+
+func (f *fakeRegistryHTTPClient) Get(url string) (*http.Response, error) {
+	if resp, ok := f.responses[url]; ok {
+		return resp, nil
+	}
+	return &http.Response{
+		StatusCode: http.StatusNotFound,
+		Body:       io.NopCloser(strings.NewReader("")),
+	}, nil
+}
+
+func (f *fakeRegistryHTTPClient) setResponse(url string, status int, body string) {
+	f.responses[url] = &http.Response{
+		StatusCode: status,
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
+
+// --- Fake Git Runner ---
+
+type fakeRegistryGitRunner struct {
+	runFunc func(name string, args ...string) ([]byte, error)
+}
+
+func (f *fakeRegistryGitRunner) Run(name string, args ...string) ([]byte, error) {
+	if f.runFunc != nil {
+		return f.runFunc(name, args...)
+	}
+	return nil, fmt.Errorf("not implemented")
+}
+
+// --- FetchIndex tests ---
+
+func TestFetchIndex_NativeFormat(t *testing.T) {
 	data := `{
-		"my-plugin": {
-			"source": "https://github.com/owner/my-plugin",
-			"description": "A useful plugin"
-		},
-		"other-tool": {
-			"source": "gh:owner/other-tool",
-			"description": "Another tool"
-		}
+		"name": "test-marketplace",
+		"owner": {"name": "Test"},
+		"metadata": {"description": "Test marketplace", "version": "0.1.0"},
+		"plugins": [
+			{
+				"name": "my-plugin",
+				"source": {"source": "github", "repo": "owner/my-plugin"},
+				"description": "A useful plugin"
+			},
+			{
+				"name": "other-tool",
+				"source": {"source": "github", "repo": "owner/other-tool"},
+				"description": "Another tool"
+			}
+		]
 	}`
 	idx, err := FetchIndex([]byte(data))
 	require.NoError(t, err)
 	assert.Len(t, idx, 2)
+
+	entry, found := idx.Lookup("my-plugin")
+	assert.True(t, found)
+	assert.Equal(t, "gh:owner/my-plugin", entry.Source)
+}
+
+func TestFetchIndex_FlatFormat(t *testing.T) {
+	data := `{
+		"my-plugin": {
+			"source": "https://github.com/owner/my-plugin",
+			"description": "A useful plugin"
+		}
+	}`
+	idx, err := FetchIndex([]byte(data))
+	require.NoError(t, err)
+	assert.Len(t, idx, 1)
+
+	entry, found := idx.Lookup("my-plugin")
+	assert.True(t, found)
+	assert.Equal(t, "https://github.com/owner/my-plugin", entry.Source)
 }
 
 func TestFetchIndex_MalformedJSON(t *testing.T) {
@@ -64,4 +139,211 @@ func TestPackageEntry_JSONRoundTrip(t *testing.T) {
 	err = json.Unmarshal(data, &decoded)
 	require.NoError(t, err)
 	assert.Equal(t, entry, decoded)
+}
+
+// --- DefaultIndexFetcher tests ---
+
+func TestDefaultIndexFetcher_FetchFromGitHub(t *testing.T) {
+	httpClient := newFakeRegistryHTTPClient()
+	indexJSON := `{
+		"name": "summon-marketplace",
+		"owner": {"name": "Summon"},
+		"metadata": {"description": "Test", "version": "0.1.0"},
+		"plugins": [
+			{
+				"name": "superpowers",
+				"source": {"source": "github", "repo": "owner/superpowers"},
+				"description": "A superpower plugin"
+			}
+		]
+	}`
+	httpClient.setResponse(
+		"https://raw.githubusercontent.com/ai-summon/summon-marketplace/HEAD/.claude-plugin/marketplace.json",
+		http.StatusOK,
+		indexJSON,
+	)
+
+	fetcher := NewDefaultIndexFetcher(httpClient, &fakeRegistryGitRunner{})
+	idx, err := fetcher.FetchMarketplaceIndex(OfficialMarketplaceURL)
+	require.NoError(t, err)
+	assert.Len(t, idx, 1)
+
+	entry, found := idx.Lookup("superpowers")
+	assert.True(t, found)
+	assert.Equal(t, "gh:owner/superpowers", entry.Source)
+}
+
+func TestDefaultIndexFetcher_FallbackToRootMarketplaceJSON(t *testing.T) {
+	httpClient := newFakeRegistryHTTPClient()
+	// .claude-plugin/marketplace.json returns 404
+	// marketplace.json at root returns data
+	indexJSON := `{
+		"name": "legacy-marketplace",
+		"owner": {"name": "Test"},
+		"metadata": {"description": "Legacy", "version": "0.1.0"},
+		"plugins": [
+			{
+				"name": "legacy-tool",
+				"source": {"source": "github", "repo": "owner/legacy-tool"},
+				"description": "Legacy tool"
+			}
+		]
+	}`
+	httpClient.setResponse(
+		"https://raw.githubusercontent.com/ai-summon/summon-marketplace/HEAD/marketplace.json",
+		http.StatusOK,
+		indexJSON,
+	)
+
+	fetcher := NewDefaultIndexFetcher(httpClient, &fakeRegistryGitRunner{})
+	idx, err := fetcher.FetchMarketplaceIndex(OfficialMarketplaceURL)
+	require.NoError(t, err)
+
+	entry, found := idx.Lookup("legacy-tool")
+	assert.True(t, found)
+	assert.Equal(t, "gh:owner/legacy-tool", entry.Source)
+}
+
+func TestDefaultIndexFetcher_Cache(t *testing.T) {
+	httpClient := newFakeRegistryHTTPClient()
+	indexJSON := `{
+		"name": "test-marketplace",
+		"owner": {"name": "Test"},
+		"metadata": {"description": "Test", "version": "0.1.0"},
+		"plugins": [
+			{
+				"name": "cached-pkg",
+				"source": {"source": "github", "repo": "owner/cached-pkg"},
+				"description": "Cached"
+			}
+		]
+	}`
+	httpClient.setResponse(
+		"https://raw.githubusercontent.com/ai-summon/summon-marketplace/HEAD/.claude-plugin/marketplace.json",
+		http.StatusOK,
+		indexJSON,
+	)
+
+	fetcher := NewDefaultIndexFetcher(httpClient, &fakeRegistryGitRunner{})
+
+	// First fetch
+	idx1, err := fetcher.FetchMarketplaceIndex(OfficialMarketplaceURL)
+	require.NoError(t, err)
+	assert.Len(t, idx1, 1)
+
+	// Replace HTTP response with 404 — should still return cached
+	httpClient.setResponse(
+		"https://raw.githubusercontent.com/ai-summon/summon-marketplace/HEAD/.claude-plugin/marketplace.json",
+		http.StatusNotFound,
+		"",
+	)
+	idx2, err := fetcher.FetchMarketplaceIndex(OfficialMarketplaceURL)
+	require.NoError(t, err)
+	assert.Equal(t, idx1, idx2)
+}
+
+func TestDefaultIndexFetcher_GitArchiveFallback(t *testing.T) {
+	httpClient := newFakeRegistryHTTPClient()
+	indexJSON := `{"internal-tool": {"source": "https://intranet.example.com/org/tool", "description": "Internal"}}`
+	gitRunner := &fakeRegistryGitRunner{
+		runFunc: func(name string, args ...string) ([]byte, error) {
+			return []byte(indexJSON), nil
+		},
+	}
+
+	fetcher := NewDefaultIndexFetcher(httpClient, gitRunner)
+	idx, err := fetcher.FetchMarketplaceIndex("https://intranet.example.com/org/marketplace")
+	require.NoError(t, err)
+
+	entry, found := idx.Lookup("internal-tool")
+	assert.True(t, found)
+	assert.Equal(t, "https://intranet.example.com/org/tool", entry.Source)
+}
+
+func TestDefaultIndexFetcher_NotFound(t *testing.T) {
+	httpClient := newFakeRegistryHTTPClient()
+	// Default 404 response for both paths
+
+	fetcher := NewDefaultIndexFetcher(httpClient, &fakeRegistryGitRunner{})
+	_, err := fetcher.FetchMarketplaceIndex(OfficialMarketplaceURL)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "marketplace index not found")
+}
+
+func TestDefaultIndexFetcher_LookupPackage_Found(t *testing.T) {
+	httpClient := newFakeRegistryHTTPClient()
+	indexJSON := `{
+		"name": "test-marketplace",
+		"owner": {"name": "Test"},
+		"metadata": {"description": "Test", "version": "0.1.0"},
+		"plugins": [
+			{
+				"name": "superpowers",
+				"source": {"source": "github", "repo": "owner/superpowers"},
+				"description": "Powers"
+			}
+		]
+	}`
+	httpClient.setResponse(
+		"https://raw.githubusercontent.com/ai-summon/summon-marketplace/HEAD/.claude-plugin/marketplace.json",
+		http.StatusOK,
+		indexJSON,
+	)
+
+	fetcher := NewDefaultIndexFetcher(httpClient, &fakeRegistryGitRunner{})
+	entry, err := fetcher.LookupPackage("superpowers", OfficialMarketplaceURL)
+	require.NoError(t, err)
+	assert.Equal(t, "gh:owner/superpowers", entry.Source)
+}
+
+func TestDefaultIndexFetcher_LookupPackage_NotFound(t *testing.T) {
+	httpClient := newFakeRegistryHTTPClient()
+	indexJSON := `{
+		"name": "test-marketplace",
+		"owner": {"name": "Test"},
+		"metadata": {"description": "Test", "version": "0.1.0"},
+		"plugins": [
+			{
+				"name": "other-pkg",
+				"source": {"source": "github", "repo": "owner/other"},
+				"description": "Other"
+			}
+		]
+	}`
+	httpClient.setResponse(
+		"https://raw.githubusercontent.com/ai-summon/summon-marketplace/HEAD/.claude-plugin/marketplace.json",
+		http.StatusOK,
+		indexJSON,
+	)
+
+	fetcher := NewDefaultIndexFetcher(httpClient, &fakeRegistryGitRunner{})
+	_, err := fetcher.LookupPackage("nonexistent", OfficialMarketplaceURL)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), `package "nonexistent" not found`)
+}
+
+func TestParseGitHubURL_Shorthand(t *testing.T) {
+	owner, repo, ok := parseGitHubURL("gh:owner/repo")
+	assert.True(t, ok)
+	assert.Equal(t, "owner", owner)
+	assert.Equal(t, "repo", repo)
+}
+
+func TestParseGitHubURL_FullURL(t *testing.T) {
+	owner, repo, ok := parseGitHubURL("https://github.com/owner/repo")
+	assert.True(t, ok)
+	assert.Equal(t, "owner", owner)
+	assert.Equal(t, "repo", repo)
+}
+
+func TestParseGitHubURL_FullURLWithGit(t *testing.T) {
+	owner, repo, ok := parseGitHubURL("https://github.com/owner/repo.git")
+	assert.True(t, ok)
+	assert.Equal(t, "owner", owner)
+	assert.Equal(t, "repo", repo)
+}
+
+func TestParseGitHubURL_NonGitHub(t *testing.T) {
+	_, _, ok := parseGitHubURL("https://intranet.example.com/org/repo")
+	assert.False(t, ok)
 }

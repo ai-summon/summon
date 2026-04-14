@@ -11,6 +11,7 @@ import (
 
 	"github.com/ai-summon/summon/internal/depgraph"
 	"github.com/ai-summon/summon/internal/manifest"
+	"github.com/ai-summon/summon/internal/marketplace"
 	"github.com/ai-summon/summon/internal/platform"
 	"github.com/ai-summon/summon/internal/resolver"
 	"github.com/ai-summon/summon/internal/syscheck"
@@ -25,21 +26,23 @@ var (
 
 // installDeps holds the injectable dependencies for the install command.
 type installDeps struct {
-	runner      platform.CommandRunner
-	fetcher     manifest.ManifestFetcher
-	stdin       io.Reader
-	stdout      io.Writer
-	stderr      io.Writer
+	runner       platform.CommandRunner
+	fetcher      manifest.ManifestFetcher
+	indexFetcher marketplace.IndexFetcher
+	stdin        io.Reader
+	stdout       io.Writer
+	stderr       io.Writer
 }
 
 // defaultInstallDeps returns the production dependencies.
 func defaultInstallDeps() *installDeps {
 	return &installDeps{
-		runner:  &execRunner{},
-		fetcher: manifest.NewRemoteFetcher(&http.Client{}, &execGitRunner{}),
-		stdin:   os.Stdin,
-		stdout:  os.Stdout,
-		stderr:  os.Stderr,
+		runner:       &execRunner{},
+		fetcher:      manifest.NewRemoteFetcher(&http.Client{}, &execGitRunner{}),
+		indexFetcher: marketplace.NewDefaultIndexFetcher(&http.Client{}, &execGitRunner{}),
+		stdin:        os.Stdin,
+		stdout:       os.Stdout,
+		stderr:       os.Stderr,
 	}
 }
 
@@ -96,9 +99,9 @@ func runInstall(specifier string, deps *installDeps) error {
 		return fmt.Errorf("failed to resolve package: %w", err)
 	}
 
-	installSource := specifier
-	if resolved.Source != "" {
-		installSource = resolved.Source
+	installSource, err := resolveInstallSource(resolved, deps.indexFetcher)
+	if err != nil {
+		return fmt.Errorf("failed to resolve install source: %w", err)
 	}
 
 	// 4. Fetch the manifest (if exists)
@@ -114,7 +117,7 @@ func runInstall(specifier string, deps *installDeps) error {
 
 	if m != nil {
 		// Resolve transitive dependencies
-		if err := resolveTransitiveDeps(graph, resolved.Name, m, deps.fetcher); err != nil {
+		if err := resolveTransitiveDeps(graph, resolved.Name, m, deps.fetcher, deps.indexFetcher); err != nil {
 			return err
 		}
 
@@ -248,16 +251,16 @@ func runInstall(specifier string, deps *installDeps) error {
 	return nil
 }
 
-func resolveTransitiveDeps(graph *depgraph.Graph, parentName string, m *manifest.Manifest, fetcher manifest.ManifestFetcher) error {
+func resolveTransitiveDeps(graph *depgraph.Graph, parentName string, m *manifest.Manifest, fetcher manifest.ManifestFetcher, indexFetcher marketplace.IndexFetcher) error {
 	for _, dep := range m.Dependencies {
 		resolved, err := resolver.Resolve(dep)
 		if err != nil {
 			return fmt.Errorf("failed to resolve dependency %q: %w", dep, err)
 		}
 
-		depSource := dep
-		if resolved.Source != "" {
-			depSource = resolved.Source
+		depSource, err := resolveInstallSource(resolved, indexFetcher)
+		if err != nil {
+			return fmt.Errorf("failed to resolve install source for dependency %q: %w", dep, err)
 		}
 
 		if !graph.HasNode(resolved.Name) {
@@ -272,7 +275,7 @@ func resolveTransitiveDeps(graph *depgraph.Graph, parentName string, m *manifest
 				return fmt.Errorf("failed to fetch manifest for %s: %w", resolved.Name, err)
 			}
 			if depManifest != nil {
-				if err := resolveTransitiveDeps(graph, resolved.Name, depManifest, fetcher); err != nil {
+				if err := resolveTransitiveDeps(graph, resolved.Name, depManifest, fetcher, indexFetcher); err != nil {
 					return err
 				}
 			}
@@ -280,6 +283,41 @@ func resolveTransitiveDeps(graph *depgraph.Graph, parentName string, m *manifest
 		graph.AddEdge(parentName, resolved.Name)
 	}
 	return nil
+}
+
+// resolveInstallSource resolves a ResolvedSource to an actual installable source string.
+// For marketplace types, it looks up the package in the appropriate marketplace index.
+func resolveInstallSource(resolved *resolver.ResolvedSource, indexFetcher marketplace.IndexFetcher) (string, error) {
+	switch resolved.Type {
+	case resolver.SourceOfficialMarketplace:
+		entry, err := indexFetcher.LookupPackage(resolved.Name, marketplace.OfficialMarketplaceURL)
+		if err != nil {
+			return "", err
+		}
+		return entry.Source, nil
+
+	case resolver.SourceNamedMarketplace:
+		cfg, err := marketplace.LoadConfig(marketplace.DefaultConfigPath())
+		if err != nil {
+			return "", fmt.Errorf("failed to load marketplace config: %w", err)
+		}
+		mkt := cfg.FindMarketplace(resolved.MarketplaceName)
+		if mkt == nil {
+			return "", fmt.Errorf("marketplace %q is not registered; use 'summon marketplace add' to register it", resolved.MarketplaceName)
+		}
+		entry, err := indexFetcher.LookupPackage(resolved.Name, mkt.Source)
+		if err != nil {
+			return "", err
+		}
+		return entry.Source, nil
+
+	default:
+		// SourceGitHubShorthand, SourceDirectURL, SourceNativeMarketplace
+		if resolved.Source != "" {
+			return resolved.Source, nil
+		}
+		return resolved.Name, nil
+	}
 }
 
 func confirmPrompt(reader io.Reader) bool {

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ai-summon/summon/internal/manifest"
+	"github.com/ai-summon/summon/internal/marketplace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -69,13 +70,54 @@ func (f *fakeFetcher) FetchManifest(source string) (*manifest.Manifest, error) {
 	return m, nil
 }
 
+// fakeIndexFetcher implements marketplace.IndexFetcher for testing.
+type fakeIndexFetcher struct {
+	indices map[string]marketplace.Index
+}
+
+func newFakeIndexFetcher() *fakeIndexFetcher {
+	return &fakeIndexFetcher{indices: make(map[string]marketplace.Index)}
+}
+
+func (f *fakeIndexFetcher) FetchMarketplaceIndex(source string) (marketplace.Index, error) {
+	idx, ok := f.indices[source]
+	if !ok {
+		return nil, fmt.Errorf("marketplace not found: %s", source)
+	}
+	return idx, nil
+}
+
+func (f *fakeIndexFetcher) LookupPackage(name string, marketplaceSource string) (*marketplace.PackageEntry, error) {
+	idx, err := f.FetchMarketplaceIndex(marketplaceSource)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch marketplace index from %s: %w", marketplaceSource, err)
+	}
+	entry, ok := idx.Lookup(name)
+	if !ok {
+		return nil, fmt.Errorf("package %q not found in marketplace %s", name, marketplaceSource)
+	}
+	return entry, nil
+}
+
 func newTestDeps(runner *fakeRunner, fetcher *fakeFetcher, stdin string) *installDeps {
 	return &installDeps{
-		runner:  runner,
-		fetcher: fetcher,
-		stdin:   strings.NewReader(stdin),
-		stdout:  &bytes.Buffer{},
-		stderr:  &bytes.Buffer{},
+		runner:       runner,
+		fetcher:      fetcher,
+		indexFetcher: newFakeIndexFetcher(),
+		stdin:        strings.NewReader(stdin),
+		stdout:       &bytes.Buffer{},
+		stderr:       &bytes.Buffer{},
+	}
+}
+
+func newTestDepsWithIndex(runner *fakeRunner, fetcher *fakeFetcher, indexFetcher *fakeIndexFetcher, stdin string) *installDeps {
+	return &installDeps{
+		runner:       runner,
+		fetcher:      fetcher,
+		indexFetcher: indexFetcher,
+		stdin:        strings.NewReader(stdin),
+		stdout:       &bytes.Buffer{},
+		stderr:       &bytes.Buffer{},
 	}
 }
 
@@ -272,4 +314,96 @@ func (f *fakeHTTPClient) Get(url string) (*http.Response, error) {
 		StatusCode: http.StatusNotFound,
 		Body:       io.NopCloser(strings.NewReader("")),
 	}, nil
+}
+
+// --- Bare name (marketplace lookup) tests ---
+
+func TestInstall_BareName_MarketplaceLookup(t *testing.T) {
+	runner := newFakeRunner()
+	fetcher := newFakeFetcher()
+	indexFetcher := newFakeIndexFetcher()
+
+	// Register "superpowers" in the official marketplace
+	indexFetcher.indices[marketplace.OfficialMarketplaceURL] = marketplace.Index{
+		"superpowers": {Source: "gh:owner/superpowers", Description: "A superpower plugin"},
+	}
+
+	// The manifest fetcher should be queried with the resolved source
+	fetcher.manifests["gh:owner/superpowers"] = nil
+
+	deps := newTestDepsWithIndex(runner, fetcher, indexFetcher, "")
+	installYes = true
+	installForce = false
+	installScope = "user"
+	targetFlag = ""
+
+	err := runInstall("superpowers", deps)
+	require.NoError(t, err)
+
+	out := deps.stdout.(*bytes.Buffer).String()
+	assert.Contains(t, out, "superpowers")
+	assert.Contains(t, out, "Installed 1 packages")
+
+	// Verify the actual install command used the resolved source, not the bare name
+	var installCmd []string
+	for _, cmd := range runner.commands {
+		if len(cmd) >= 4 && cmd[2] == "install" {
+			installCmd = cmd
+			break
+		}
+	}
+	require.NotNil(t, installCmd, "expected an install command to be issued")
+	assert.Equal(t, "gh:owner/superpowers", installCmd[3], "install should use resolved source, not bare name")
+}
+
+func TestInstall_BareName_NotFoundInMarketplace(t *testing.T) {
+	runner := newFakeRunner()
+	fetcher := newFakeFetcher()
+	indexFetcher := newFakeIndexFetcher()
+
+	// Official marketplace exists but doesn't contain "nonexistent-pkg"
+	indexFetcher.indices[marketplace.OfficialMarketplaceURL] = marketplace.Index{}
+
+	deps := newTestDepsWithIndex(runner, fetcher, indexFetcher, "")
+	installYes = true
+	installForce = false
+	installScope = "user"
+	targetFlag = ""
+
+	err := runInstall("nonexistent-pkg", deps)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not found in marketplace")
+}
+
+func TestInstall_BareName_WithDependencies(t *testing.T) {
+	runner := newFakeRunner()
+	fetcher := newFakeFetcher()
+	indexFetcher := newFakeIndexFetcher()
+
+	// Register packages in the official marketplace
+	indexFetcher.indices[marketplace.OfficialMarketplaceURL] = marketplace.Index{
+		"superpowers":  {Source: "gh:owner/superpowers", Description: "Main plugin"},
+		"helper-tools": {Source: "gh:owner/helper-tools", Description: "Helper"},
+	}
+
+	// superpowers depends on helper-tools (also a bare name)
+	fetcher.manifests["gh:owner/superpowers"] = &manifest.Manifest{
+		Name:         "superpowers",
+		Description:  "Main plugin",
+		Dependencies: []string{"helper-tools"},
+	}
+
+	deps := newTestDepsWithIndex(runner, fetcher, indexFetcher, "")
+	installYes = true
+	installForce = false
+	installScope = "user"
+	targetFlag = ""
+
+	err := runInstall("superpowers", deps)
+	require.NoError(t, err)
+
+	out := deps.stdout.(*bytes.Buffer).String()
+	assert.Contains(t, out, "superpowers")
+	assert.Contains(t, out, "helper-tools")
+	assert.Contains(t, out, "Installed 2 packages")
 }
