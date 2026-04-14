@@ -1,8 +1,8 @@
 package platform
 
 import (
-	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -64,34 +64,37 @@ func (c *CopilotAdapter) ListInstalled(scope Scope) ([]InstalledPlugin, error) {
 	if err := ValidateScope(c, scope); err != nil {
 		return nil, err
 	}
-	output, err := c.runner.Run("copilot", "plugin", "list", "--json")
+	// Copilot CLI does not support --json; parse human-readable text output
+	output, err := c.runner.Run("copilot", "plugin", "list")
 	if err != nil {
 		return nil, fmt.Errorf("copilot list failed: %w", err)
 	}
 	return parseCopilotPluginList(output, c.Name())
 }
 
-func parseCopilotPluginList(output []byte, platform string) ([]InstalledPlugin, error) {
-	trimmed := strings.TrimSpace(string(output))
-	if trimmed == "" || trimmed == "[]" {
-		return nil, nil
-	}
+// parseCopilotPluginList parses text output from `copilot plugin list`.
+// Format: "  • plugin-name (v1.2.3)" or "  • plugin-name@marketplace"
+var copilotPluginLine = regexp.MustCompile(`•\s+(\S+)`)
 
-	var raw []struct {
-		Name   string `json:"name"`
-		Source string `json:"source"`
-	}
-	if err := json.Unmarshal([]byte(trimmed), &raw); err != nil {
-		return nil, fmt.Errorf("failed to parse copilot plugin list JSON: %w", err)
-	}
-
-	plugins := make([]InstalledPlugin, len(raw))
-	for i, r := range raw {
-		plugins[i] = InstalledPlugin{
-			Name:     r.Name,
-			Source:   r.Source,
-			Platform: platform,
+func parseCopilotPluginList(output []byte, plat string) ([]InstalledPlugin, error) {
+	lines := strings.Split(string(output), "\n")
+	var plugins []InstalledPlugin
+	for _, line := range lines {
+		matches := copilotPluginLine.FindStringSubmatch(line)
+		if len(matches) < 2 {
+			continue
 		}
+		raw := matches[1]
+		// Strip @marketplace suffix and version parenthetical for the name
+		name := raw
+		if idx := strings.Index(name, "@"); idx > 0 {
+			name = name[:idx]
+		}
+		plugins = append(plugins, InstalledPlugin{
+			Name:     name,
+			Source:   raw,
+			Platform: plat,
+		})
 	}
 	return plugins, nil
 }

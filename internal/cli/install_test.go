@@ -24,7 +24,7 @@ type fakeRunner struct {
 func newFakeRunner() *fakeRunner {
 	return &fakeRunner{
 		lookPaths: map[string]string{
-			"copilot": "/usr/local/bin/copilot",
+			"claude": "/usr/local/bin/claude",
 		},
 	}
 }
@@ -34,10 +34,13 @@ func (f *fakeRunner) Run(name string, args ...string) ([]byte, error) {
 	if f.runFunc != nil {
 		return f.runFunc(name, args...)
 	}
-	// Default: return empty JSON list for "list" commands, success for others
+	// Default: return empty list in format appropriate for each CLI
 	for _, a := range args {
 		if a == "list" {
-			return []byte("[]"), nil
+			if name == "copilot" {
+				return []byte("No plugins installed.\n"), nil
+			}
+			return []byte("[]"), nil // JSON for claude
 		}
 	}
 	return nil, nil
@@ -127,7 +130,7 @@ func TestInstall_AlreadyInstalled(t *testing.T) {
 	runner.runFunc = func(name string, args ...string) ([]byte, error) {
 		for _, a := range args {
 			if a == "list" {
-				return []byte(`[{"name":"my-plugin","source":"gh:owner/my-plugin"}]`), nil
+				return []byte(`[{"id":"my-plugin@marketplace","source":"gh:owner/my-plugin"}]`), nil
 			}
 		}
 		return nil, nil

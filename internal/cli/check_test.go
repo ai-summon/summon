@@ -16,8 +16,8 @@ func TestCheck_AllDepsSatisfied(t *testing.T) {
 		for _, a := range args {
 			if a == "list" {
 				return []byte(`[
-					{"name":"my-plugin","source":"gh:owner/my-plugin"},
-					{"name":"dep-a","source":"gh:owner/dep-a"}
+					{"id":"my-plugin@marketplace"},
+					{"id":"dep-a@marketplace"}
 				]`), nil
 			}
 		}
@@ -25,7 +25,7 @@ func TestCheck_AllDepsSatisfied(t *testing.T) {
 	}
 
 	fetcher := newFakeFetcher()
-	fetcher.manifests["gh:owner/my-plugin"] = &manifest.Manifest{
+	fetcher.manifests["my-plugin@marketplace"] = &manifest.Manifest{
 		Name:        "my-plugin",
 		Description: "Plugin",
 		Dependencies: []string{"gh:owner/dep-a"},
@@ -50,14 +50,14 @@ func TestCheck_RequiredMissing(t *testing.T) {
 	runner.runFunc = func(name string, args ...string) ([]byte, error) {
 		for _, a := range args {
 			if a == "list" {
-				return []byte(`[{"name":"my-plugin","source":"gh:owner/my-plugin"}]`), nil
+				return []byte(`[{"id":"my-plugin@marketplace"}]`), nil
 			}
 		}
 		return nil, nil
 	}
 
 	fetcher := newFakeFetcher()
-	fetcher.manifests["gh:owner/my-plugin"] = &manifest.Manifest{
+	fetcher.manifests["my-plugin@marketplace"] = &manifest.Manifest{
 		Name:        "my-plugin",
 		Description: "Plugin",
 		Dependencies: []string{"gh:owner/missing-plugin"},
@@ -83,7 +83,7 @@ func TestCheck_SinglePlugin(t *testing.T) {
 	runner.runFunc = func(name string, args ...string) ([]byte, error) {
 		for _, a := range args {
 			if a == "list" {
-				return []byte(`[{"name":"my-plugin","source":"gh:owner/my-plugin"}]`), nil
+				return []byte(`[{"id":"my-plugin@marketplace"}]`), nil
 			}
 		}
 		return nil, nil
@@ -134,7 +134,7 @@ func TestCheck_JSONOutput(t *testing.T) {
 	runner.runFunc = func(name string, args ...string) ([]byte, error) {
 		for _, a := range args {
 			if a == "list" {
-				return []byte(`[{"name":"my-plugin","source":"gh:owner/my-plugin"}]`), nil
+				return []byte(`[{"id":"my-plugin@marketplace"}]`), nil
 			}
 		}
 		return nil, nil
@@ -163,14 +163,14 @@ func TestCheck_RecommendedMissing_StillOK(t *testing.T) {
 	runner.runFunc = func(name string, args ...string) ([]byte, error) {
 		for _, a := range args {
 			if a == "list" {
-				return []byte(`[{"name":"my-plugin","source":"gh:owner/my-plugin"}]`), nil
+				return []byte(`[{"id":"my-plugin@marketplace"}]`), nil
 			}
 		}
 		return nil, nil
 	}
 
 	fetcher := newFakeFetcher()
-	fetcher.manifests["gh:owner/my-plugin"] = &manifest.Manifest{
+	fetcher.manifests["my-plugin@marketplace"] = &manifest.Manifest{
 		Name:        "my-plugin",
 		Description: "Plugin",
 		SystemRequirements: []manifest.SystemRequirement{

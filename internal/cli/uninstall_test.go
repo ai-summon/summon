@@ -16,7 +16,7 @@ func TestUninstall_NoDependents(t *testing.T) {
 	runner.runFunc = func(name string, args ...string) ([]byte, error) {
 		for _, a := range args {
 			if a == "list" {
-				return []byte(`[{"name":"my-plugin","source":"gh:owner/my-plugin"}]`), nil
+				return []byte(`[{"id":"my-plugin@marketplace"}]`), nil
 			}
 		}
 		return nil, nil
@@ -48,8 +48,8 @@ func TestUninstall_WithDependents(t *testing.T) {
 		for _, a := range args {
 			if a == "list" {
 				return []byte(`[
-					{"name":"my-plugin","source":"gh:owner/my-plugin"},
-					{"name":"dep-a","source":"gh:owner/dep-a"}
+					{"id":"my-plugin@marketplace"},
+					{"id":"dep-a@marketplace"}
 				]`), nil
 			}
 		}
@@ -57,7 +57,7 @@ func TestUninstall_WithDependents(t *testing.T) {
 	}
 
 	fetcher := newFakeFetcher()
-	fetcher.manifests["gh:owner/my-plugin"] = &manifest.Manifest{
+	fetcher.manifests["my-plugin@marketplace"] = &manifest.Manifest{
 		Name:        "my-plugin",
 		Description: "Main plugin",
 		Dependencies: []string{"gh:owner/dep-a"},
@@ -118,8 +118,8 @@ func TestUninstall_YesSkipsConfirmation(t *testing.T) {
 		for _, a := range args {
 			if a == "list" {
 				return []byte(`[
-					{"name":"my-plugin","source":"gh:owner/my-plugin"},
-					{"name":"dep-a","source":"gh:owner/dep-a"}
+					{"id":"my-plugin@marketplace"},
+					{"id":"dep-a@marketplace"}
 				]`), nil
 			}
 		}
@@ -127,7 +127,7 @@ func TestUninstall_YesSkipsConfirmation(t *testing.T) {
 	}
 
 	fetcher := newFakeFetcher()
-	fetcher.manifests["gh:owner/my-plugin"] = &manifest.Manifest{
+	fetcher.manifests["my-plugin@marketplace"] = &manifest.Manifest{
 		Name:        "my-plugin",
 		Description: "Main plugin",
 		Dependencies: []string{"gh:owner/dep-a"},

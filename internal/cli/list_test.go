@@ -15,8 +15,8 @@ func TestList_WithPlugins(t *testing.T) {
 		for _, a := range args {
 			if a == "list" {
 				return []byte(`[
-					{"name":"my-plugin","source":"gh:owner/my-plugin"},
-					{"name":"other-plugin","source":"gh:owner/other-plugin"}
+					{"id":"my-plugin@marketplace"},
+					{"id":"other-plugin@marketplace"}
 				]`), nil
 			}
 		}
@@ -24,7 +24,7 @@ func TestList_WithPlugins(t *testing.T) {
 	}
 
 	fetcher := newFakeFetcher()
-	fetcher.manifests["gh:owner/my-plugin"] = &manifest.Manifest{
+	fetcher.manifests["my-plugin@marketplace"] = &manifest.Manifest{
 		Name:        "my-plugin",
 		Description: "Plugin",
 		Dependencies: []string{"gh:owner/other-plugin"},
@@ -82,7 +82,7 @@ func TestList_JSONOutput(t *testing.T) {
 	runner.runFunc = func(name string, args ...string) ([]byte, error) {
 		for _, a := range args {
 			if a == "list" {
-				return []byte(`[{"name":"my-plugin","source":"gh:owner/my-plugin"}]`), nil
+				return []byte(`[{"id":"my-plugin@marketplace"}]`), nil
 			}
 		}
 		return nil, nil
@@ -102,17 +102,16 @@ func TestList_JSONOutput(t *testing.T) {
 	require.NoError(t, err)
 
 	out := deps.stdout.(*bytes.Buffer).String()
-	assert.Contains(t, out, "\"copilot\"")
+	assert.Contains(t, out, "\"claude\"")
 	assert.Contains(t, out, "\"my-plugin\"")
 }
 
 func TestList_TargetFilter(t *testing.T) {
 	runner := newFakeRunner()
-	runner.lookPaths["claude"] = "/usr/local/bin/claude"
 	runner.runFunc = func(name string, args ...string) ([]byte, error) {
 		for _, a := range args {
 			if a == "list" {
-				return []byte(`[{"name":"my-plugin","source":"gh:owner/my-plugin"}]`), nil
+				return []byte(`[{"id":"my-plugin@marketplace"}]`), nil
 			}
 		}
 		return nil, nil
@@ -126,11 +125,11 @@ func TestList_TargetFilter(t *testing.T) {
 
 	listJSON = false
 	installScope = "user"
-	targetFlag = "copilot"
+	targetFlag = "claude"
 
 	err := runList(deps)
 	require.NoError(t, err)
 
 	out := deps.stdout.(*bytes.Buffer).String()
-	assert.Contains(t, out, "copilot")
+	assert.Contains(t, out, "claude")
 }

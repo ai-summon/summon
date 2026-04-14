@@ -87,27 +87,45 @@ func (c *ClaudeAdapter) ListInstalled(scope Scope) ([]InstalledPlugin, error) {
 	return parseClaudePluginList(output, c.Name())
 }
 
-func parseClaudePluginList(output []byte, platform string) ([]InstalledPlugin, error) {
+// parseClaudePluginList parses JSON output from `claude plugin list --json`.
+// Actual format: [{"id":"name@marketplace","version":"...","scope":"...","enabled":true,...}]
+func parseClaudePluginList(output []byte, plat string) ([]InstalledPlugin, error) {
 	trimmed := strings.TrimSpace(string(output))
 	if trimmed == "" || trimmed == "[]" {
 		return nil, nil
 	}
 
 	var raw []struct {
-		Name   string `json:"name"`
-		Source string `json:"source"`
+		ID      string `json:"id"`
+		Name    string `json:"name"`
+		Source  string `json:"source"`
+		Version string `json:"version"`
+		Scope   string `json:"scope"`
+		Enabled bool   `json:"enabled"`
 	}
 	if err := json.Unmarshal([]byte(trimmed), &raw); err != nil {
 		return nil, fmt.Errorf("failed to parse claude plugin list JSON: %w", err)
 	}
 
-	plugins := make([]InstalledPlugin, len(raw))
-	for i, r := range raw {
-		plugins[i] = InstalledPlugin{
-			Name:     r.Name,
-			Source:   r.Source,
-			Platform: platform,
+	var plugins []InstalledPlugin
+	for _, r := range raw {
+		name := r.Name
+		source := r.Source
+		// Claude uses "id" field with format "name@marketplace"
+		if name == "" && r.ID != "" {
+			name = r.ID
+			if idx := strings.Index(name, "@"); idx > 0 {
+				name = name[:idx]
+			}
 		}
+		if source == "" {
+			source = r.ID
+		}
+		plugins = append(plugins, InstalledPlugin{
+			Name:     name,
+			Source:   source,
+			Platform: plat,
+		})
 	}
 	return plugins, nil
 }

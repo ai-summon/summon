@@ -15,7 +15,7 @@ func TestUpdate_BasicUpdate(t *testing.T) {
 	runner.runFunc = func(name string, args ...string) ([]byte, error) {
 		for _, a := range args {
 			if a == "list" {
-				return []byte(`[{"name":"my-plugin","source":"gh:owner/my-plugin"}]`), nil
+				return []byte(`[{"id":"my-plugin@marketplace"}]`), nil
 			}
 		}
 		return nil, nil
@@ -45,14 +45,14 @@ func TestUpdate_WithNewDeps(t *testing.T) {
 	runner.runFunc = func(name string, args ...string) ([]byte, error) {
 		for _, a := range args {
 			if a == "list" {
-				return []byte(`[{"name":"my-plugin","source":"gh:owner/my-plugin"}]`), nil
+				return []byte(`[{"id":"my-plugin@marketplace"}]`), nil
 			}
 		}
 		return nil, nil
 	}
 
 	fetcher := newFakeFetcher()
-	fetcher.manifests["gh:owner/my-plugin"] = &manifest.Manifest{
+	fetcher.manifests["my-plugin@marketplace"] = &manifest.Manifest{
 		Name:        "my-plugin",
 		Description: "Plugin",
 		Dependencies: []string{"gh:owner/new-dep"},
@@ -108,7 +108,7 @@ func TestUpdateAll(t *testing.T) {
 	runner.runFunc = func(name string, args ...string) ([]byte, error) {
 		for _, a := range args {
 			if a == "list" {
-				return []byte(`[{"name":"plugin-a","source":"gh:owner/plugin-a"},{"name":"plugin-b","source":"gh:owner/plugin-b"}]`), nil
+				return []byte(`[{"id":"plugin-a@marketplace"},{"id":"plugin-b@marketplace"}]`), nil
 			}
 		}
 		return nil, nil

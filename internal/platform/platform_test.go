@@ -1,7 +1,6 @@
 package platform
 
 import (
-	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -105,19 +104,15 @@ func TestClaudeAdapter_InstallUserScope(t *testing.T) {
 // --- List Tests ---
 
 func TestCopilotAdapter_ListInstalled(t *testing.T) {
-	plugins := []struct {
-		Name   string `json:"name"`
-		Source string `json:"source"`
-	}{
-		{Name: "my-plugin", Source: "gh:owner/my-plugin"},
-		{Name: "other-plugin", Source: "gh:owner/other-plugin"},
-	}
-	jsonData, _ := json.Marshal(plugins)
+	// Copilot CLI outputs human-readable text, not JSON
+	textOutput := `Installed plugins:
+  • my-plugin (v1.0.0)
+  • other-plugin@my-marketplace`
 
 	runner := NewFakeRunner()
 	runner.LookPaths["copilot"] = "/usr/local/bin/copilot"
 	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
-		return jsonData, nil
+		return []byte(textOutput), nil
 	}
 	adapter := NewCopilotAdapter(runner)
 	result, err := adapter.ListInstalled(ScopeUser)
@@ -125,38 +120,35 @@ func TestCopilotAdapter_ListInstalled(t *testing.T) {
 	assert.Len(t, result, 2)
 	assert.Equal(t, "my-plugin", result[0].Name)
 	assert.Equal(t, "copilot", result[0].Platform)
+	assert.Equal(t, "other-plugin", result[1].Name)
 }
 
 func TestCopilotAdapter_ListInstalledEmpty(t *testing.T) {
 	runner := NewFakeRunner()
 	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
-		return []byte("[]"), nil
+		return []byte("No plugins installed.\n"), nil
 	}
 	adapter := NewCopilotAdapter(runner)
 	result, err := adapter.ListInstalled(ScopeUser)
 	require.NoError(t, err)
-	assert.Nil(t, result)
+	assert.Empty(t, result)
 }
 
 func TestClaudeAdapter_ListInstalledWithScope(t *testing.T) {
-	plugins := []struct {
-		Name   string `json:"name"`
-		Source string `json:"source"`
-	}{
-		{Name: "claude-plugin", Source: "gh:owner/claude-plugin"},
-	}
-	jsonData, _ := json.Marshal(plugins)
+	// Claude CLI outputs JSON with "id" field format: "name@marketplace"
+	jsonOutput := `[{"id":"claude-plugin@my-marketplace","version":"1.0.0","scope":"project","enabled":true}]`
 
 	runner := NewFakeRunner()
 	runner.LookPaths["claude"] = "/usr/local/bin/claude"
 	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
-		return jsonData, nil
+		return []byte(jsonOutput), nil
 	}
 	adapter := NewClaudeAdapter(runner)
 	result, err := adapter.ListInstalled(ScopeProject)
 	require.NoError(t, err)
 	assert.Len(t, result, 1)
 	assert.Equal(t, "claude-plugin", result[0].Name)
+	assert.Equal(t, "claude-plugin@my-marketplace", result[0].Source)
 	// Verify scope flag was passed
 	assert.Contains(t, runner.Commands[0], "--scope")
 	assert.Contains(t, runner.Commands[0], "project")
