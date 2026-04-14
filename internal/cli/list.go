@@ -1,0 +1,137 @@
+package cli
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+
+	"github.com/ai-summon/summon/internal/manifest"
+	"github.com/ai-summon/summon/internal/platform"
+	"github.com/spf13/cobra"
+)
+
+var listJSON bool
+
+type listDeps struct {
+	runner  platform.CommandRunner
+	fetcher manifest.ManifestFetcher
+	stdout  io.Writer
+}
+
+func defaultListDeps() *listDeps {
+	return &listDeps{
+		runner:  &execRunner{},
+		fetcher: manifest.NewRemoteFetcher(nil, &execGitRunner{}),
+		stdout:  os.Stdout,
+	}
+}
+
+var listCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List installed plugins with dependency tree",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		deps := defaultListDeps()
+		return runList(deps)
+	},
+}
+
+func init() {
+	listCmd.Flags().BoolVar(&listJSON, "json", false, "Output as JSON")
+	rootCmd.AddCommand(listCmd)
+}
+
+type listOutput struct {
+	CLI     string       `json:"cli"`
+	Plugins []listPlugin `json:"plugins"`
+}
+
+type listPlugin struct {
+	Name         string   `json:"name"`
+	Dependencies []string `json:"dependencies"`
+}
+
+func runList(deps *listDeps) error {
+	out := deps.stdout
+	scope, _ := platform.ParseScope(installScope)
+
+	adapters := platform.DetectAdapters(deps.runner)
+	if len(adapters) == 0 {
+		return fmt.Errorf("no supported CLIs detected")
+	}
+	adapters, err := platform.FilterByTarget(adapters, targetFlag)
+	if err != nil {
+		return err
+	}
+
+	var outputs []listOutput
+
+	for _, a := range adapters {
+		plugins, err := a.ListInstalled(scope)
+		if err != nil {
+			continue
+		}
+
+		output := listOutput{CLI: a.Name()}
+		for _, p := range plugins {
+			lp := listPlugin{Name: p.Name}
+
+			// Try to fetch manifest for dependency info
+			if p.Source != "" && deps.fetcher != nil {
+				m, _ := deps.fetcher.FetchManifest(p.Source)
+				if m != nil {
+					for _, dep := range m.Dependencies {
+						depName, _ := resolveDepName(dep)
+						if depName != "" {
+							lp.Dependencies = append(lp.Dependencies, depName)
+						}
+					}
+				}
+			}
+			output.Plugins = append(output.Plugins, lp)
+		}
+		outputs = append(outputs, output)
+	}
+
+	if listJSON {
+		result := make(map[string][]listPlugin)
+		for _, o := range outputs {
+			result[o.CLI] = o.Plugins
+		}
+		data, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Fprintln(out, string(data))
+		return nil
+	}
+
+	// Human-readable tree output
+	fmt.Fprintln(out, "Installed plugins:")
+	fmt.Fprintln(out)
+	for _, o := range outputs {
+		fmt.Fprintf(out, "  %s:\n", o.CLI)
+		if len(o.Plugins) == 0 {
+			fmt.Fprintln(out, "    (none)")
+			continue
+		}
+		for _, p := range o.Plugins {
+			fmt.Fprintf(out, "    %s\n", p.Name)
+			for _, dep := range p.Dependencies {
+				fmt.Fprintf(out, "    └── %s\n", dep)
+			}
+		}
+		fmt.Fprintln(out)
+	}
+
+	total := 0
+	for _, o := range outputs {
+		total += len(o.Plugins)
+	}
+	if total == 0 {
+		fmt.Fprintln(out, "No plugins installed.")
+	}
+
+	return nil
+}
+
+// Suppress linter
+var _ = strings.TrimSpace
