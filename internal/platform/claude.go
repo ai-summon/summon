@@ -3,17 +3,25 @@ package platform
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 )
 
 // ClaudeAdapter implements the Adapter interface for Claude Code CLI.
 type ClaudeAdapter struct {
 	runner CommandRunner
+	cwd    string
 }
 
 // NewClaudeAdapter creates a new ClaudeAdapter.
 func NewClaudeAdapter(runner CommandRunner) *ClaudeAdapter {
-	return &ClaudeAdapter{runner: runner}
+	cwd, _ := os.Getwd()
+	return &ClaudeAdapter{runner: runner, cwd: cwd}
+}
+
+// NewClaudeAdapterWithCwd creates a ClaudeAdapter with an explicit working directory (for testing).
+func NewClaudeAdapterWithCwd(runner CommandRunner, cwd string) *ClaudeAdapter {
+	return &ClaudeAdapter{runner: runner, cwd: cwd}
 }
 
 func (c *ClaudeAdapter) Name() string { return "claude" }
@@ -76,15 +84,27 @@ func (c *ClaudeAdapter) ListInstalled(scope Scope) ([]InstalledPlugin, error) {
 	if err := ValidateScope(c, scope); err != nil {
 		return nil, err
 	}
+	// claude plugin list --json always returns all scopes; filtering is done in code
 	args := []string{"plugin", "list", "--json"}
-	if scope != ScopeUser {
-		args = append(args, "--scope", string(scope))
-	}
 	output, err := c.runner.Run("claude", args...)
 	if err != nil {
 		return nil, fmt.Errorf("claude list failed: %w", err)
 	}
-	return parseClaudePluginList(output, c.Name())
+	plugins, err := parseClaudePluginList(output, c.Name())
+	if err != nil {
+		return nil, err
+	}
+	// Filter out project/local-scope plugins from other projects
+	var filtered []InstalledPlugin
+	for _, p := range plugins {
+		if (p.Scope == string(ScopeProject) || p.Scope == string(ScopeLocal)) && p.ProjectPath != "" {
+			if !isUnderPath(c.cwd, p.ProjectPath) {
+				continue
+			}
+		}
+		filtered = append(filtered, p)
+	}
+	return filtered, nil
 }
 
 // parseClaudePluginList parses JSON output from `claude plugin list --json`.
@@ -96,12 +116,13 @@ func parseClaudePluginList(output []byte, plat string) ([]InstalledPlugin, error
 	}
 
 	var raw []struct {
-		ID      string `json:"id"`
-		Name    string `json:"name"`
-		Source  string `json:"source"`
-		Version string `json:"version"`
-		Scope   string `json:"scope"`
-		Enabled bool   `json:"enabled"`
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		Source      string `json:"source"`
+		Version     string `json:"version"`
+		Scope       string `json:"scope"`
+		Enabled     bool   `json:"enabled"`
+		ProjectPath string `json:"projectPath"`
 	}
 	if err := json.Unmarshal([]byte(trimmed), &raw); err != nil {
 		return nil, fmt.Errorf("failed to parse claude plugin list JSON: %w", err)
@@ -122,10 +143,11 @@ func parseClaudePluginList(output []byte, plat string) ([]InstalledPlugin, error
 			source = r.ID
 		}
 		plugins = append(plugins, InstalledPlugin{
-			Name:     name,
-			Source:   source,
-			Platform: plat,
-			Scope:    r.Scope,
+			Name:        name,
+			Source:      source,
+			Platform:    plat,
+			Scope:       r.Scope,
+			ProjectPath: r.ProjectPath,
 		})
 	}
 	return plugins, nil

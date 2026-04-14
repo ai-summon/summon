@@ -2,6 +2,7 @@ package platform
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -30,10 +31,11 @@ func ParseScope(s string) (Scope, error) {
 
 // InstalledPlugin represents a plugin installed on a specific platform.
 type InstalledPlugin struct {
-	Name     string `json:"name"`
-	Source   string `json:"source,omitempty"`
-	Platform string `json:"platform"`
-	Scope    string `json:"scope,omitempty"`
+	Name        string `json:"name"`
+	Source      string `json:"source,omitempty"`
+	Platform    string `json:"platform"`
+	Scope       string `json:"scope,omitempty"`
+	ProjectPath string `json:"projectPath,omitempty"`
 }
 
 // CommandRunner abstracts command execution for testing.
@@ -107,4 +109,14 @@ func cliError(action string, output []byte, err error) error {
 		return fmt.Errorf("%s failed: %s", action, msg)
 	}
 	return fmt.Errorf("%s failed: %w", action, err)
+}
+
+// isUnderPath reports whether cwd is equal to or a subdirectory of dir.
+func isUnderPath(cwd, dir string) bool {
+	cwd = filepath.Clean(cwd)
+	dir = filepath.Clean(dir)
+	if cwd == dir {
+		return true
+	}
+	return strings.HasPrefix(cwd, dir+string(filepath.Separator))
 }

@@ -138,6 +138,7 @@ func TestCopilotAdapter_ListInstalledEmpty(t *testing.T) {
 
 func TestClaudeAdapter_ListInstalledWithScope(t *testing.T) {
 	// Claude CLI outputs JSON with "id" field format: "name@marketplace"
+	// claude plugin list --json returns ALL scopes; filtering is done in code
 	jsonOutput := `[{"id":"claude-plugin@my-marketplace","version":"1.0.0","scope":"project","enabled":true}]`
 
 	runner := NewFakeRunner()
@@ -152,9 +153,8 @@ func TestClaudeAdapter_ListInstalledWithScope(t *testing.T) {
 	assert.Equal(t, "claude-plugin", result[0].Name)
 	assert.Equal(t, "claude-plugin@my-marketplace", result[0].Source)
 	assert.Equal(t, "project", result[0].Scope)
-	// Verify scope flag was passed
-	assert.Contains(t, runner.Commands[0], "--scope")
-	assert.Contains(t, runner.Commands[0], "project")
+	// claude plugin list does not support --scope; verify it's NOT passed
+	assert.NotContains(t, runner.Commands[0], "--scope")
 }
 
 // --- Uninstall Tests ---
@@ -316,4 +316,66 @@ func TestCopilotAdapter_UninstallErrorIncludesOutput(t *testing.T) {
 	err := adapter.Uninstall("superpowers", ScopeUser)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "plugin not installed")
+}
+
+// --- ProjectPath Filtering Tests ---
+
+func TestClaudeAdapter_ListInstalled_FiltersOtherProjects(t *testing.T) {
+	// Plugin at project scope for /other/project should be filtered out
+	jsonOutput := `[
+		{"id":"user-plugin@mp","scope":"user","enabled":true},
+		{"id":"local-plugin@mp","scope":"project","enabled":true,"projectPath":"/current/project"},
+		{"id":"other-plugin@mp","scope":"project","enabled":true,"projectPath":"/other/project"}
+	]`
+
+	runner := NewFakeRunner()
+	runner.LookPaths["claude"] = "/usr/local/bin/claude"
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return []byte(jsonOutput), nil
+	}
+	adapter := NewClaudeAdapterWithCwd(runner, "/current/project")
+	result, err := adapter.ListInstalled(ScopeUser)
+	require.NoError(t, err)
+	assert.Len(t, result, 2)
+	assert.Equal(t, "user-plugin", result[0].Name)
+	assert.Equal(t, "local-plugin", result[1].Name)
+}
+
+func TestClaudeAdapter_ListInstalled_IncludesSubdirectory(t *testing.T) {
+	// Running from a subdirectory of the project should still include its plugins
+	jsonOutput := `[{"id":"my-plugin@mp","scope":"project","enabled":true,"projectPath":"/my/project"}]`
+
+	runner := NewFakeRunner()
+	runner.LookPaths["claude"] = "/usr/local/bin/claude"
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return []byte(jsonOutput), nil
+	}
+	adapter := NewClaudeAdapterWithCwd(runner, "/my/project/src/cmd")
+	result, err := adapter.ListInstalled(ScopeUser)
+	require.NoError(t, err)
+	assert.Len(t, result, 1)
+	assert.Equal(t, "my-plugin", result[0].Name)
+}
+
+func TestClaudeAdapter_ListInstalled_NoProjectPath(t *testing.T) {
+	// Project-scope plugin without projectPath should be included (backward compat)
+	jsonOutput := `[{"id":"legacy@mp","scope":"project","enabled":true}]`
+
+	runner := NewFakeRunner()
+	runner.LookPaths["claude"] = "/usr/local/bin/claude"
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return []byte(jsonOutput), nil
+	}
+	adapter := NewClaudeAdapterWithCwd(runner, "/any/dir")
+	result, err := adapter.ListInstalled(ScopeUser)
+	require.NoError(t, err)
+	assert.Len(t, result, 1)
+}
+
+func TestIsUnderPath(t *testing.T) {
+	assert.True(t, isUnderPath("/a/b", "/a/b"))
+	assert.True(t, isUnderPath("/a/b/c", "/a/b"))
+	assert.False(t, isUnderPath("/a/bc", "/a/b"))
+	assert.False(t, isUnderPath("/a/b-dev/c", "/a/b"))
+	assert.False(t, isUnderPath("/other", "/a/b"))
 }
