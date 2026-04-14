@@ -4,14 +4,11 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"strings"
 
-	"github.com/ai-summon/summon/internal/depgraph"
 	"github.com/ai-summon/summon/internal/manifest"
-	"github.com/ai-summon/summon/internal/marketplace"
 	"github.com/ai-summon/summon/internal/platform"
 	"github.com/ai-summon/summon/internal/resolver"
 	"github.com/ai-summon/summon/internal/syscheck"
@@ -24,25 +21,56 @@ var (
 	installScope string
 )
 
+// InstallResult tracks the outcome of installing a single package across CLIs.
+type InstallResult struct {
+	PackageName  string
+	CLIResults   map[string]error
+	Dependencies []string
+}
+
+// InstallSummary aggregates results across all packages in a single install invocation.
+type InstallSummary struct {
+	Results        []InstallResult
+	TotalInstalled int
+	TotalFailed    int
+	CLIs           []string
+}
+
+// addResult records an install result and updates counters.
+func (s *InstallSummary) addResult(r InstallResult) {
+	s.Results = append(s.Results, r)
+	failed := false
+	for _, err := range r.CLIResults {
+		if err != nil {
+			failed = true
+			break
+		}
+	}
+	if failed {
+		s.TotalFailed++
+	} else {
+		s.TotalInstalled++
+	}
+}
+
 // installDeps holds the injectable dependencies for the install command.
 type installDeps struct {
-	runner       platform.CommandRunner
-	fetcher      manifest.ManifestFetcher
-	indexFetcher marketplace.IndexFetcher
-	stdin        io.Reader
-	stdout       io.Writer
-	stderr       io.Writer
+	runner   platform.CommandRunner
+	fetcher  manifest.ManifestFetcher
+	adapters []platform.Adapter // if non-nil, use instead of auto-detecting
+	stdin    io.Reader
+	stdout   io.Writer
+	stderr   io.Writer
 }
 
 // defaultInstallDeps returns the production dependencies.
 func defaultInstallDeps() *installDeps {
 	return &installDeps{
-		runner:       &execRunner{},
-		fetcher:      manifest.NewRemoteFetcher(&http.Client{}, &execGitRunner{}),
-		indexFetcher: marketplace.NewDefaultIndexFetcher(&http.Client{}, &execGitRunner{}),
-		stdin:        os.Stdin,
-		stdout:       os.Stdout,
-		stderr:       os.Stderr,
+		runner:  &execRunner{},
+		fetcher: manifest.NewLocalManifestFetcher(),
+		stdin:   os.Stdin,
+		stdout:  os.Stdout,
+		stderr:  os.Stderr,
 	}
 }
 
@@ -76,7 +104,22 @@ func runInstall(specifier string, deps *installDeps) error {
 	}
 
 	// 2. Detect platform adapters
-	adapters := platform.DetectAdapters(deps.runner)
+	var adapters []platform.Adapter
+	if deps.adapters != nil {
+		adapters = deps.adapters
+	} else {
+		allAdapters := []platform.Adapter{
+			platform.NewCopilotAdapter(deps.runner),
+			platform.NewClaudeAdapter(deps.runner),
+		}
+		for _, a := range allAdapters {
+			if a.Detect() {
+				adapters = append(adapters, a)
+			} else {
+				fmt.Fprintf(deps.stderr, "⚠ %s not detected, skipping\n", a.Name())
+			}
+		}
+	}
 	if len(adapters) == 0 {
 		return fmt.Errorf("no supported CLIs detected. Install copilot or claude CLI first")
 	}
@@ -99,51 +142,81 @@ func runInstall(specifier string, deps *installDeps) error {
 		return fmt.Errorf("failed to resolve package: %w", err)
 	}
 
-	installSource, err := resolveInstallSource(resolved, deps.indexFetcher)
+	installSource, err := resolveInstallSource(resolved)
 	if err != nil {
 		return fmt.Errorf("failed to resolve install source: %w", err)
 	}
 
-	// 4. Fetch the manifest (if exists)
-	fmt.Fprintln(out, "Resolving dependencies...")
-	m, err := deps.fetcher.FetchManifest(installSource)
-	if err != nil {
-		return fmt.Errorf("failed to fetch manifest: %w", err)
-	}
-
-	// 5. Build dependency graph if manifest exists
-	graph := depgraph.NewGraph()
-	graph.AddNode(&depgraph.Package{Name: resolved.Name, Source: installSource})
-
-	if m != nil {
-		// Resolve transitive dependencies
-		if err := resolveTransitiveDeps(graph, resolved.Name, m, deps.fetcher, deps.indexFetcher); err != nil {
-			return err
+	// 4. Ensure marketplace is registered (for marketplace-based installs)
+	if resolved.Type == resolver.SourceOfficialMarketplace || resolved.Type == resolver.SourceNamedMarketplace {
+		marketplaceName := "summon-marketplace"
+		marketplaceSource := "ai-summon/summon-marketplace"
+		if resolved.Type == resolver.SourceNamedMarketplace {
+			marketplaceName = resolved.MarketplaceName
+			marketplaceSource = resolved.MarketplaceName // named marketplaces use name as source
 		}
-
-		depLine := fmt.Sprintf("  %s", resolved.Name)
-		if len(m.Dependencies) > 0 {
-			depNames := make([]string, len(m.Dependencies))
-			for i, d := range m.Dependencies {
-				r, _ := resolver.Resolve(d)
-				if r != nil {
-					depNames[i] = r.Name
-				} else {
-					depNames[i] = d
-				}
+		for _, a := range adapters {
+			if ensureErr := a.EnsureMarketplace(marketplaceName, marketplaceSource); ensureErr != nil {
+				fmt.Fprintf(deps.stderr, "⚠ %s: failed to ensure marketplace %q: %v\n", a.Name(), marketplaceName, ensureErr)
 			}
-			depLine += " → " + strings.Join(depNames, ", ")
 		}
-		fmt.Fprintln(out, depLine)
 	}
 
-	// 6. Detect cycles
-	allPackages, err := graph.Resolve(resolved.Name)
-	if err != nil {
-		return err
+	// 5. Initialize install summary
+	cliNames := make([]string, len(adapters))
+	for i, a := range adapters {
+		cliNames[i] = a.Name()
+	}
+	summary := &InstallSummary{CLIs: cliNames}
+	visited := make(map[string]bool)
+
+	// 5. Install the package on each adapter
+	result := InstallResult{
+		PackageName: resolved.Name,
+		CLIResults:  make(map[string]error),
+	}
+	for _, a := range adapters {
+		fmt.Fprintf(out, "Installing %s on %s...\n", resolved.Name, a.Name())
+		if installErr := a.Install(installSource, scope); installErr != nil {
+			result.CLIResults[a.Name()] = fmt.Errorf("%s install %s failed: %w", a.Name(), installSource, installErr)
+			fmt.Fprintf(out, "  ✗ %s failed on %s\n", resolved.Name, a.Name())
+		} else {
+			result.CLIResults[a.Name()] = nil
+			fmt.Fprintf(out, "  ✓ %s installed on %s\n", resolved.Name, a.Name())
+		}
+	}
+	visited[resolved.Name] = true
+
+	// 6. Find local plugin dir and read manifest for transitive deps
+	var m *manifest.Manifest
+	for _, a := range adapters {
+		if result.CLIResults[a.Name()] != nil {
+			continue // skip failed CLIs
+		}
+		pluginDir, err := a.FindPluginDir(resolved.Name, scope)
+		if err != nil {
+			continue
+		}
+		m, err = deps.fetcher.FetchManifest(pluginDir)
+		if err != nil {
+			fmt.Fprintf(deps.stderr, "Warning: failed to read manifest for %s: %v\n", resolved.Name, err)
+		}
+		if m != nil {
+			result.Dependencies = m.Dependencies
+			break
+		}
+	}
+	summary.addResult(result)
+
+	// 7. Resolve transitive dependencies (if any)
+	if m != nil && len(m.Dependencies) > 0 {
+		if err := resolveTransitiveDeps(adapters, scope, m, deps.fetcher, visited, summary, out, deps.stderr); err != nil {
+			// Continue — partial install is OK. Error is already reported in summary.
+			fmt.Fprintf(deps.stderr, "Warning: transitive dependency resolution incomplete: %v\n", err)
+		}
 	}
 
-	// 7. Check system requirements (unless --force)
+	// 8. Check system requirements (unless --force)
 	if m != nil && len(m.SystemRequirements) > 0 && !installForce {
 		fmt.Fprintln(out, "\nSystem requirements check:")
 		reqs := make([]syscheck.RequirementInput, len(m.SystemRequirements))
@@ -155,168 +228,156 @@ func runInstall(specifier string, deps *installDeps) error {
 			}
 		}
 
-		result := syscheck.Check(reqs, nil)
-		for _, r := range result.Requirements {
+		checkResult := syscheck.Check(reqs, nil)
+		for _, r := range checkResult.Requirements {
 			fmt.Fprintln(out, syscheck.FormatCheck(r))
 		}
 
-		if result.HasRequired {
-			if installYes {
-				return fmt.Errorf("required system dependency missing (--yes mode halts on missing required deps)")
-			}
-			fmt.Fprintf(out, "\n⚠️  Required system dependencies are missing.\nContinue anyway? [y/N]: ")
-			if !confirmPrompt(deps.stdin) {
-				return fmt.Errorf("installation cancelled: missing required system dependencies")
-			}
+		if checkResult.HasRequired {
+			fmt.Fprintf(deps.stderr, "\n⚠️  Required system dependencies are missing.\n")
 		}
 	}
 
-	// 8. Query installed packages and filter
-	installed := make(map[string]bool)
-	for _, a := range adapters {
-		plugins, err := a.ListInstalled(scope)
-		if err != nil {
-			fmt.Fprintf(deps.stderr, "Warning: could not list installed plugins for %s: %v\n", a.Name(), err)
-			continue
-		}
-		for _, p := range plugins {
-			installed[p.Name] = true
-		}
-	}
-
-	toInstall := depgraph.FilterInstalled(allPackages, installed)
-	if len(toInstall) == 0 {
-		fmt.Fprintln(out, "\nAll packages are already installed.")
-		return nil
-	}
-
-	// 9. Display preview
-	fmt.Fprintln(out, "\nThe following packages will be installed:")
-	for _, pkg := range toInstall {
-		node := graph.GetNode(pkg)
-		source := ""
-		if node != nil {
-			source = node.Source
-		}
-		fmt.Fprintf(out, "  • %-20s (%s)\n", pkg, source)
-	}
-
-	cliNames := make([]string, len(adapters))
-	for i, a := range adapters {
-		cliNames[i] = a.Name()
-	}
-	fmt.Fprintf(out, "\nInstalling on: %s\n", strings.Join(cliNames, ", "))
-
-	// 10. Prompt for confirmation (unless --yes)
-	if !installYes {
-		fmt.Fprintf(out, "Proceed? [Y/n]: ")
-		if !confirmPromptDefault(deps.stdin, true) {
-			return fmt.Errorf("installation cancelled")
-		}
-	}
-
-	// 11. Install all packages
-	fmt.Fprintln(out)
-	var installedDuringRun []string
-	for _, pkg := range toInstall {
-		node := graph.GetNode(pkg)
-		source := specifier
-		if node != nil && node.Source != "" {
-			source = node.Source
-		}
-
-		var cliResults []string
-		var installErr error
-		for _, a := range adapters {
-			if err := a.Install(source, scope); err != nil {
-				installErr = fmt.Errorf("failed to install %s on %s: %w", pkg, a.Name(), err)
-				break
-			}
-			cliResults = append(cliResults, a.Name())
-		}
-
-		if installErr != nil {
-			if len(installedDuringRun) > 0 {
-				fmt.Fprintf(deps.stderr, "\nPartial failure. Already installed during this run: %s\n",
-					strings.Join(installedDuringRun, ", "))
-			}
-			return installErr
-		}
-
-		fmt.Fprintf(out, "  ✓ %s installed (%s)\n", pkg, strings.Join(cliResults, ", "))
-		installedDuringRun = append(installedDuringRun, pkg)
-	}
-
-	fmt.Fprintf(out, "\nInstalled %d packages\n", len(installedDuringRun))
+	// 9. Display post-install summary
+	renderSummary(summary, out)
 	return nil
 }
 
-func resolveTransitiveDeps(graph *depgraph.Graph, parentName string, m *manifest.Manifest, fetcher manifest.ManifestFetcher, indexFetcher marketplace.IndexFetcher) error {
+func resolveTransitiveDeps(adapters []platform.Adapter, scope platform.Scope, m *manifest.Manifest, fetcher manifest.ManifestFetcher, visited map[string]bool, summary *InstallSummary, out io.Writer, stderr io.Writer) error {
 	for _, dep := range m.Dependencies {
 		resolved, err := resolver.Resolve(dep)
 		if err != nil {
 			return fmt.Errorf("failed to resolve dependency %q: %w", dep, err)
 		}
 
-		depSource, err := resolveInstallSource(resolved, indexFetcher)
+		// Cycle detection
+		if visited[resolved.Name] {
+			return fmt.Errorf("dependency cycle detected: %s already visited", resolved.Name)
+		}
+		visited[resolved.Name] = true
+
+		depSource, err := resolveInstallSource(resolved)
 		if err != nil {
 			return fmt.Errorf("failed to resolve install source for dependency %q: %w", dep, err)
 		}
 
-		if !graph.HasNode(resolved.Name) {
-			graph.AddNode(&depgraph.Package{
-				Name:   resolved.Name,
-				Source: depSource,
-			})
-
-			// Recursively fetch manifest for this dependency
-			depManifest, err := fetcher.FetchManifest(depSource)
-			if err != nil {
-				return fmt.Errorf("failed to fetch manifest for %s: %w", resolved.Name, err)
+		// Ensure marketplace for marketplace-based deps
+		if resolved.Type == resolver.SourceOfficialMarketplace || resolved.Type == resolver.SourceNamedMarketplace {
+			marketplaceName := "summon-marketplace"
+			marketplaceSource := "ai-summon/summon-marketplace"
+			if resolved.Type == resolver.SourceNamedMarketplace {
+				marketplaceName = resolved.MarketplaceName
+				marketplaceSource = resolved.MarketplaceName
 			}
-			if depManifest != nil {
-				if err := resolveTransitiveDeps(graph, resolved.Name, depManifest, fetcher, indexFetcher); err != nil {
-					return err
+			for _, a := range adapters {
+				if ensureErr := a.EnsureMarketplace(marketplaceName, marketplaceSource); ensureErr != nil {
+					fmt.Fprintf(stderr, "⚠ %s: failed to ensure marketplace %q: %v\n", a.Name(), marketplaceName, ensureErr)
 				}
 			}
 		}
-		graph.AddEdge(parentName, resolved.Name)
+
+		// Install dependency on each adapter
+		result := InstallResult{
+			PackageName: resolved.Name,
+			CLIResults:  make(map[string]error),
+		}
+		for _, a := range adapters {
+			fmt.Fprintf(out, "Installing dependency %s on %s...\n", resolved.Name, a.Name())
+			if installErr := a.Install(depSource, scope); installErr != nil {
+				result.CLIResults[a.Name()] = fmt.Errorf("%s install %s failed: %w", a.Name(), depSource, installErr)
+				fmt.Fprintf(out, "  ✗ %s failed on %s\n", resolved.Name, a.Name())
+			} else {
+				result.CLIResults[a.Name()] = nil
+				fmt.Fprintf(out, "  ✓ %s installed on %s\n", resolved.Name, a.Name())
+			}
+		}
+
+		// Find plugin dir and read manifest for further transitive deps
+		var depManifest *manifest.Manifest
+		for _, a := range adapters {
+			if result.CLIResults[a.Name()] != nil {
+				continue
+			}
+			pluginDir, err := a.FindPluginDir(resolved.Name, scope)
+			if err != nil {
+				continue
+			}
+			depManifest, err = fetcher.FetchManifest(pluginDir)
+			if err != nil {
+				fmt.Fprintf(stderr, "Warning: failed to read manifest for %s: %v\n", resolved.Name, err)
+			}
+			if depManifest != nil {
+				result.Dependencies = depManifest.Dependencies
+				break
+			}
+		}
+		summary.addResult(result)
+
+		// Recurse for transitive deps
+		if depManifest != nil && len(depManifest.Dependencies) > 0 {
+			if err := resolveTransitiveDeps(adapters, scope, depManifest, fetcher, visited, summary, out, stderr); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
 
-// resolveInstallSource resolves a ResolvedSource to an actual installable source string.
-// For marketplace types, it looks up the package in the appropriate marketplace index.
-func resolveInstallSource(resolved *resolver.ResolvedSource, indexFetcher marketplace.IndexFetcher) (string, error) {
+// resolveInstallSource resolves a ResolvedSource to an installable source string.
+// For marketplace types, formats as name@marketplace for native CLI delegation.
+func resolveInstallSource(resolved *resolver.ResolvedSource) (string, error) {
 	switch resolved.Type {
 	case resolver.SourceOfficialMarketplace:
-		entry, err := indexFetcher.LookupPackage(resolved.Name, marketplace.OfficialMarketplaceURL)
-		if err != nil {
-			return "", err
-		}
-		return entry.Source, nil
-
+		return resolved.Name + "@summon-marketplace", nil
 	case resolver.SourceNamedMarketplace:
-		cfg, err := marketplace.LoadConfig(marketplace.DefaultConfigPath())
-		if err != nil {
-			return "", fmt.Errorf("failed to load marketplace config: %w", err)
-		}
-		mkt := cfg.FindMarketplace(resolved.MarketplaceName)
-		if mkt == nil {
-			return "", fmt.Errorf("marketplace %q is not registered; use 'summon marketplace add' to register it", resolved.MarketplaceName)
-		}
-		entry, err := indexFetcher.LookupPackage(resolved.Name, mkt.Source)
-		if err != nil {
-			return "", err
-		}
-		return entry.Source, nil
-
+		return resolved.Name + "@" + resolved.MarketplaceName, nil
 	default:
 		// SourceGitHubShorthand, SourceDirectURL, SourceNativeMarketplace
 		if resolved.Source != "" {
 			return resolved.Source, nil
 		}
 		return resolved.Name, nil
+	}
+}
+
+// renderSummary prints a post-install summary.
+func renderSummary(summary *InstallSummary, out io.Writer) {
+	total := summary.TotalInstalled + summary.TotalFailed
+	if total == 0 {
+		return
+	}
+
+	if summary.TotalFailed == 0 {
+		fmt.Fprintf(out, "\nInstalled %d packages:\n", total)
+	} else {
+		fmt.Fprintf(out, "\nInstalled %d of %d packages:\n", summary.TotalInstalled, total)
+	}
+
+	for _, r := range summary.Results {
+		var successCLIs []string
+		var failedParts []string
+		for _, cli := range summary.CLIs {
+			if err, ok := r.CLIResults[cli]; ok {
+				if err != nil {
+					failedParts = append(failedParts, fmt.Sprintf("%s: failed — %q", cli, err.Error()))
+				} else {
+					successCLIs = append(successCLIs, cli)
+				}
+			}
+		}
+
+		if len(failedParts) == 0 {
+			fmt.Fprintf(out, "  ✓ %-20s (%s)\n", r.PackageName, strings.Join(successCLIs, ", "))
+		} else if len(successCLIs) > 0 {
+			fmt.Fprintf(out, "  ✓ %-20s (%s)\n", r.PackageName, strings.Join(successCLIs, ", "))
+			for _, fp := range failedParts {
+				fmt.Fprintf(out, "  ✗ %-20s (%s)\n", r.PackageName, fp)
+			}
+		} else {
+			for _, fp := range failedParts {
+				fmt.Fprintf(out, "  ✗ %-20s (%s)\n", r.PackageName, fp)
+			}
+		}
 	}
 }
 

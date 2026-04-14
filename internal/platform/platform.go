@@ -29,6 +29,12 @@ func ParseScope(s string) (Scope, error) {
 	}
 }
 
+// MarketplaceInfo represents a marketplace registered on a native CLI.
+type MarketplaceInfo struct {
+	Name   string
+	Source string
+}
+
 // InstalledPlugin represents a plugin installed on a specific platform.
 type InstalledPlugin struct {
 	Name        string `json:"name"`
@@ -53,6 +59,13 @@ type Adapter interface {
 	Uninstall(name string, scope Scope) error
 	Update(name string, scope Scope) error
 	ListInstalled(scope Scope) ([]InstalledPlugin, error)
+
+	// Marketplace management
+	EnsureMarketplace(name, source string) error
+	ListMarketplaces() ([]MarketplaceInfo, error)
+
+	// Local plugin directory discovery
+	FindPluginDir(name string, scope Scope) (string, error)
 }
 
 // ValidateScope checks if a scope is supported by the adapter.

@@ -379,3 +379,125 @@ func TestIsUnderPath(t *testing.T) {
 	assert.False(t, isUnderPath("/a/b-dev/c", "/a/b"))
 	assert.False(t, isUnderPath("/other", "/a/b"))
 }
+
+// --- ListMarketplaces Tests ---
+
+func TestCopilotAdapter_ListMarketplaces_MixedSymbols(t *testing.T) {
+	// Actual copilot output uses ◆ for built-in and • for user-registered
+	output := "✨ Included with GitHub Copilot:\n" +
+		"  ◆ copilot-plugins (GitHub: github/copilot-plugins)\n" +
+		"  ◆ awesome-copilot (GitHub: github/awesome-copilot)\n" +
+		"\n" +
+		"Registered marketplaces:\n" +
+		"  • summon-marketplace (GitHub: ai-summon/summon-marketplace)\n"
+
+	runner := NewFakeRunner()
+	runner.LookPaths["copilot"] = "/usr/local/bin/copilot"
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return []byte(output), nil
+	}
+	adapter := NewCopilotAdapter(runner)
+	marketplaces, err := adapter.ListMarketplaces()
+	require.NoError(t, err)
+	assert.Len(t, marketplaces, 3)
+	assert.Equal(t, "copilot-plugins", marketplaces[0].Name)
+	assert.Equal(t, "awesome-copilot", marketplaces[1].Name)
+	assert.Equal(t, "summon-marketplace", marketplaces[2].Name)
+	assert.Equal(t, "ai-summon/summon-marketplace", marketplaces[2].Source)
+}
+
+// --- EnsureMarketplace Tests ---
+
+func TestCopilotAdapter_EnsureMarketplace_AlreadyRegistered(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.LookPaths["copilot"] = "/usr/local/bin/copilot"
+	// Realistic output: built-in use ◆, user-registered use •
+	realOutput := "✨ Included with GitHub Copilot:\n" +
+		"  ◆ copilot-plugins (GitHub: github/copilot-plugins)\n" +
+		"  ◆ awesome-copilot (GitHub: github/awesome-copilot)\n" +
+		"\n" +
+		"Registered marketplaces:\n" +
+		"  • summon-marketplace (GitHub: ai-summon/summon-marketplace)\n"
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		for _, a := range args {
+			if a == "list" {
+				return []byte(realOutput), nil
+			}
+		}
+		return nil, nil
+	}
+	adapter := NewCopilotAdapter(runner)
+	err := adapter.EnsureMarketplace("summon-marketplace", "ai-summon/summon-marketplace")
+	require.NoError(t, err)
+
+	// Should NOT have called marketplace add
+	for _, cmd := range runner.Commands {
+		for _, a := range cmd {
+			assert.NotEqual(t, "add", a, "should not call marketplace add when already registered")
+		}
+	}
+}
+
+func TestCopilotAdapter_EnsureMarketplace_NotRegistered(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.LookPaths["copilot"] = "/usr/local/bin/copilot"
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		for _, a := range args {
+			if a == "list" {
+				return []byte("No marketplaces registered.\n"), nil
+			}
+		}
+		return nil, nil
+	}
+	adapter := NewCopilotAdapter(runner)
+	err := adapter.EnsureMarketplace("summon-marketplace", "ai-summon/summon-marketplace")
+	require.NoError(t, err)
+
+	// Should have called marketplace add
+	lastCmd := runner.Commands[len(runner.Commands)-1]
+	assert.Contains(t, lastCmd, "add")
+	assert.Contains(t, lastCmd, "ai-summon/summon-marketplace")
+}
+
+func TestClaudeAdapter_EnsureMarketplace_AlreadyRegistered(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.LookPaths["claude"] = "/usr/local/bin/claude"
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		for _, a := range args {
+			if a == "list" {
+				return []byte(`[{"name":"summon-marketplace","source":"ai-summon/summon-marketplace"}]`), nil
+			}
+		}
+		return nil, nil
+	}
+	adapter := NewClaudeAdapter(runner)
+	err := adapter.EnsureMarketplace("summon-marketplace", "ai-summon/summon-marketplace")
+	require.NoError(t, err)
+
+	// Should NOT have called marketplace add
+	for _, cmd := range runner.Commands {
+		for _, a := range cmd {
+			assert.NotEqual(t, "add", a)
+		}
+	}
+}
+
+func TestClaudeAdapter_EnsureMarketplace_NotRegistered(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.LookPaths["claude"] = "/usr/local/bin/claude"
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		for _, a := range args {
+			if a == "list" {
+				return []byte("[]"), nil
+			}
+		}
+		return nil, nil
+	}
+	adapter := NewClaudeAdapter(runner)
+	err := adapter.EnsureMarketplace("summon-marketplace", "ai-summon/summon-marketplace")
+	require.NoError(t, err)
+
+	lastCmd := runner.Commands[len(runner.Commands)-1]
+	assert.Contains(t, lastCmd, "add")
+	assert.Contains(t, lastCmd, "ai-summon/summon-marketplace")
+}
