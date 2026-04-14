@@ -33,6 +33,7 @@ type InstalledPlugin struct {
 	Name     string `json:"name"`
 	Source   string `json:"source,omitempty"`
 	Platform string `json:"platform"`
+	Scope    string `json:"scope,omitempty"`
 }
 
 // CommandRunner abstracts command execution for testing.

@@ -261,5 +261,51 @@ func TestUninstall_AllPlatformsFail(t *testing.T) {
 	assert.NotContains(t, out, "Partially uninstalled")
 }
 
+func TestUninstall_ProjectScope(t *testing.T) {
+	runner := newFakeRunner()
+	runner.lookPaths["copilot"] = "/usr/local/bin/copilot"
+	runner.lookPaths["claude"] = "/usr/local/bin/claude"
+	runner.runFunc = func(name string, args ...string) ([]byte, error) {
+		for _, a := range args {
+			if a == "list" {
+				if name == "copilot" {
+					return []byte("  • my-plugin (v1.0.0)\n"), nil
+				}
+				return []byte(`[{"id":"my-plugin@marketplace","scope":"project"}]`), nil
+			}
+		}
+		return nil, nil
+	}
+
+	deps := &uninstallDeps{
+		runner:  runner,
+		fetcher: newFakeFetcher(),
+		stdin:   strings.NewReader(""),
+		stdout:  &bytes.Buffer{},
+		stderr:  &bytes.Buffer{},
+	}
+
+	uninstallYes = true
+	installScope = "user"
+	targetFlag = ""
+
+	err := runUninstall("my-plugin", deps)
+	require.NoError(t, err)
+
+	out := deps.stdout.(*bytes.Buffer).String()
+	assert.Contains(t, out, "my-plugin uninstalled")
+
+	// Verify claude's uninstall was called with --scope project
+	var foundClaudeUninstall bool
+	for _, cmd := range runner.commands {
+		if len(cmd) >= 4 && cmd[0] == "claude" && cmd[2] == "uninstall" {
+			foundClaudeUninstall = true
+			assert.Contains(t, cmd, "--scope", "claude uninstall should include --scope flag")
+			assert.Contains(t, cmd, "project", "claude uninstall should use project scope")
+		}
+	}
+	assert.True(t, foundClaudeUninstall, "claude uninstall command should have been called")
+}
+
 // Suppress unused import warning
 var _ = fmt.Sprintf

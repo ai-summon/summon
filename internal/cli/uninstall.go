@@ -66,7 +66,12 @@ func runUninstall(name string, deps *uninstallDeps) error {
 	}
 
 	// Verify the package is installed on at least one CLI
-	var installedOn []platform.Adapter
+	type adapterScope struct {
+		adapter platform.Adapter
+		scope   platform.Scope
+	}
+	var installedOn []adapterScope
+	seen := make(map[string]bool)
 	for _, a := range adapters {
 		plugins, err := a.ListInstalled(scope)
 		if err != nil {
@@ -74,8 +79,17 @@ func runUninstall(name string, deps *uninstallDeps) error {
 		}
 		for _, p := range plugins {
 			if p.Name == name {
-				installedOn = append(installedOn, a)
-				break
+				actualScope := scope
+				if p.Scope != "" {
+					if parsed, err := platform.ParseScope(p.Scope); err == nil {
+						actualScope = parsed
+					}
+				}
+				key := a.Name() + ":" + string(actualScope)
+				if !seen[key] {
+					seen[key] = true
+					installedOn = append(installedOn, adapterScope{adapter: a, scope: actualScope})
+				}
 			}
 		}
 	}
@@ -128,13 +142,13 @@ func runUninstall(name string, deps *uninstallDeps) error {
 	fmt.Fprintln(out)
 	var failed []string
 	var succeeded []string
-	for _, a := range installedOn {
-		if err := a.Uninstall(name, scope); err != nil {
-			fmt.Fprintf(out, "  ✗ failed to uninstall %s from %s: %v\n", name, a.Name(), err)
-			failed = append(failed, fmt.Sprintf("%s: %v", a.Name(), err))
+	for _, entry := range installedOn {
+		if err := entry.adapter.Uninstall(name, entry.scope); err != nil {
+			fmt.Fprintf(out, "  ✗ failed to uninstall %s from %s: %v\n", name, entry.adapter.Name(), err)
+			failed = append(failed, fmt.Sprintf("%s: %v", entry.adapter.Name(), err))
 		} else {
-			fmt.Fprintf(out, "  ✓ %s uninstalled (%s)\n", name, a.Name())
-			succeeded = append(succeeded, a.Name())
+			fmt.Fprintf(out, "  ✓ %s uninstalled (%s)\n", name, entry.adapter.Name())
+			succeeded = append(succeeded, entry.adapter.Name())
 		}
 	}
 

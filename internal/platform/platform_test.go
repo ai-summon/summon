@@ -120,7 +120,9 @@ func TestCopilotAdapter_ListInstalled(t *testing.T) {
 	assert.Len(t, result, 2)
 	assert.Equal(t, "my-plugin", result[0].Name)
 	assert.Equal(t, "copilot", result[0].Platform)
+	assert.Equal(t, "user", result[0].Scope)
 	assert.Equal(t, "other-plugin", result[1].Name)
+	assert.Equal(t, "user", result[1].Scope)
 }
 
 func TestCopilotAdapter_ListInstalledEmpty(t *testing.T) {
@@ -149,6 +151,7 @@ func TestClaudeAdapter_ListInstalledWithScope(t *testing.T) {
 	assert.Len(t, result, 1)
 	assert.Equal(t, "claude-plugin", result[0].Name)
 	assert.Equal(t, "claude-plugin@my-marketplace", result[0].Source)
+	assert.Equal(t, "project", result[0].Scope)
 	// Verify scope flag was passed
 	assert.Contains(t, runner.Commands[0], "--scope")
 	assert.Contains(t, runner.Commands[0], "project")

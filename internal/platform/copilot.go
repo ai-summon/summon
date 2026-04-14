@@ -94,6 +94,7 @@ func parseCopilotPluginList(output []byte, plat string) ([]InstalledPlugin, erro
 			Name:     name,
 			Source:   raw,
 			Platform: plat,
+			Scope:    string(ScopeUser),
 		})
 	}
 	return plugins, nil

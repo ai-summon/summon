@@ -125,6 +125,7 @@ func parseClaudePluginList(output []byte, plat string) ([]InstalledPlugin, error
 			Name:     name,
 			Source:   source,
 			Platform: plat,
+			Scope:    r.Scope,
 		})
 	}
 	return plugins, nil

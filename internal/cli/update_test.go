@@ -134,6 +134,51 @@ func TestUpdateAll(t *testing.T) {
 	assert.Contains(t, out, "Updating all")
 }
 
+func TestUpdate_ProjectScope(t *testing.T) {
+	runner := newFakeRunner()
+	runner.lookPaths["copilot"] = "/usr/local/bin/copilot"
+	runner.lookPaths["claude"] = "/usr/local/bin/claude"
+	runner.runFunc = func(name string, args ...string) ([]byte, error) {
+		for _, a := range args {
+			if a == "list" {
+				if name == "copilot" {
+					return []byte("  • my-plugin (v1.0.0)\n"), nil
+				}
+				return []byte(`[{"id":"my-plugin@marketplace","scope":"project"}]`), nil
+			}
+		}
+		return nil, nil
+	}
+
+	deps := &updateDeps{
+		runner:  runner,
+		fetcher: newFakeFetcher(),
+		stdin:   strings.NewReader(""),
+		stdout:  &bytes.Buffer{},
+		stderr:  &bytes.Buffer{},
+	}
+
+	installScope = "user"
+	targetFlag = ""
+
+	err := runUpdate("my-plugin", deps)
+	require.NoError(t, err)
+
+	out := deps.stdout.(*bytes.Buffer).String()
+	assert.Contains(t, out, "my-plugin updated")
+
+	// Verify claude's update was called with --scope project
+	var foundClaudeUpdate bool
+	for _, cmd := range runner.commands {
+		if len(cmd) >= 4 && cmd[0] == "claude" && cmd[2] == "update" {
+			foundClaudeUpdate = true
+			assert.Contains(t, cmd, "--scope", "claude update should include --scope flag")
+			assert.Contains(t, cmd, "project", "claude update should use project scope")
+		}
+	}
+	assert.True(t, foundClaudeUpdate, "claude update command should have been called")
+}
+
 func TestUpdate_PartialFailure(t *testing.T) {
 	runner := newFakeRunner()
 	runner.lookPaths["copilot"] = "/usr/local/bin/copilot"
