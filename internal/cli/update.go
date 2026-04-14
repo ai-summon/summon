@@ -83,16 +83,25 @@ func runUpdate(name string, deps *updateDeps) error {
 		return fmt.Errorf("package %q is not installed", name)
 	}
 
-	// Update via each adapter
+	// Update via each adapter (best-effort: try all platforms, collect errors)
 	fmt.Fprintf(out, "Updating %s...\n", name)
 	var updatedOn []string
+	var updateErrors []string
 	for _, a := range adapters {
 		if err := a.Update(name, scope); err != nil {
-			return fmt.Errorf("update failed on %s: %w", a.Name(), err)
+			fmt.Fprintf(deps.stderr, "  ✗ update failed on %s: %v\n", a.Name(), err)
+			updateErrors = append(updateErrors, fmt.Sprintf("%s: %v", a.Name(), err))
+		} else {
+			updatedOn = append(updatedOn, a.Name())
 		}
-		updatedOn = append(updatedOn, a.Name())
 	}
-	fmt.Fprintf(out, "  ✓ %s updated (%s)\n", name, strings.Join(updatedOn, ", "))
+
+	if len(updatedOn) > 0 {
+		fmt.Fprintf(out, "  ✓ %s updated (%s)\n", name, strings.Join(updatedOn, ", "))
+	}
+	if len(updateErrors) > 0 && len(updatedOn) == 0 {
+		return fmt.Errorf("update failed on all platforms: %s", strings.Join(updateErrors, "; "))
+	}
 
 	// Check for new dependencies
 	if source != "" && deps.fetcher != nil {

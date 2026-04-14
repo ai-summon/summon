@@ -1,6 +1,9 @@
 package platform
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Scope represents the installation scope for a plugin.
 type Scope string
@@ -94,4 +97,13 @@ func adapterNames(adapters []Adapter) []string {
 		names[i] = a.Name()
 	}
 	return names
+}
+
+// cliError builds an error that includes the CLI's output when available.
+func cliError(action string, output []byte, err error) error {
+	msg := strings.TrimSpace(string(output))
+	if msg != "" {
+		return fmt.Errorf("%s failed: %s", action, msg)
+	}
+	return fmt.Errorf("%s failed: %w", action, err)
 }

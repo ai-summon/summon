@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -131,4 +132,48 @@ func TestUpdateAll(t *testing.T) {
 
 	out := deps.stdout.(*bytes.Buffer).String()
 	assert.Contains(t, out, "Updating all")
+}
+
+func TestUpdate_PartialFailure(t *testing.T) {
+	runner := newFakeRunner()
+	runner.lookPaths["copilot"] = "/usr/local/bin/copilot"
+	runner.lookPaths["claude"] = "/usr/local/bin/claude"
+	runner.runFunc = func(name string, args ...string) ([]byte, error) {
+		for _, a := range args {
+			if a == "list" {
+				if name == "copilot" {
+					return []byte("  • my-plugin (v1.0.0)\n"), nil
+				}
+				return []byte(`[{"id":"my-plugin@marketplace"}]`), nil
+			}
+			if a == "update" {
+				if name == "claude" {
+					return []byte("update error"), fmt.Errorf("exit status 1")
+				}
+				return nil, nil // copilot succeeds
+			}
+		}
+		return nil, nil
+	}
+
+	deps := &updateDeps{
+		runner:  runner,
+		fetcher: newFakeFetcher(),
+		stdin:   strings.NewReader(""),
+		stdout:  &bytes.Buffer{},
+		stderr:  &bytes.Buffer{},
+	}
+
+	installScope = "user"
+	targetFlag = ""
+
+	// Should NOT return error since copilot succeeded
+	err := runUpdate("my-plugin", deps)
+	require.NoError(t, err)
+
+	out := deps.stdout.(*bytes.Buffer).String()
+	assert.Contains(t, out, "my-plugin updated (copilot)")
+
+	errOut := deps.stderr.(*bytes.Buffer).String()
+	assert.Contains(t, errOut, "update failed on claude")
 }

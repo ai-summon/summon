@@ -35,9 +35,9 @@ func (c *ClaudeAdapter) Install(source string, scope Scope) error {
 	if scope != ScopeUser {
 		args = append(args, "--scope", string(scope))
 	}
-	_, err := c.runner.Run("claude", args...)
+	output, err := c.runner.Run("claude", args...)
 	if err != nil {
-		return fmt.Errorf("claude install failed: %w", err)
+		return cliError("claude install", output, err)
 	}
 	return nil
 }
@@ -50,9 +50,9 @@ func (c *ClaudeAdapter) Uninstall(name string, scope Scope) error {
 	if scope != ScopeUser {
 		args = append(args, "--scope", string(scope))
 	}
-	_, err := c.runner.Run("claude", args...)
+	output, err := c.runner.Run("claude", args...)
 	if err != nil {
-		return fmt.Errorf("claude uninstall failed: %w", err)
+		return cliError("claude uninstall", output, err)
 	}
 	return nil
 }
@@ -65,9 +65,9 @@ func (c *ClaudeAdapter) Update(name string, scope Scope) error {
 	if scope != ScopeUser {
 		args = append(args, "--scope", string(scope))
 	}
-	_, err := c.runner.Run("claude", args...)
+	output, err := c.runner.Run("claude", args...)
 	if err != nil {
-		return fmt.Errorf("claude update failed: %w", err)
+		return cliError("claude update", output, err)
 	}
 	return nil
 }

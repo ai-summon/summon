@@ -31,9 +31,9 @@ func (c *CopilotAdapter) Install(source string, scope Scope) error {
 	if err := ValidateScope(c, scope); err != nil {
 		return err
 	}
-	_, err := c.runner.Run("copilot", "plugin", "install", source)
+	output, err := c.runner.Run("copilot", "plugin", "install", source)
 	if err != nil {
-		return fmt.Errorf("copilot install failed: %w", err)
+		return cliError("copilot install", output, err)
 	}
 	return nil
 }
@@ -42,9 +42,9 @@ func (c *CopilotAdapter) Uninstall(name string, scope Scope) error {
 	if err := ValidateScope(c, scope); err != nil {
 		return err
 	}
-	_, err := c.runner.Run("copilot", "plugin", "uninstall", name)
+	output, err := c.runner.Run("copilot", "plugin", "uninstall", name)
 	if err != nil {
-		return fmt.Errorf("copilot uninstall failed: %w", err)
+		return cliError("copilot uninstall", output, err)
 	}
 	return nil
 }
@@ -53,9 +53,9 @@ func (c *CopilotAdapter) Update(name string, scope Scope) error {
 	if err := ValidateScope(c, scope); err != nil {
 		return err
 	}
-	_, err := c.runner.Run("copilot", "plugin", "update", name)
+	output, err := c.runner.Run("copilot", "plugin", "update", name)
 	if err != nil {
-		return fmt.Errorf("copilot update failed: %w", err)
+		return cliError("copilot update", output, err)
 	}
 	return nil
 }

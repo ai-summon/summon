@@ -172,5 +172,94 @@ func TestUninstall_NoCLIs(t *testing.T) {
 	assert.Contains(t, err.Error(), "no supported CLIs")
 }
 
+func TestUninstall_PartialFailure(t *testing.T) {
+	// Simulates: copilot uninstall succeeds, claude uninstall fails
+	runner := newFakeRunner()
+	runner.lookPaths["copilot"] = "/usr/local/bin/copilot"
+	runner.lookPaths["claude"] = "/usr/local/bin/claude"
+	runner.runFunc = func(name string, args ...string) ([]byte, error) {
+		for _, a := range args {
+			if a == "list" {
+				if name == "copilot" {
+					return []byte("  • my-plugin (v1.0.0)\n"), nil
+				}
+				return []byte(`[{"id":"my-plugin@marketplace"}]`), nil
+			}
+			if a == "uninstall" {
+				if name == "claude" {
+					return []byte("Error: plugin not found"), fmt.Errorf("exit status 1")
+				}
+				return nil, nil // copilot succeeds
+			}
+		}
+		return nil, nil
+	}
+
+	deps := &uninstallDeps{
+		runner:  runner,
+		fetcher: newFakeFetcher(),
+		stdin:   strings.NewReader(""),
+		stdout:  &bytes.Buffer{},
+		stderr:  &bytes.Buffer{},
+	}
+
+	uninstallYes = true
+	installScope = "user"
+	targetFlag = ""
+
+	err := runUninstall("my-plugin", deps)
+	require.Error(t, err)
+
+	out := deps.stdout.(*bytes.Buffer).String()
+	// Copilot should show success
+	assert.Contains(t, out, "✓ my-plugin uninstalled (copilot)")
+	// Claude should show failure
+	assert.Contains(t, out, "✗ failed to uninstall my-plugin from claude")
+	// Should report partial uninstall
+	assert.Contains(t, out, "Partially uninstalled")
+	// Error should report the failure count
+	assert.Contains(t, err.Error(), "1 platform(s)")
+}
+
+func TestUninstall_AllPlatformsFail(t *testing.T) {
+	runner := newFakeRunner()
+	runner.lookPaths["copilot"] = "/usr/local/bin/copilot"
+	runner.lookPaths["claude"] = "/usr/local/bin/claude"
+	runner.runFunc = func(name string, args ...string) ([]byte, error) {
+		for _, a := range args {
+			if a == "list" {
+				if name == "copilot" {
+					return []byte("  • my-plugin (v1.0.0)\n"), nil
+				}
+				return []byte(`[{"id":"my-plugin@marketplace"}]`), nil
+			}
+			if a == "uninstall" {
+				return []byte("some error"), fmt.Errorf("exit status 1")
+			}
+		}
+		return nil, nil
+	}
+
+	deps := &uninstallDeps{
+		runner:  runner,
+		fetcher: newFakeFetcher(),
+		stdin:   strings.NewReader(""),
+		stdout:  &bytes.Buffer{},
+		stderr:  &bytes.Buffer{},
+	}
+
+	uninstallYes = true
+	installScope = "user"
+	targetFlag = ""
+
+	err := runUninstall("my-plugin", deps)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "2 platform(s)")
+
+	out := deps.stdout.(*bytes.Buffer).String()
+	// Should NOT show partial uninstall message (none succeeded)
+	assert.NotContains(t, out, "Partially uninstalled")
+}
+
 // Suppress unused import warning
 var _ = fmt.Sprintf

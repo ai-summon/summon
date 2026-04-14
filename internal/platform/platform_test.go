@@ -274,3 +274,43 @@ func TestParseScope(t *testing.T) {
 		})
 	}
 }
+
+// --- CLI Error Output Tests ---
+
+func TestCliError_WithOutput(t *testing.T) {
+	err := cliError("claude uninstall", []byte("Error: plugin 'foo' not found\n"), fmt.Errorf("exit status 1"))
+	assert.Contains(t, err.Error(), "plugin 'foo' not found")
+	assert.NotContains(t, err.Error(), "exit status 1")
+}
+
+func TestCliError_EmptyOutput(t *testing.T) {
+	err := cliError("claude uninstall", nil, fmt.Errorf("exit status 1"))
+	assert.Contains(t, err.Error(), "exit status 1")
+}
+
+func TestCliError_WhitespaceOnlyOutput(t *testing.T) {
+	err := cliError("claude uninstall", []byte("  \n  "), fmt.Errorf("exit status 1"))
+	assert.Contains(t, err.Error(), "exit status 1")
+}
+
+func TestClaudeAdapter_UninstallErrorIncludesOutput(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return []byte("Error: no such plugin 'superpowers'"), fmt.Errorf("exit status 1")
+	}
+	adapter := NewClaudeAdapter(runner)
+	err := adapter.Uninstall("superpowers", ScopeUser)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no such plugin 'superpowers'")
+}
+
+func TestCopilotAdapter_UninstallErrorIncludesOutput(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return []byte("plugin not installed"), fmt.Errorf("exit status 1")
+	}
+	adapter := NewCopilotAdapter(runner)
+	err := adapter.Uninstall("superpowers", ScopeUser)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "plugin not installed")
+}

@@ -124,13 +124,26 @@ func runUninstall(name string, deps *uninstallDeps) error {
 		}
 	}
 
-	// Delegate uninstall
+	// Delegate uninstall (best-effort: try all platforms, collect errors)
 	fmt.Fprintln(out)
+	var failed []string
+	var succeeded []string
 	for _, a := range installedOn {
 		if err := a.Uninstall(name, scope); err != nil {
-			return fmt.Errorf("failed to uninstall %s from %s: %w", name, a.Name(), err)
+			fmt.Fprintf(out, "  ✗ failed to uninstall %s from %s: %v\n", name, a.Name(), err)
+			failed = append(failed, fmt.Sprintf("%s: %v", a.Name(), err))
+		} else {
+			fmt.Fprintf(out, "  ✓ %s uninstalled (%s)\n", name, a.Name())
+			succeeded = append(succeeded, a.Name())
 		}
-		fmt.Fprintf(out, "  ✓ %s uninstalled (%s)\n", name, a.Name())
+	}
+
+	if len(failed) > 0 {
+		fmt.Fprintln(out)
+		if len(succeeded) > 0 {
+			fmt.Fprintf(out, "Partially uninstalled %s (succeeded: %s)\n", name, strings.Join(succeeded, ", "))
+		}
+		return fmt.Errorf("uninstall failed on %d platform(s): %s", len(failed), strings.Join(failed, "; "))
 	}
 
 	fmt.Fprintf(out, "\nUninstalled %s\n", name)
