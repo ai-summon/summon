@@ -459,9 +459,12 @@ func TestInstall_ProgressMessages_PerAdapterInstall(t *testing.T) {
 	// No marketplace check messages in stdout
 	assert.NotContains(t, out, "Checking marketplace")
 	assert.NotContains(t, out, "marketplace ready")
-	// Per-adapter install feedback
-	assert.Contains(t, out, "Installing superpowers on claude...")
-	assert.Contains(t, out, "✓ superpowers installed on claude")
+	// Platform header
+	assert.Contains(t, out, "claude:")
+	// Per-adapter install feedback (no "on {platform}" suffix)
+	assert.Contains(t, out, "  Installing superpowers...")
+	assert.Contains(t, out, "✓ superpowers installed")
+	assert.NotContains(t, out, "on claude")
 }
 
 func TestInstall_ProgressMessages_DependencyInstall(t *testing.T) {
@@ -485,8 +488,12 @@ func TestInstall_ProgressMessages_DependencyInstall(t *testing.T) {
 	require.NoError(t, err)
 
 	out := deps.stdout.(*bytes.Buffer).String()
-	assert.Contains(t, out, "Installing dependency dep-a on claude...")
-	assert.Contains(t, out, "✓ dep-a installed on claude")
+	// Platform header
+	assert.Contains(t, out, "claude:")
+	// Dependency install with indentation (no "on {platform}" suffix)
+	assert.Contains(t, out, "Installing dependency dep-a...")
+	assert.Contains(t, out, "✓ dep-a installed")
+	assert.NotContains(t, out, "on claude")
 }
 
 func TestInstall_ProgressMessages_NoMarketplaceForGitHub(t *testing.T) {
@@ -503,7 +510,157 @@ func TestInstall_ProgressMessages_NoMarketplaceForGitHub(t *testing.T) {
 	out := deps.stdout.(*bytes.Buffer).String()
 	// No marketplace check for GitHub shorthand
 	assert.NotContains(t, out, "Checking marketplace")
-	// But per-adapter install feedback still present
-	assert.Contains(t, out, "Installing my-plugin on claude...")
-	assert.Contains(t, out, "✓ my-plugin installed on claude")
+	// Platform header and install feedback (no "on {platform}" suffix)
+	assert.Contains(t, out, "claude:")
+	assert.Contains(t, out, "  Installing my-plugin...")
+	assert.Contains(t, out, "✓ my-plugin installed")
+	assert.NotContains(t, out, "on claude")
+}
+
+// --- Platform-first output tests ---
+
+func TestInstall_PlatformFirstOutput_MultiAdapter(t *testing.T) {
+	fetcher := newFakeFetcher()
+	claude := newFakeAdapter("claude")
+	copilot := newFakeAdapter("copilot")
+
+	claude.findDirFunc = func(name string, scope platform.Scope) (string, error) {
+		return "/fake/plugins/" + name, nil
+	}
+	copilot.findDirFunc = func(name string, scope platform.Scope) (string, error) {
+		return "/fake/plugins/" + name, nil
+	}
+
+	fetcher.manifests["/fake/plugins/wingman"] = &manifest.Manifest{
+		Name:         "wingman",
+		Description:  "Main plugin",
+		Dependencies: []string{"speckit"},
+	}
+
+	deps := newTestDeps(newFakeRunner(), fetcher, []platform.Adapter{claude, copilot}, "")
+	installYes = true
+	installForce = false
+	installScope = "user"
+	targetFlag = ""
+
+	err := runInstall("wingman", deps)
+	require.NoError(t, err)
+
+	out := deps.stdout.(*bytes.Buffer).String()
+
+	// Verify platform-first ordering: claude section appears before copilot section
+	claudeIdx := strings.Index(out, "claude:")
+	copilotIdx := strings.Index(out, "copilot:")
+	require.NotEqual(t, -1, claudeIdx, "claude header not found")
+	require.NotEqual(t, -1, copilotIdx, "copilot header not found")
+	assert.Less(t, claudeIdx, copilotIdx, "claude section should appear before copilot section")
+
+	// Verify both platforms install wingman and speckit
+	assert.Contains(t, out, "  Installing wingman...")
+	assert.Contains(t, out, "✓ wingman installed")
+	assert.Contains(t, out, "Installing dependency speckit...")
+	assert.Contains(t, out, "✓ speckit installed")
+
+	// Verify no "on {platform}" suffix in install messages
+	assert.NotContains(t, out, "on claude")
+	assert.NotContains(t, out, "on copilot")
+
+	// Both adapters should have installed both packages
+	assert.Len(t, claude.installedCmds, 2)
+	assert.Len(t, copilot.installedCmds, 2)
+
+	// Summary
+	assert.Contains(t, out, "Installed 2 packages")
+}
+
+func TestInstall_PlatformFirst_MainFailSkipsDeps(t *testing.T) {
+	fetcher := newFakeFetcher()
+	claude := newFakeAdapter("claude")
+	copilot := newFakeAdapter("copilot")
+
+	// copilot fails to install main package
+	copilot.installFunc = func(source string, scope platform.Scope) error {
+		return fmt.Errorf("copilot install failed")
+	}
+
+	claude.findDirFunc = func(name string, scope platform.Scope) (string, error) {
+		return "/fake/plugins/" + name, nil
+	}
+
+	fetcher.manifests["/fake/plugins/wingman"] = &manifest.Manifest{
+		Name:         "wingman",
+		Description:  "Main plugin",
+		Dependencies: []string{"speckit"},
+	}
+
+	deps := newTestDeps(newFakeRunner(), fetcher, []platform.Adapter{claude, copilot}, "")
+	installYes = true
+	installForce = false
+	installScope = "user"
+	targetFlag = ""
+
+	err := runInstall("wingman", deps)
+	require.NoError(t, err)
+
+	out := deps.stdout.(*bytes.Buffer).String()
+
+	// Claude succeeds with deps
+	assert.Contains(t, out, "claude:")
+	assert.Contains(t, out, "✓ wingman installed")
+	assert.Contains(t, out, "✓ speckit installed")
+
+	// Copilot fails main → deps skipped
+	assert.Contains(t, out, "copilot:")
+	assert.Contains(t, out, "✗ wingman failed")
+
+	// Claude installed both, copilot only attempted main
+	assert.Len(t, claude.installedCmds, 2)
+	assert.Len(t, copilot.installedCmds, 1)
+}
+
+func TestInstall_PlatformFirst_DepErrorDoesNotAbortNextAdapter(t *testing.T) {
+	fetcher := newFakeFetcher()
+	claude := newFakeAdapter("claude")
+	copilot := newFakeAdapter("copilot")
+
+	// claude fails dep installs, copilot succeeds
+	callCount := 0
+	claude.installFunc = func(source string, scope platform.Scope) error {
+		callCount++
+		if callCount > 1 {
+			return fmt.Errorf("dep install failed on claude")
+		}
+		return nil
+	}
+
+	claude.findDirFunc = func(name string, scope platform.Scope) (string, error) {
+		return "/fake/plugins/" + name, nil
+	}
+	copilot.findDirFunc = func(name string, scope platform.Scope) (string, error) {
+		return "/fake/plugins/" + name, nil
+	}
+
+	fetcher.manifests["/fake/plugins/wingman"] = &manifest.Manifest{
+		Name:         "wingman",
+		Description:  "Main plugin",
+		Dependencies: []string{"speckit"},
+	}
+
+	deps := newTestDeps(newFakeRunner(), fetcher, []platform.Adapter{claude, copilot}, "")
+	installYes = true
+	installForce = false
+	installScope = "user"
+	targetFlag = ""
+
+	err := runInstall("wingman", deps)
+	require.NoError(t, err)
+
+	out := deps.stdout.(*bytes.Buffer).String()
+
+	// Both platform headers present
+	assert.Contains(t, out, "claude:")
+	assert.Contains(t, out, "copilot:")
+
+	// Copilot still installed both (dep error on claude didn't abort copilot)
+	assert.Len(t, copilot.installedCmds, 2)
 }

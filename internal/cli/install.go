@@ -162,62 +162,58 @@ func runInstall(specifier string, deps *installDeps) error {
 		}
 	}
 
-	// 5. Initialize install summary
+	// 5. Initialize tracking
 	cliNames := make([]string, len(adapters))
 	for i, a := range adapters {
 		cliNames[i] = a.Name()
 	}
-	summary := &InstallSummary{CLIs: cliNames}
-	visited := make(map[string]bool)
+	manifestCache := make(map[string]*manifest.Manifest)
+	resultMap := make(map[string]*InstallResult)
+	var resultOrder []string
 
-	// 5. Install the package on each adapter
-	result := InstallResult{
-		PackageName: resolved.Name,
-		CLIResults:  make(map[string]error),
-	}
+	// 6. Platform-first install loop
 	for _, a := range adapters {
-		fmt.Fprintf(out, "Installing %s on %s...\n", resolved.Name, a.Name())
+		fmt.Fprintf(out, "%s:\n", a.Name())
+
+		// Install main package
+		fmt.Fprintf(out, "  Installing %s...", resolved.Name)
 		if installErr := a.Install(installSource, scope); installErr != nil {
-			result.CLIResults[a.Name()] = fmt.Errorf("%s install %s failed: %w", a.Name(), installSource, installErr)
-			fmt.Fprintf(out, "  ✗ %s failed on %s\n", resolved.Name, a.Name())
-		} else {
-			result.CLIResults[a.Name()] = nil
-			fmt.Fprintf(out, "  ✓ %s installed on %s\n", resolved.Name, a.Name())
-		}
-	}
-	visited[resolved.Name] = true
-
-	// 6. Find local plugin dir and read manifest for transitive deps
-	var m *manifest.Manifest
-	for _, a := range adapters {
-		if result.CLIResults[a.Name()] != nil {
-			continue // skip failed CLIs
-		}
-		pluginDir, err := a.FindPluginDir(resolved.Name, scope)
-		if err != nil {
+			ensureResult(resultMap, &resultOrder, resolved.Name)
+			resultMap[resolved.Name].CLIResults[a.Name()] = fmt.Errorf("%s install %s failed: %w", a.Name(), installSource, installErr)
+			fmt.Fprintf(out, " ✗ %s failed\n", resolved.Name)
 			continue
 		}
-		m, err = deps.fetcher.FetchManifest(pluginDir)
-		if err != nil {
-			fmt.Fprintf(deps.stderr, "Warning: failed to read manifest for %s: %v\n", resolved.Name, err)
-		}
-		if m != nil {
-			result.Dependencies = m.Dependencies
-			break
+		ensureResult(resultMap, &resultOrder, resolved.Name)
+		resultMap[resolved.Name].CLIResults[a.Name()] = nil
+		fmt.Fprintf(out, " ✓ %s installed\n", resolved.Name)
+
+		// Read manifest (use cache or read from disk)
+		m := getOrCacheManifest(resolved.Name, manifestCache, a, scope, deps.fetcher, deps.stderr)
+
+		// Resolve transitive deps for this single adapter
+		if m != nil && len(m.Dependencies) > 0 {
+			visited := map[string]bool{resolved.Name: true}
+			if depErr := resolveTransitiveDeps(a, scope, m, deps.fetcher, visited, resultMap, &resultOrder, manifestCache, "    ", out, deps.stderr); depErr != nil {
+				fmt.Fprintf(deps.stderr, "Warning: %s: transitive dependency resolution incomplete: %v\n", a.Name(), depErr)
+			}
 		}
 	}
-	summary.addResult(result)
 
-	// 7. Resolve transitive dependencies (if any)
-	if m != nil && len(m.Dependencies) > 0 {
-		if err := resolveTransitiveDeps(adapters, scope, m, deps.fetcher, visited, summary, out, deps.stderr); err != nil {
-			// Continue — partial install is OK. Error is already reported in summary.
-			fmt.Fprintf(deps.stderr, "Warning: transitive dependency resolution incomplete: %v\n", err)
+	// Populate main package dependencies from cached manifest
+	if m, ok := manifestCache[resolved.Name]; ok && m != nil {
+		if r, exists := resultMap[resolved.Name]; exists {
+			r.Dependencies = m.Dependencies
 		}
+	}
+
+	// 7. Build summary from accumulated results
+	summary := &InstallSummary{CLIs: cliNames}
+	for _, name := range resultOrder {
+		summary.addResult(*resultMap[name])
 	}
 
 	// 8. Check system requirements (unless --force)
-	if m != nil && len(m.SystemRequirements) > 0 && !installForce {
+	if m, ok := manifestCache[resolved.Name]; ok && m != nil && len(m.SystemRequirements) > 0 && !installForce {
 		fmt.Fprintln(out, "\nSystem requirements check:")
 		reqs := make([]syscheck.RequirementInput, len(m.SystemRequirements))
 		for i, sr := range m.SystemRequirements {
@@ -243,7 +239,7 @@ func runInstall(specifier string, deps *installDeps) error {
 	return nil
 }
 
-func resolveTransitiveDeps(adapters []platform.Adapter, scope platform.Scope, m *manifest.Manifest, fetcher manifest.ManifestFetcher, visited map[string]bool, summary *InstallSummary, out io.Writer, stderr io.Writer) error {
+func resolveTransitiveDeps(adapter platform.Adapter, scope platform.Scope, m *manifest.Manifest, fetcher manifest.ManifestFetcher, visited map[string]bool, resultMap map[string]*InstallResult, resultOrder *[]string, manifestCache map[string]*manifest.Manifest, indent string, out io.Writer, stderr io.Writer) error {
 	for _, dep := range m.Dependencies {
 		resolved, err := resolver.Resolve(dep)
 		if err != nil {
@@ -269,58 +265,66 @@ func resolveTransitiveDeps(adapters []platform.Adapter, scope platform.Scope, m 
 				marketplaceName = resolved.MarketplaceName
 				marketplaceSource = resolved.MarketplaceName
 			}
-			for _, a := range adapters {
-				if ensureErr := a.EnsureMarketplace(marketplaceName, marketplaceSource); ensureErr != nil {
-					fmt.Fprintf(stderr, "⚠ %s: failed to ensure marketplace %q: %v\n", a.Name(), marketplaceName, ensureErr)
-				}
+			if ensureErr := adapter.EnsureMarketplace(marketplaceName, marketplaceSource); ensureErr != nil {
+				fmt.Fprintf(stderr, "⚠ %s: failed to ensure marketplace %q: %v\n", adapter.Name(), marketplaceName, ensureErr)
 			}
 		}
 
-		// Install dependency on each adapter
-		result := InstallResult{
-			PackageName: resolved.Name,
-			CLIResults:  make(map[string]error),
+		// Install dependency
+		ensureResult(resultMap, resultOrder, resolved.Name)
+		fmt.Fprintf(out, "%sInstalling dependency %s...", indent, resolved.Name)
+		if installErr := adapter.Install(depSource, scope); installErr != nil {
+			resultMap[resolved.Name].CLIResults[adapter.Name()] = fmt.Errorf("%s install %s failed: %w", adapter.Name(), depSource, installErr)
+			fmt.Fprintf(out, " ✗ %s failed\n", resolved.Name)
+			continue
 		}
-		for _, a := range adapters {
-			fmt.Fprintf(out, "Installing dependency %s on %s...\n", resolved.Name, a.Name())
-			if installErr := a.Install(depSource, scope); installErr != nil {
-				result.CLIResults[a.Name()] = fmt.Errorf("%s install %s failed: %w", a.Name(), depSource, installErr)
-				fmt.Fprintf(out, "  ✗ %s failed on %s\n", resolved.Name, a.Name())
-			} else {
-				result.CLIResults[a.Name()] = nil
-				fmt.Fprintf(out, "  ✓ %s installed on %s\n", resolved.Name, a.Name())
-			}
-		}
+		resultMap[resolved.Name].CLIResults[adapter.Name()] = nil
+		fmt.Fprintf(out, " ✓ %s installed\n", resolved.Name)
 
-		// Find plugin dir and read manifest for further transitive deps
-		var depManifest *manifest.Manifest
-		for _, a := range adapters {
-			if result.CLIResults[a.Name()] != nil {
-				continue
-			}
-			pluginDir, err := a.FindPluginDir(resolved.Name, scope)
-			if err != nil {
-				continue
-			}
-			depManifest, err = fetcher.FetchManifest(pluginDir)
-			if err != nil {
-				fmt.Fprintf(stderr, "Warning: failed to read manifest for %s: %v\n", resolved.Name, err)
-			}
-			if depManifest != nil {
-				result.Dependencies = depManifest.Dependencies
-				break
-			}
+		// Read manifest for further transitive deps
+		depManifest := getOrCacheManifest(resolved.Name, manifestCache, adapter, scope, fetcher, stderr)
+		if depManifest != nil {
+			resultMap[resolved.Name].Dependencies = depManifest.Dependencies
 		}
-		summary.addResult(result)
 
 		// Recurse for transitive deps
 		if depManifest != nil && len(depManifest.Dependencies) > 0 {
-			if err := resolveTransitiveDeps(adapters, scope, depManifest, fetcher, visited, summary, out, stderr); err != nil {
+			if err := resolveTransitiveDeps(adapter, scope, depManifest, fetcher, visited, resultMap, resultOrder, manifestCache, indent+"  ", out, stderr); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// ensureResult creates an InstallResult in the result map if it doesn't exist yet,
+// and appends the package name to the result order for deterministic summary output.
+func ensureResult(resultMap map[string]*InstallResult, resultOrder *[]string, name string) {
+	if _, exists := resultMap[name]; !exists {
+		resultMap[name] = &InstallResult{PackageName: name, CLIResults: make(map[string]error)}
+		*resultOrder = append(*resultOrder, name)
+	}
+}
+
+// getOrCacheManifest reads a manifest from cache or from disk via the adapter's plugin directory.
+// Only non-nil manifests are cached so that subsequent adapters can retry on failure.
+func getOrCacheManifest(name string, cache map[string]*manifest.Manifest, a platform.Adapter, scope platform.Scope, fetcher manifest.ManifestFetcher, stderr io.Writer) *manifest.Manifest {
+	if m, ok := cache[name]; ok {
+		return m
+	}
+	pluginDir, err := a.FindPluginDir(name, scope)
+	if err != nil {
+		return nil
+	}
+	m, err := fetcher.FetchManifest(pluginDir)
+	if err != nil {
+		fmt.Fprintf(stderr, "Warning: failed to read manifest for %s: %v\n", name, err)
+		return nil
+	}
+	if m != nil {
+		cache[name] = m
+	}
+	return m
 }
 
 // resolveInstallSource resolves a ResolvedSource to an installable source string.
