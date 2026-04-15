@@ -34,6 +34,7 @@ func TestCheck_AllDepsSatisfied(t *testing.T) {
 		fetcher:  fetcher,
 		adapters: []platform.Adapter{adapter},
 		stdout:   &bytes.Buffer{},
+		noColor:  true,
 	}
 
 	checkJSON = false
@@ -67,6 +68,7 @@ func TestCheck_RequiredMissing(t *testing.T) {
 		fetcher:  fetcher,
 		adapters: []platform.Adapter{adapter},
 		stdout:   &bytes.Buffer{},
+		noColor:  true,
 	}
 
 	checkJSON = false
@@ -91,6 +93,7 @@ func TestCheck_SinglePlugin(t *testing.T) {
 		fetcher:  newFakeFetcher(),
 		adapters: []platform.Adapter{adapter},
 		stdout:   &bytes.Buffer{},
+		noColor:  true,
 	}
 
 	checkJSON = false
@@ -109,6 +112,7 @@ func TestCheck_NotInstalled(t *testing.T) {
 		fetcher:  newFakeFetcher(),
 		adapters: []platform.Adapter{adapter},
 		stdout:   &bytes.Buffer{},
+		noColor:  true,
 	}
 
 	installScope = "user"
@@ -132,6 +136,7 @@ func TestCheck_JSONOutput(t *testing.T) {
 		fetcher:  newFakeFetcher(),
 		adapters: []platform.Adapter{adapter},
 		stdout:   &bytes.Buffer{},
+		noColor:  true,
 	}
 
 	checkJSON = true
@@ -171,6 +176,7 @@ func TestCheck_RecommendedMissing_StillOK(t *testing.T) {
 		fetcher:  fetcher,
 		adapters: []platform.Adapter{adapter},
 		stdout:   &bytes.Buffer{},
+		noColor:  true,
 	}
 
 	checkJSON = false
@@ -223,6 +229,7 @@ func TestCheck_CrossPlatform_DepMissingOnOne(t *testing.T) {
 		fetcher:  fetcher,
 		adapters: []platform.Adapter{copilotAdapter, claudeAdapter},
 		stdout:   &buf,
+		noColor:  true,
 	}
 
 	checkJSON = false
@@ -236,7 +243,7 @@ func TestCheck_CrossPlatform_DepMissingOnOne(t *testing.T) {
 	out := buf.String()
 	assert.Contains(t, out, "copilot:")
 	assert.Contains(t, out, "claude:")
-	assert.Contains(t, out, "✗ dep-a (NOT installed)")
+	assert.Contains(t, out, "not installed (required)")
 }
 
 func TestCheck_SinglePlugin_MultiPlatform(t *testing.T) {
@@ -280,6 +287,7 @@ func TestCheck_SinglePlugin_MultiPlatform(t *testing.T) {
 		fetcher:  fetcher,
 		adapters: []platform.Adapter{copilotAdapter, claudeAdapter},
 		stdout:   &buf,
+		noColor:  true,
 	}
 
 	checkJSON = false
@@ -293,7 +301,7 @@ func TestCheck_SinglePlugin_MultiPlatform(t *testing.T) {
 	out := buf.String()
 	assert.Contains(t, out, "copilot:")
 	assert.Contains(t, out, "claude:")
-	assert.Contains(t, out, "✗ dep-a (NOT installed)")
+	assert.Contains(t, out, "not installed (required)")
 }
 
 func TestCheck_CrossPlatform_JSON(t *testing.T) {
@@ -336,6 +344,7 @@ func TestCheck_CrossPlatform_JSON(t *testing.T) {
 		fetcher:  fetcher,
 		adapters: []platform.Adapter{copilotAdapter, claudeAdapter},
 		stdout:   &buf,
+		noColor:  true,
 	}
 
 	checkJSON = true
@@ -366,6 +375,7 @@ func TestCheck_PlatformHeaderInOutput(t *testing.T) {
 		fetcher:  newFakeFetcher(),
 		adapters: []platform.Adapter{adapter},
 		stdout:   &buf,
+		noColor:  true,
 	}
 
 	checkJSON = false
@@ -377,5 +387,6 @@ func TestCheck_PlatformHeaderInOutput(t *testing.T) {
 
 	out := buf.String()
 	assert.Contains(t, out, "claude:")
-	assert.Contains(t, out, "  my-plugin: ✓ no dependencies")
+	assert.Contains(t, out, "✓ my-plugin")
+	assert.Contains(t, out, "no dependencies")
 }

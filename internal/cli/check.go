@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
+	"strings"
 
 	"github.com/ai-summon/summon/internal/manifest"
 	"github.com/ai-summon/summon/internal/platform"
 	"github.com/ai-summon/summon/internal/syscheck"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )
 
@@ -19,6 +22,7 @@ type checkDeps struct {
 	fetcher  manifest.ManifestFetcher
 	adapters []platform.Adapter // if non-nil, use instead of auto-detecting
 	stdout   io.Writer
+	noColor  bool
 }
 
 func defaultCheckDeps() *checkDeps {
@@ -132,7 +136,7 @@ func runCheckAll(deps *checkDeps) error {
 		return nil
 	}
 
-	printCheckOutputs(deps.stdout, outputs)
+	printCheckOutputs(deps, outputs)
 
 	if hasIssues {
 		return fmt.Errorf("health check failed: required dependencies missing")
@@ -188,7 +192,7 @@ func runCheckSingle(name string, deps *checkDeps) error {
 		return fmt.Errorf("package %q is not installed", name)
 	}
 
-	printCheckOutputs(deps.stdout, outputs)
+	printCheckOutputs(deps, outputs)
 
 	if hasIssues {
 		return fmt.Errorf("health check failed for %s", name)
@@ -260,7 +264,8 @@ func checkPlugin(p platform.InstalledPlugin, m *manifest.Manifest, installed map
 	return result
 }
 
-func printCheckOutputs(w io.Writer, outputs []checkOutput) {
+func printCheckOutputs(deps *checkDeps, outputs []checkOutput) {
+	w := deps.stdout
 	if checkJSON {
 		result := make(map[string][]checkResult)
 		for _, o := range outputs {
@@ -271,51 +276,166 @@ func printCheckOutputs(w io.Writer, outputs []checkOutput) {
 		return
 	}
 
-	fmt.Fprintln(w, "Checking installed plugins...")
+	// Sort platforms for deterministic output
+	sort.Slice(outputs, func(i, j int) bool {
+		return outputs[i].CLI < outputs[j].CLI
+	})
+
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
+	checkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	dimStyle := lipgloss.NewStyle().Faint(true)
+	if deps.noColor {
+		headerStyle = lipgloss.NewStyle()
+		checkStyle = lipgloss.NewStyle()
+		errorStyle = lipgloss.NewStyle()
+		warnStyle = lipgloss.NewStyle()
+		dimStyle = lipgloss.NewStyle()
+	}
+
 	fmt.Fprintln(w)
 	for _, o := range outputs {
-		fmt.Fprintf(w, "%s:\n", o.CLI)
+		// Sort plugins within each platform
+		sort.Slice(o.Results, func(i, j int) bool {
+			return o.Results[i].Name < o.Results[j].Name
+		})
+
+		fmt.Fprintf(w, "%s\n", headerStyle.Render(o.CLI+":"))
 		if len(o.Results) == 0 {
 			fmt.Fprintln(w, "  (none)")
-		} else {
-			for i, r := range o.Results {
-				printCheckResult(w, r)
-				if i < len(o.Results)-1 {
-					fmt.Fprintln(w)
-				}
+			fmt.Fprintln(w)
+			continue
+		}
+
+		// Find max plugin name width for alignment
+		maxNameLen := 0
+		for _, r := range o.Results {
+			if len(r.Name) > maxNameLen {
+				maxNameLen = len(r.Name)
 			}
+		}
+
+		for _, r := range o.Results {
+			printCheckResult(w, r, maxNameLen, checkStyle, errorStyle, warnStyle, dimStyle)
 		}
 		fmt.Fprintln(w)
 	}
 }
 
-func printCheckResult(w io.Writer, r checkResult) {
-	fmt.Fprintf(w, "  %s:", r.Name)
+// pluginSummary returns the status icon, summary text, and style for a plugin.
+func pluginSummary(r checkResult, checkStyle, errorStyle, warnStyle lipgloss.Style) (string, string, lipgloss.Style) {
 	if len(r.PluginDeps) == 0 && len(r.SystemDeps) == 0 {
-		fmt.Fprintln(w, " ✓ no dependencies")
+		return checkStyle.Render("✓"), "no dependencies", checkStyle
+	}
+
+	hasRequiredMissing := false
+	hasWarnings := false
+
+	for _, d := range r.PluginDeps {
+		if !d.Installed {
+			hasRequiredMissing = true
+		}
+	}
+	for _, s := range r.SystemDeps {
+		if !s.Found {
+			if s.Optional {
+				hasWarnings = true
+			} else {
+				hasRequiredMissing = true
+			}
+		}
+	}
+
+	if hasRequiredMissing {
+		return errorStyle.Render("✗"), "issues found", errorStyle
+	}
+	if hasWarnings {
+		return warnStyle.Render("⚠"), "warnings", warnStyle
+	}
+	return checkStyle.Render("✓"), "healthy", checkStyle
+}
+
+func printCheckResult(w io.Writer, r checkResult, maxNameLen int, checkStyle, errorStyle, warnStyle, dimStyle lipgloss.Style) {
+	icon, summary, summaryStyle := pluginSummary(r, checkStyle, errorStyle, warnStyle)
+	padding := strings.Repeat(" ", maxNameLen-len(r.Name)+2)
+	fmt.Fprintf(w, "  %s %s%s%s\n", icon, r.Name, padding, dimStyle.Render(summary))
+
+	if len(r.PluginDeps) == 0 && len(r.SystemDeps) == 0 {
 		return
 	}
-	fmt.Fprintln(w)
-	if len(r.PluginDeps) > 0 {
-		fmt.Fprintln(w, "    Plugin deps:")
-		for _, d := range r.PluginDeps {
-			if d.Installed {
-				fmt.Fprintf(w, "      ✓ %s (installed)\n", d.Name)
-			} else {
-				fmt.Fprintf(w, "      ✗ %s (NOT installed) [required]\n", d.Name)
-			}
+
+	// Collect all dependency rows
+	type depRow struct {
+		name   string
+		status string
+		icon   string
+		style  lipgloss.Style
+	}
+
+	var rows []depRow
+
+	for _, d := range r.PluginDeps {
+		if d.Installed {
+			rows = append(rows, depRow{
+				name:   d.Name,
+				status: "installed",
+				icon:   checkStyle.Render("✓"),
+				style:  dimStyle,
+			})
+		} else {
+			rows = append(rows, depRow{
+				name:   d.Name,
+				status: "not installed (required)",
+				icon:   errorStyle.Render("✗"),
+				style:  summaryStyle,
+			})
 		}
 	}
-	if len(r.SystemDeps) > 0 {
-		fmt.Fprintln(w, "    System deps:")
-		for _, s := range r.SystemDeps {
-			if s.Found {
-				fmt.Fprintf(w, "      ✓ %s (found: %s)\n", s.Name, s.Path)
-			} else if s.Optional {
-				fmt.Fprintf(w, "      ✗ %s (not found) [recommended: %s]\n", s.Name, s.Reason)
-			} else {
-				fmt.Fprintf(w, "      ✗ %s (not found) [required]\n", s.Name)
+
+	for _, s := range r.SystemDeps {
+		if s.Found {
+			rows = append(rows, depRow{
+				name:   s.Name,
+				status: s.Path,
+				icon:   checkStyle.Render("✓"),
+				style:  dimStyle,
+			})
+		} else if s.Optional {
+			reason := "recommended"
+			if s.Reason != "" {
+				reason = "recommended: " + s.Reason
 			}
+			rows = append(rows, depRow{
+				name:   s.Name,
+				status: "not found (" + reason + ")",
+				icon:   warnStyle.Render("⚠"),
+				style:  warnStyle,
+			})
+		} else {
+			rows = append(rows, depRow{
+				name:   s.Name,
+				status: "not found (required)",
+				icon:   errorStyle.Render("✗"),
+				style:  errorStyle,
+			})
 		}
+	}
+
+	// Find max dep name width for column alignment
+	maxDepLen := 0
+	for _, row := range rows {
+		if len(row.name) > maxDepLen {
+			maxDepLen = len(row.name)
+		}
+	}
+
+	for i, row := range rows {
+		connector := "├──"
+		if i == len(rows)-1 {
+			connector = "└──"
+		}
+		depPadding := strings.Repeat(" ", maxDepLen-len(row.name)+2)
+		fmt.Fprintf(w, "      %s %s%s%s\n", dimStyle.Render(connector), row.name, depPadding, dimStyle.Render(row.status))
 	}
 }
