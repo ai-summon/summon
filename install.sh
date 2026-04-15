@@ -46,6 +46,10 @@ download() {
 }
 
 get_latest_version() {
+    if [ "${SUMMON_VERSION:-}" ]; then
+        echo "$SUMMON_VERSION"
+        return
+    fi
     url="https://api.github.com/repos/${REPO}/releases/latest"
     tmpfile="${TMPDIR}/api_response"
     download "$url" "$tmpfile"
@@ -128,8 +132,9 @@ main() {
     printf "Installing summon %s\n" "$VERSION"
 
     ARCHIVE="summon-${OS}-${ARCH}.tar.gz"
-    DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/${ARCHIVE}"
-    CHECKSUMS_URL="https://github.com/${REPO}/releases/download/${VERSION}/checksums.txt"
+    DOWNLOAD_BASE="${SUMMON_DOWNLOAD_BASE:-https://github.com/${REPO}/releases/download}"
+    DOWNLOAD_URL="${DOWNLOAD_BASE}/${VERSION}/${ARCHIVE}"
+    CHECKSUMS_URL="${DOWNLOAD_BASE}/${VERSION}/checksums.txt"
 
     printf "Downloading %s...\n" "$ARCHIVE"
     download "$DOWNLOAD_URL" "${TMPDIR}/${ARCHIVE}" || err "Failed to download ${ARCHIVE} (HTTP 404). Version ${VERSION} may not exist."

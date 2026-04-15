@@ -1,0 +1,205 @@
+name: Test Installers
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'install.sh'
+      - 'install.ps1'
+      - '.github/workflows/test-install.yml'
+  pull_request:
+    paths:
+      - 'install.sh'
+      - 'install.ps1'
+      - '.github/workflows/test-install.yml'
+  workflow_dispatch:
+
+jobs:
+  test-unix:
+    name: Test ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux (amd64)
+            os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+          - name: macOS (arm64)
+            os: macos-latest
+            goos: darwin
+            goarch: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Build binary
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -ldflags "-s -w -X main.version=v0.0.1-test" -o summon ./cmd/summon
+
+      - name: Create test release assets
+        run: |
+          VERSION="v0.0.1-test"
+          ARCHIVE="summon-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz"
+          mkdir -p "serve/${VERSION}"
+          tar czf "serve/${VERSION}/${ARCHIVE}" summon
+          python3 -c "
+          import hashlib, os
+          d = 'serve/${VERSION}'
+          for f in sorted(os.listdir(d)):
+              if f.startswith('summon-'):
+                  h = hashlib.sha256(open(os.path.join(d, f), 'rb').read()).hexdigest()
+                  print(f'{h}  {f}')
+          " > "serve/${VERSION}/checksums.txt"
+          echo "=== checksums.txt ==="
+          cat "serve/${VERSION}/checksums.txt"
+
+      - name: Test default install
+        env:
+          SUMMON_VERSION: v0.0.1-test
+          SUMMON_DOWNLOAD_BASE: http://localhost:8080
+          SUMMON_NO_MODIFY_PATH: "1"
+        run: |
+          cd serve && python3 -m http.server 8080 &
+          SERVER_PID=$!
+          sleep 2
+          curl -sf http://localhost:8080/v0.0.1-test/checksums.txt || (echo "HTTP server not responding" && exit 1)
+          cd ..
+
+          sh install.sh
+
+          echo "=== Verifying default install ==="
+          "$HOME/.summon/bin/summon" --version
+          "$HOME/.summon/bin/summon" --version | grep -q "v0.0.1-test"
+          echo "✓ Default install passed"
+
+          kill $SERVER_PID 2>/dev/null || true
+
+      - name: Test custom install dir
+        env:
+          SUMMON_VERSION: v0.0.1-test
+          SUMMON_DOWNLOAD_BASE: http://localhost:8080
+          SUMMON_NO_MODIFY_PATH: "1"
+          SUMMON_INSTALL_DIR: /tmp/custom-summon
+        run: |
+          rm -rf /tmp/custom-summon
+
+          cd serve && python3 -m http.server 8080 &
+          SERVER_PID=$!
+          sleep 2
+          cd ..
+
+          sh install.sh
+
+          echo "=== Verifying custom install dir ==="
+          /tmp/custom-summon/bin/summon --version
+          /tmp/custom-summon/bin/summon --version | grep -q "v0.0.1-test"
+          echo "✓ Custom install dir passed"
+
+          kill $SERVER_PID 2>/dev/null || true
+
+  test-windows:
+    name: Test Windows (amd64)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Build and prepare assets
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          GOOS: windows
+          GOARCH: amd64
+        run: |
+          go build -ldflags "-s -w -X main.version=v0.0.1-test" -o summon.exe ./cmd/summon
+          VERSION="v0.0.1-test"
+          ARCHIVE="summon-windows-amd64.zip"
+          mkdir -p "serve/${VERSION}"
+          python -c "
+          import zipfile
+          with zipfile.ZipFile('serve/${VERSION}/${ARCHIVE}', 'w', zipfile.ZIP_DEFLATED) as zf:
+              zf.write('summon.exe')
+          "
+          python -c "
+          import hashlib, os
+          d = 'serve/${VERSION}'
+          for f in sorted(os.listdir(d)):
+              if f.startswith('summon-'):
+                  h = hashlib.sha256(open(os.path.join(d, f), 'rb').read()).hexdigest()
+                  print(f'{h}  {f}')
+          " > "serve/${VERSION}/checksums.txt"
+          cat "serve/${VERSION}/checksums.txt"
+
+      - name: Test default install
+        shell: powershell
+        env:
+          SUMMON_VERSION: v0.0.1-test
+          SUMMON_DOWNLOAD_BASE: http://localhost:8080
+          SUMMON_NO_MODIFY_PATH: "1"
+        run: |
+          $server = Start-Process python -ArgumentList "-m", "http.server", "8080" -WorkingDirectory "serve" -PassThru -NoNewWindow
+          Start-Sleep -Seconds 3
+
+          try {
+              .\install.ps1
+
+              Write-Host "=== Verifying default install ==="
+              $output = & "$HOME\.summon\bin\summon.exe" --version
+              Write-Host $output
+              if ($output -notmatch "v0.0.1-test") { throw "Version mismatch in output: $output" }
+              Write-Host "✓ Default install passed"
+          } finally {
+              Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Test custom install dir
+        shell: powershell
+        env:
+          SUMMON_VERSION: v0.0.1-test
+          SUMMON_DOWNLOAD_BASE: http://localhost:8080
+          SUMMON_NO_MODIFY_PATH: "1"
+          SUMMON_INSTALL_DIR: C:\temp\custom-summon
+        run: |
+          if (Test-Path "C:\temp\custom-summon") { Remove-Item -Recurse -Force "C:\temp\custom-summon" }
+
+          $server = Start-Process python -ArgumentList "-m", "http.server", "8080" -WorkingDirectory "serve" -PassThru -NoNewWindow
+          Start-Sleep -Seconds 3
+
+          try {
+              .\install.ps1
+
+              Write-Host "=== Verifying custom install dir ==="
+              $output = & "C:\temp\custom-summon\bin\summon.exe" --version
+              Write-Host $output
+              if ($output -notmatch "v0.0.1-test") { throw "Version mismatch in output: $output" }
+              Write-Host "✓ Custom install dir passed"
+          } finally {
+              Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+          }

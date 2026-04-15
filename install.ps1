@@ -19,6 +19,9 @@ function Get-SummonArch {
 }
 
 function Get-LatestVersion {
+    if ($env:SUMMON_VERSION) {
+        return $env:SUMMON_VERSION
+    }
     $url = "https://api.github.com/repos/$Repo/releases/latest"
     $response = Invoke-RestMethod -Uri $url -UseBasicParsing
     if (-not $response.tag_name) {
@@ -69,8 +72,9 @@ try {
     Write-Host "Installing summon $Version"
 
     $Archive = "summon-windows-${Arch}.zip"
-    $DownloadUrl = "https://github.com/$Repo/releases/download/$Version/$Archive"
-    $ChecksumsUrl = "https://github.com/$Repo/releases/download/$Version/checksums.txt"
+    $DownloadBase = if ($env:SUMMON_DOWNLOAD_BASE) { $env:SUMMON_DOWNLOAD_BASE } else { "https://github.com/$Repo/releases/download" }
+    $DownloadUrl = "$DownloadBase/$Version/$Archive"
+    $ChecksumsUrl = "$DownloadBase/$Version/checksums.txt"
 
     $ArchivePath = Join-Path $TempDir $Archive
     $ChecksumsPath = Join-Path $TempDir "checksums.txt"
