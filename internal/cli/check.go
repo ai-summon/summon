@@ -277,17 +277,25 @@ func printCheckOutputs(w io.Writer, outputs []checkOutput) {
 		fmt.Fprintf(w, "%s:\n", o.CLI)
 		if len(o.Results) == 0 {
 			fmt.Fprintln(w, "  (none)")
-			fmt.Fprintln(w)
-			continue
+		} else {
+			for i, r := range o.Results {
+				printCheckResult(w, r)
+				if i < len(o.Results)-1 {
+					fmt.Fprintln(w)
+				}
+			}
 		}
-		for _, r := range o.Results {
-			printCheckResult(w, r)
-		}
+		fmt.Fprintln(w)
 	}
 }
 
 func printCheckResult(w io.Writer, r checkResult) {
-	fmt.Fprintf(w, "  %s:\n", r.Name)
+	fmt.Fprintf(w, "  %s:", r.Name)
+	if len(r.PluginDeps) == 0 && len(r.SystemDeps) == 0 {
+		fmt.Fprintln(w, " ✓ no dependencies")
+		return
+	}
+	fmt.Fprintln(w)
 	if len(r.PluginDeps) > 0 {
 		fmt.Fprintln(w, "    Plugin deps:")
 		for _, d := range r.PluginDeps {
@@ -310,5 +318,4 @@ func printCheckResult(w io.Writer, r checkResult) {
 			}
 		}
 	}
-	fmt.Fprintln(w)
 }

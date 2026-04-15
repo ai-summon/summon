@@ -82,8 +82,8 @@ jobs:
           sh install.sh
 
           echo "=== Verifying default install ==="
-          "$HOME/.summon/bin/summon" --version
-          "$HOME/.summon/bin/summon" --version | grep -q "v0.0.1-test"
+          "$HOME/.local/bin/summon" --version
+          "$HOME/.local/bin/summon" --version | grep -q "v0.0.1-test"
           echo "Default install passed"
 
           kill $SERVER_PID 2>/dev/null || true
@@ -104,8 +104,8 @@ jobs:
           sh install.sh
 
           echo "=== Verifying custom install dir ==="
-          /tmp/custom-summon/bin/summon --version
-          /tmp/custom-summon/bin/summon --version | grep -q "v0.0.1-test"
+          /tmp/custom-summon/summon --version
+          /tmp/custom-summon/summon --version | grep -q "v0.0.1-test"
           echo "Custom install dir passed"
 
           kill $SERVER_PID 2>/dev/null || true
@@ -168,7 +168,7 @@ jobs:
               .\install.ps1
 
               Write-Host "=== Verifying default install ==="
-              $output = & "$HOME\.summon\bin\summon.exe" --version
+              $output = & "$HOME\.local\bin\summon.exe" --version
               Write-Host $output
               if ($output -notmatch "v0.0.1-test") { throw "Version mismatch in output: $output" }
               Write-Host "[PASS] Default install passed"
@@ -193,7 +193,7 @@ jobs:
               .\install.ps1
 
               Write-Host "=== Verifying custom install dir ==="
-              $output = & "C:\temp\custom-summon\bin\summon.exe" --version
+              $output = & "C:\temp\custom-summon\summon.exe" --version
               Write-Host $output
               if ($output -notmatch "v0.0.1-test") { throw "Version mismatch in output: $output" }
               Write-Host "[PASS] Custom install dir passed"

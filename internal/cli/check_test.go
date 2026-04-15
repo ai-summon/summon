@@ -377,5 +377,5 @@ func TestCheck_PlatformHeaderInOutput(t *testing.T) {
 
 	out := buf.String()
 	assert.Contains(t, out, "claude:")
-	assert.Contains(t, out, "  my-plugin:")
+	assert.Contains(t, out, "  my-plugin: ✓ no dependencies")
 }
