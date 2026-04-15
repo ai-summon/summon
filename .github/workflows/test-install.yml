@@ -172,7 +172,7 @@ jobs:
               $output = & "$HOME\.summon\bin\summon.exe" --version
               Write-Host $output
               if ($output -notmatch "v0.0.1-test") { throw "Version mismatch in output: $output" }
-              Write-Host "✓ Default install passed"
+              Write-Host "[PASS] Default install passed"
           } finally {
               Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
           }
@@ -197,7 +197,7 @@ jobs:
               $output = & "C:\temp\custom-summon\bin\summon.exe" --version
               Write-Host $output
               if ($output -notmatch "v0.0.1-test") { throw "Version mismatch in output: $output" }
-              Write-Host "✓ Custom install dir passed"
+              Write-Host "[PASS] Custom install dir passed"
           } finally {
               Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
           }
