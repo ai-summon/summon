@@ -111,11 +111,6 @@ func FetchLatestVersion(httpClient HTTPClient) (ReleaseInfo, error) {
 	}, nil
 }
 
-// stripVersion removes the "v" prefix from a version string.
-func stripVersion(v string) string {
-	return strings.TrimPrefix(v, "v")
-}
-
 // installerScriptName returns the installer script name for the current platform.
 func installerScriptName() string {
 	if runtime.GOOS == "windows" {
@@ -132,11 +127,21 @@ func installerCommand(scriptPath string) (string, []string) {
 	return "sh", []string{scriptPath}
 }
 
-// RunUpdate checks for a newer version and updates the binary if available.
-func RunUpdate(currentVersion string, paths SummonPaths, httpClient HTTPClient, runner ExecRunner, w io.Writer) (*UpdateResult, error) {
-	current := stripVersion(currentVersion)
+// StripVersion removes the "v" prefix from a version string.
+func StripVersion(v string) string {
+	return strings.TrimPrefix(v, "v")
+}
 
-	// Check latest version
+// IsUpToDate returns true if the current and latest versions match.
+func IsUpToDate(currentVersion, latestVersion string) bool {
+	return StripVersion(currentVersion) == StripVersion(latestVersion)
+}
+
+// RunUpdate checks for a newer version and updates the binary if available.
+// Deprecated: Use FetchLatestVersion + IsUpToDate + PerformUpdate for better control.
+func RunUpdate(currentVersion string, paths SummonPaths, httpClient HTTPClient, runner ExecRunner, w io.Writer) (*UpdateResult, error) {
+	current := StripVersion(currentVersion)
+
 	release, err := FetchLatestVersion(httpClient)
 	if err != nil {
 		return nil, err
@@ -147,59 +152,67 @@ func RunUpdate(currentVersion string, paths SummonPaths, httpClient HTTPClient, 
 		LatestVersion:  release.Version,
 	}
 
-	// Compare versions (simple string equality per spec)
-	if current == release.Version {
+	if IsUpToDate(currentVersion, release.Version) {
 		result.AlreadyUpToDate = true
 		return result, nil
 	}
 
 	fmt.Fprintf(w, "updating summon v%s → v%s\n", current, release.Version)
 
-	// Platform-specific preparation (rename on Windows, no-op on Unix)
-	if err := PrepareForUpdate(paths.BinaryPath); err != nil {
-		return nil, fmt.Errorf("failed to prepare for update: %w", err)
+	if err := PerformUpdate(release, paths, httpClient, runner, w); err != nil {
+		return nil, err
 	}
 
-	// Download installer script
+	result.Updated = true
+	return result, nil
+}
+
+// PerformUpdate downloads and installs a specific release version.
+// It assumes the caller has already determined that an update is needed.
+func PerformUpdate(release ReleaseInfo, paths SummonPaths, httpClient HTTPClient, runner ExecRunner, w io.Writer) error {
+	// Download installer script first, before any destructive operations
 	scriptName := installerScriptName()
 	scriptURL := fmt.Sprintf("%s/%s/%s", getRawGitHub(), release.TagName, scriptName)
 
 	req, err := http.NewRequest("GET", scriptURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create download request: %w", err)
+		return fmt.Errorf("failed to create download request: %w", err)
 	}
 	req.Header.Set("User-Agent", "summon-self-update")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("update failed: %w\nThe current installation has not been modified.", err)
+		return fmt.Errorf("update failed: %w\nThe current installation has not been modified.", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("update failed: could not download installer (HTTP %d)\nThe current installation has not been modified.", resp.StatusCode)
+		return fmt.Errorf("update failed: could not download installer (HTTP %d)\nThe current installation has not been modified.", resp.StatusCode)
 	}
 
 	scriptContent, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("update failed: could not read installer script\nThe current installation has not been modified.")
+		return fmt.Errorf("update failed: could not read installer script\nThe current installation has not been modified.")
 	}
 
-	// Write installer script to a temporary file
 	tmpFile, err := createTempScript(scriptContent, scriptName)
 	if err != nil {
-		return nil, fmt.Errorf("update failed: could not write installer script: %w", err)
+		return fmt.Errorf("update failed: could not write installer script: %w", err)
 	}
 	defer removeTempFile(tmpFile)
 
-	// Execute installer with env vars to control behavior
+	// Platform-specific preparation (rename on Windows, no-op on Unix).
+	// Done after download so we don't modify the binary if download fails.
+	if err := PrepareForUpdate(paths.BinaryPath); err != nil {
+		return fmt.Errorf("failed to prepare for update: %w", err)
+	}
+
 	cmdName, cmdArgs := installerCommand(tmpFile)
 	env := buildInstallerEnv(paths.BinaryDir, release.TagName)
 
-	if err := runner.RunWithEnv(cmdName, cmdArgs, env, w, w); err != nil {
-		return nil, fmt.Errorf("update failed: installer exited with error\nThe current installation has not been modified.")
+	if err := runner.RunWithEnv(cmdName, cmdArgs, env, io.Discard, w); err != nil {
+		return fmt.Errorf("update failed: installer exited with error")
 	}
 
-	result.Updated = true
-	return result, nil
+	return nil
 }

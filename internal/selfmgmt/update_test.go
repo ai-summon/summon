@@ -231,9 +231,9 @@ func TestRunUpdate_NetworkError(t *testing.T) {
 }
 
 func TestStripVersion(t *testing.T) {
-	assert.Equal(t, "0.1.0", stripVersion("v0.1.0"))
-	assert.Equal(t, "0.1.0", stripVersion("0.1.0"))
-	assert.Equal(t, "dev", stripVersion("dev"))
+	assert.Equal(t, "0.1.0", StripVersion("v0.1.0"))
+	assert.Equal(t, "0.1.0", StripVersion("0.1.0"))
+	assert.Equal(t, "dev", StripVersion("dev"))
 }
 
 func TestGetReleasesAPI_Default(t *testing.T) {

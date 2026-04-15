@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/ai-summon/summon/internal/selfmgmt"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )
 
@@ -17,6 +18,8 @@ type selfUpdateDeps struct {
 	pathResolver selfmgmt.PathResolver
 	stdout       io.Writer
 	stderr       io.Writer
+	// noColor disables colored output (used in tests).
+	noColor bool
 }
 
 func defaultSelfUpdateDeps() *selfUpdateDeps {
@@ -46,9 +49,40 @@ func init() {
 func runSelfUpdate(deps *selfUpdateDeps) error {
 	out := deps.stdout
 
-	// Resolve paths
+	infoStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))   // cyan
+	successStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2")) // green
+	if deps.noColor {
+		infoStyle = lipgloss.NewStyle()
+		successStyle = lipgloss.NewStyle()
+	}
+
+	infoPrefix := infoStyle.Render("info:")
+	successPrefix := successStyle.Render("success:")
+
+	// Get compiled-in version
+	currentVersion := rootCmd.Version
+	if currentVersion == "" {
+		currentVersion = "dev"
+	}
+	current := selfmgmt.StripVersion(currentVersion)
+
+	// Check latest version
+	fmt.Fprintf(out, "%s Checking for updates...\n", infoPrefix)
+
+	release, err := selfmgmt.FetchLatestVersion(deps.httpClient)
+	if err != nil {
+		return err
+	}
+
+	if selfmgmt.IsUpToDate(current, release.Version) {
+		fmt.Fprintf(out, "%s You're already on version v%s of summon (the latest version).\n", successPrefix, current)
+		return nil
+	}
+
+	fmt.Fprintf(out, "%s Updating summon v%s → v%s\n", infoPrefix, current, release.Version)
+
+	// Resolve paths only when an update is needed
 	var paths selfmgmt.SummonPaths
-	var err error
 	if deps.pathResolver != nil {
 		paths, err = selfmgmt.ResolvePathsWith(deps.pathResolver)
 	} else {
@@ -58,26 +92,10 @@ func runSelfUpdate(deps *selfUpdateDeps) error {
 		return fmt.Errorf("Error: %w", err)
 	}
 
-	// Get compiled-in version
-	currentVersion := rootCmd.Version
-	if currentVersion == "" {
-		currentVersion = "dev"
-	}
-
-	// Run update
-	result, err := selfmgmt.RunUpdate(currentVersion, paths, deps.httpClient, deps.execRunner, out)
-	if err != nil {
+	if err := selfmgmt.PerformUpdate(release, paths, deps.httpClient, deps.execRunner, out); err != nil {
 		return err
 	}
 
-	if result.AlreadyUpToDate {
-		fmt.Fprintf(out, "summon v%s is already up to date\n", result.CurrentVersion)
-		return nil
-	}
-
-	if result.Updated {
-		fmt.Fprintln(out, "updated successfully")
-	}
-
+	fmt.Fprintf(out, "%s Updated summon to v%s!\n", successPrefix, release.Version)
 	return nil
 }
