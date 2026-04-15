@@ -153,6 +153,7 @@ func TestClaudeAdapter_ListInstalledWithScope(t *testing.T) {
 	assert.Equal(t, "claude-plugin", result[0].Name)
 	assert.Equal(t, "claude-plugin@my-marketplace", result[0].Source)
 	assert.Equal(t, "project", result[0].Scope)
+	assert.Equal(t, "1.0.0", result[0].Version)
 	// claude plugin list does not support --scope; verify it's NOT passed
 	assert.NotContains(t, runner.Commands[0], "--scope")
 }

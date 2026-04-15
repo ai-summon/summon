@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/ai-summon/summon/internal/manifest"
@@ -50,6 +51,7 @@ type listOutput struct {
 
 type listPlugin struct {
 	Name         string   `json:"name"`
+	Version      string   `json:"version,omitempty"`
 	Dependencies []string `json:"dependencies"`
 }
 
@@ -81,9 +83,9 @@ func runList(deps *listDeps) error {
 
 		output := listOutput{CLI: a.Name()}
 		for _, p := range plugins {
-			lp := listPlugin{Name: p.Name}
+			lp := listPlugin{Name: p.Name, Version: p.Version}
 
-			// Read manifest from local plugin directory for dependency info
+			// Read manifest from local plugin directory for dependency info and version fallback
 			if deps.fetcher != nil {
 				actualScope := pluginScope(p, scope)
 				pluginDir, err := a.FindPluginDir(p.Name, actualScope)
@@ -96,6 +98,10 @@ func runList(deps *listDeps) error {
 								lp.Dependencies = append(lp.Dependencies, depName)
 							}
 						}
+					}
+					// Read version from plugin.json if not already set by adapter
+					if lp.Version == "" {
+						lp.Version = readPluginVersion(pluginDir)
 					}
 				}
 			}
@@ -124,7 +130,11 @@ func runList(deps *listDeps) error {
 			continue
 		}
 		for _, p := range o.Plugins {
-			fmt.Fprintf(out, "    %s\n", p.Name)
+			if p.Version != "" {
+				fmt.Fprintf(out, "    %s (v%s)\n", p.Name, p.Version)
+			} else {
+				fmt.Fprintf(out, "    %s\n", p.Name)
+			}
 			for _, dep := range p.Dependencies {
 				fmt.Fprintf(out, "    └── %s\n", dep)
 			}
@@ -145,3 +155,18 @@ func runList(deps *listDeps) error {
 
 // Suppress linter
 var _ = strings.TrimSpace
+
+// readPluginVersion reads the version from .claude-plugin/plugin.json in the plugin directory.
+func readPluginVersion(pluginDir string) string {
+	data, err := os.ReadFile(filepath.Join(pluginDir, ".claude-plugin", "plugin.json"))
+	if err != nil {
+		return ""
+	}
+	var meta struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return ""
+	}
+	return meta.Version
+}

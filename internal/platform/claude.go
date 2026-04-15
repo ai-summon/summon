@@ -145,6 +145,7 @@ func parseClaudePluginList(output []byte, plat string) ([]InstalledPlugin, error
 		}
 		plugins = append(plugins, InstalledPlugin{
 			Name:        name,
+			Version:     r.Version,
 			Source:      source,
 			Platform:    plat,
 			Scope:       r.Scope,

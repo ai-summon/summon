@@ -38,6 +38,7 @@ type MarketplaceInfo struct {
 // InstalledPlugin represents a plugin installed on a specific platform.
 type InstalledPlugin struct {
 	Name        string `json:"name"`
+	Version     string `json:"version,omitempty"`
 	Source      string `json:"source,omitempty"`
 	Platform    string `json:"platform"`
 	Scope       string `json:"scope,omitempty"`
