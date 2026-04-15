@@ -65,9 +65,10 @@ func runUpdate(name string, deps *updateDeps) error {
 		return err
 	}
 
-	// Find the plugin and capture per-adapter scopes
+	// Find the plugin and capture per-adapter scopes and sources
 	var source string
 	pluginScopes := make(map[string]platform.Scope)
+	pluginSources := make(map[string]string)
 	for _, a := range adapters {
 		plugins, _ := a.ListInstalled(scope)
 		for _, p := range plugins {
@@ -82,6 +83,7 @@ func runUpdate(name string, deps *updateDeps) error {
 					}
 				}
 				pluginScopes[a.Name()] = actualScope
+				pluginSources[a.Name()] = p.Source
 			}
 		}
 	}
@@ -96,9 +98,13 @@ func runUpdate(name string, deps *updateDeps) error {
 	for _, a := range adapters {
 		adapterScope, ok := pluginScopes[a.Name()]
 		if !ok {
-			adapterScope = scope
+			continue // plugin not installed on this adapter
 		}
-		if err := a.Update(name, adapterScope); err != nil {
+		updateID := name
+		if src := pluginSources[a.Name()]; src != "" {
+			updateID = src
+		}
+		if err := a.Update(updateID, adapterScope); err != nil {
 			fmt.Fprintf(deps.stderr, "  ✗ update failed on %s: %v\n", a.Name(), err)
 			updateErrors = append(updateErrors, fmt.Sprintf("%s: %v", a.Name(), err))
 		} else {

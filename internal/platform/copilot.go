@@ -56,6 +56,10 @@ func (c *CopilotAdapter) Update(name string, scope Scope) error {
 	if err := ValidateScope(c, scope); err != nil {
 		return err
 	}
+	// Strip @marketplace suffix — copilot CLI uses bare plugin names
+	if idx := strings.Index(name, "@"); idx > 0 {
+		name = name[:idx]
+	}
 	output, err := c.runner.Run("copilot", "plugin", "update", name)
 	if err != nil {
 		return cliError("copilot update", output, err)
