@@ -1,10 +1,10 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	"github.com/ai-summon/summon/internal/manifest"
 	"github.com/ai-summon/summon/internal/platform"
@@ -48,7 +48,7 @@ func runValidate(deps *validateDeps) error {
 	// 1. Parse summon.yaml
 	m, err := manifest.LoadFile("summon.yaml")
 	if err != nil {
-		if os.IsNotExist(err) || strings.Contains(err.Error(), "no such file") {
+		if errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("no summon.yaml found in current directory")
 		}
 		return fmt.Errorf("✗ summon.yaml syntax error: %w", err)

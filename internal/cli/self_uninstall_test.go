@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -53,7 +54,7 @@ func TestSelfUninstall_ConfirmedRuns(t *testing.T) {
 	selfUninstallConfirm = false
 
 	fs := newFakeSelfUninstallFS()
-	fs.statPaths["/home/user/.summon"] = true
+	fs.statPaths[filepath.Join("/home/user", ".summon")] = true
 	var stdout bytes.Buffer
 
 	deps := &selfUninstallDeps{
@@ -77,7 +78,7 @@ func TestSelfUninstall_DeclinedExitsCleanly(t *testing.T) {
 	selfUninstallConfirm = false
 
 	fs := newFakeSelfUninstallFS()
-	fs.statPaths["/home/user/.summon"] = true
+	fs.statPaths[filepath.Join("/home/user", ".summon")] = true
 	var stdout bytes.Buffer
 
 	deps := &selfUninstallDeps{
@@ -100,8 +101,9 @@ func TestSelfUninstall_DeclinedExitsCleanly(t *testing.T) {
 func TestSelfUninstall_PathsDisplayedBeforePrompt(t *testing.T) {
 	selfUninstallConfirm = false
 
+	configDir := filepath.Join("/home/user", ".summon")
 	fs := newFakeSelfUninstallFS()
-	fs.statPaths["/home/user/.summon"] = true
+	fs.statPaths[configDir] = true
 	var stdout bytes.Buffer
 
 	deps := &selfUninstallDeps{
@@ -120,7 +122,7 @@ func TestSelfUninstall_PathsDisplayedBeforePrompt(t *testing.T) {
 	output := stdout.String()
 	assert.Contains(t, output, "This will remove:")
 	assert.Contains(t, output, "/home/user/.local/bin/summon")
-	assert.Contains(t, output, "/home/user/.summon")
+	assert.Contains(t, output, configDir)
 }
 
 func TestSelfUninstall_ConfirmFlagSkipsPrompt(t *testing.T) {
@@ -128,7 +130,7 @@ func TestSelfUninstall_ConfirmFlagSkipsPrompt(t *testing.T) {
 	defer func() { selfUninstallConfirm = false }()
 
 	fs := newFakeSelfUninstallFS()
-	fs.statPaths["/home/user/.summon"] = true
+	fs.statPaths[filepath.Join("/home/user", ".summon")] = true
 	var stdout bytes.Buffer
 
 	deps := &selfUninstallDeps{

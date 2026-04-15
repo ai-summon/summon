@@ -2,6 +2,7 @@ package selfmgmt
 
 import (
 	"fmt"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -44,8 +45,8 @@ func TestResolvePathsWith_HappyPath(t *testing.T) {
 	paths, err := ResolvePathsWith(resolver)
 	require.NoError(t, err)
 	assert.Equal(t, "/usr/local/bin/summon", paths.BinaryPath)
-	assert.Equal(t, "/usr/local/bin", paths.BinaryDir)
-	assert.Equal(t, "/home/testuser/.summon", paths.ConfigDir)
+	assert.Equal(t, filepath.Dir("/usr/local/bin/summon"), paths.BinaryDir)
+	assert.Equal(t, filepath.Join("/home/testuser", ".summon"), paths.ConfigDir)
 }
 
 func TestResolvePathsWith_SymlinkResolution(t *testing.T) {
@@ -60,7 +61,7 @@ func TestResolvePathsWith_SymlinkResolution(t *testing.T) {
 	paths, err := ResolvePathsWith(resolver)
 	require.NoError(t, err)
 	assert.Equal(t, "/opt/summon/bin/summon", paths.BinaryPath)
-	assert.Equal(t, "/opt/summon/bin", paths.BinaryDir)
+	assert.Equal(t, filepath.Dir("/opt/summon/bin/summon"), paths.BinaryDir)
 }
 
 func TestResolvePathsWith_ExecutableError(t *testing.T) {

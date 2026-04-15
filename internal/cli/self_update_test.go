@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -91,17 +94,32 @@ func TestSelfUpdate_SuccessfulUpdate(t *testing.T) {
 	rootCmd.Version = "0.0.13"
 	defer func() { rootCmd.Version = oldVersion }()
 
+	// Create a real temp binary so PrepareForUpdate succeeds on Windows
+	tmpDir := t.TempDir()
+	binaryName := "summon"
+	if runtime.GOOS == "windows" {
+		binaryName = "summon.exe"
+	}
+	binaryPath := filepath.Join(tmpDir, binaryName)
+	require.NoError(t, os.WriteFile(binaryPath, []byte("fake"), 0755))
+
+	// Platform-aware installer URL
+	scriptName := "install.sh"
+	if runtime.GOOS == "windows" {
+		scriptName = "install.ps1"
+	}
+
 	client := newFakeSelfUpdateHTTPClient()
 	client.setJSON("https://api.github.com/repos/ai-summon/summon/releases/latest", 200, `{"tag_name":"v0.1.0"}`)
-	client.setJSON("https://raw.githubusercontent.com/ai-summon/summon/v0.1.0/install.sh", 200, `#!/bin/sh\necho ok`)
+	client.setJSON("https://raw.githubusercontent.com/ai-summon/summon/v0.1.0/"+scriptName, 200, `#!/bin/sh\necho ok`)
 
 	var stdout bytes.Buffer
 	deps := &selfUpdateDeps{
 		httpClient: client,
 		execRunner: &fakeSelfUpdateExecRunner{},
 		pathResolver: &fakePathResolver{
-			executablePath: "/home/user/.local/bin/summon",
-			homeDir:        "/home/user",
+			executablePath: binaryPath,
+			homeDir:        tmpDir,
 		},
 		stdout: &stdout,
 		stderr: &bytes.Buffer{},

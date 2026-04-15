@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -49,6 +52,25 @@ func (f *fakeHTTPClient) setJSON(url string, statusCode int, body string) {
 func clearURLEnvVars(t *testing.T) {
 	t.Setenv("SUMMON_GITHUB_API", "")
 	t.Setenv("SUMMON_DOWNLOAD_BASE", "")
+}
+
+// tempSummonPaths creates a temp directory with a fake binary file and returns
+// SummonPaths pointing to it. This is needed because PrepareForUpdate on Windows
+// performs a real os.Rename on the binary path.
+func tempSummonPaths(t *testing.T) SummonPaths {
+	t.Helper()
+	dir := t.TempDir()
+	name := "summon"
+	if runtime.GOOS == "windows" {
+		name = "summon.exe"
+	}
+	binaryPath := filepath.Join(dir, name)
+	require.NoError(t, os.WriteFile(binaryPath, []byte("fake"), 0755))
+	return SummonPaths{
+		BinaryPath: binaryPath,
+		BinaryDir:  dir,
+		ConfigDir:  filepath.Join(dir, ".summon"),
+	}
 }
 
 type fakeExecRunner struct {
@@ -138,16 +160,12 @@ func TestRunUpdate_SuccessfulUpdate(t *testing.T) {
 	client := newFakeHTTPClient()
 	client.setJSON(defaultReleasesAPI, 200, `{"tag_name":"v0.2.0"}`)
 
-	// Serve installer script
-	installerURL := fmt.Sprintf("%s/v0.2.0/install.sh", defaultRawGitHub)
+	// Serve installer script (platform-aware)
+	installerURL := fmt.Sprintf("%s/v0.2.0/%s", defaultRawGitHub, installerScriptName())
 	client.setJSON(installerURL, 200, `#!/bin/sh\necho "installed"`)
 
 	runner := &fakeExecRunner{}
-	paths := SummonPaths{
-		BinaryPath: "/home/user/.local/bin/summon",
-		BinaryDir:  "/home/user/.local/bin",
-		ConfigDir:  "/home/user/.summon",
-	}
+	paths := tempSummonPaths(t)
 	var buf bytes.Buffer
 
 	result, err := RunUpdate("v0.1.0", paths, client, runner, &buf)
@@ -167,11 +185,7 @@ func TestRunUpdate_DownloadFailure(t *testing.T) {
 	// No installer script served → will get 404
 
 	runner := &fakeExecRunner{}
-	paths := SummonPaths{
-		BinaryPath: "/home/user/.local/bin/summon",
-		BinaryDir:  "/home/user/.local/bin",
-		ConfigDir:  "/home/user/.summon",
-	}
+	paths := tempSummonPaths(t)
 	var buf bytes.Buffer
 
 	_, err := RunUpdate("v0.1.0", paths, client, runner, &buf)
@@ -186,15 +200,11 @@ func TestRunUpdate_InstallerFailure(t *testing.T) {
 	client := newFakeHTTPClient()
 	client.setJSON(defaultReleasesAPI, 200, `{"tag_name":"v0.2.0"}`)
 
-	installerURL := fmt.Sprintf("%s/v0.2.0/install.sh", defaultRawGitHub)
+	installerURL := fmt.Sprintf("%s/v0.2.0/%s", defaultRawGitHub, installerScriptName())
 	client.setJSON(installerURL, 200, `#!/bin/sh\nexit 1`)
 
 	runner := &fakeExecRunner{err: fmt.Errorf("exit status 1")}
-	paths := SummonPaths{
-		BinaryPath: "/home/user/.local/bin/summon",
-		BinaryDir:  "/home/user/.local/bin",
-		ConfigDir:  "/home/user/.summon",
-	}
+	paths := tempSummonPaths(t)
 	var buf bytes.Buffer
 
 	_, err := RunUpdate("v0.1.0", paths, client, runner, &buf)
