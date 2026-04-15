@@ -7,28 +7,26 @@ import (
 	"testing"
 
 	"github.com/ai-summon/summon/internal/manifest"
+	"github.com/ai-summon/summon/internal/platform"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestUninstall_NoDependents(t *testing.T) {
-	runner := newFakeRunner()
-	runner.runFunc = func(name string, args ...string) ([]byte, error) {
-		for _, a := range args {
-			if a == "list" {
-				return []byte(`[{"id":"my-plugin@marketplace"}]`), nil
-			}
-		}
-		return nil, nil
+	adapter := newFakeAdapter("claude")
+	adapter.listInstalledFunc = func(scope platform.Scope) ([]platform.InstalledPlugin, error) {
+		return []platform.InstalledPlugin{
+			{Name: "my-plugin", Source: "my-plugin@marketplace", Platform: "claude"},
+		}, nil
 	}
 
-	fetcher := newFakeFetcher()
 	deps := &uninstallDeps{
-		runner:  runner,
-		fetcher: fetcher,
-		stdin:   strings.NewReader(""),
-		stdout:  &bytes.Buffer{},
-		stderr:  &bytes.Buffer{},
+		runner:   newFakeRunner(),
+		fetcher:  newFakeFetcher(),
+		adapters: []platform.Adapter{adapter},
+		stdin:    strings.NewReader(""),
+		stdout:   &bytes.Buffer{},
+		stderr:   &bytes.Buffer{},
 	}
 
 	uninstallYes = true
@@ -43,32 +41,31 @@ func TestUninstall_NoDependents(t *testing.T) {
 }
 
 func TestUninstall_WithDependents(t *testing.T) {
-	runner := newFakeRunner()
-	runner.runFunc = func(name string, args ...string) ([]byte, error) {
-		for _, a := range args {
-			if a == "list" {
-				return []byte(`[
-					{"id":"my-plugin@marketplace"},
-					{"id":"dep-a@marketplace"}
-				]`), nil
-			}
-		}
-		return nil, nil
+	adapter := newFakeAdapter("claude")
+	adapter.listInstalledFunc = func(scope platform.Scope) ([]platform.InstalledPlugin, error) {
+		return []platform.InstalledPlugin{
+			{Name: "my-plugin", Source: "my-plugin@marketplace", Platform: "claude"},
+			{Name: "dep-a", Source: "dep-a@marketplace", Platform: "claude"},
+		}, nil
+	}
+	adapter.findDirFunc = func(name string, scope platform.Scope) (string, error) {
+		return "/fake/plugins/" + name, nil
 	}
 
 	fetcher := newFakeFetcher()
-	fetcher.manifests["my-plugin@marketplace"] = &manifest.Manifest{
+	fetcher.manifests["/fake/plugins/my-plugin"] = &manifest.Manifest{
 		Name:        "my-plugin",
 		Description: "Main plugin",
 		Dependencies: []string{"gh:owner/dep-a"},
 	}
 
 	deps := &uninstallDeps{
-		runner:  runner,
-		fetcher: fetcher,
-		stdin:   strings.NewReader("y\n"),
-		stdout:  &bytes.Buffer{},
-		stderr:  &bytes.Buffer{},
+		runner:   newFakeRunner(),
+		fetcher:  fetcher,
+		adapters: []platform.Adapter{adapter},
+		stdin:    strings.NewReader("y\n"),
+		stdout:   &bytes.Buffer{},
+		stderr:   &bytes.Buffer{},
 	}
 
 	uninstallYes = false
@@ -85,22 +82,15 @@ func TestUninstall_WithDependents(t *testing.T) {
 }
 
 func TestUninstall_NotInstalled(t *testing.T) {
-	runner := newFakeRunner()
-	runner.runFunc = func(name string, args ...string) ([]byte, error) {
-		for _, a := range args {
-			if a == "list" {
-				return []byte("[]"), nil
-			}
-		}
-		return nil, nil
-	}
+	adapter := newFakeAdapter("claude")
 
 	deps := &uninstallDeps{
-		runner:  runner,
-		fetcher: newFakeFetcher(),
-		stdin:   strings.NewReader(""),
-		stdout:  &bytes.Buffer{},
-		stderr:  &bytes.Buffer{},
+		runner:   newFakeRunner(),
+		fetcher:  newFakeFetcher(),
+		adapters: []platform.Adapter{adapter},
+		stdin:    strings.NewReader(""),
+		stdout:   &bytes.Buffer{},
+		stderr:   &bytes.Buffer{},
 	}
 
 	uninstallYes = true
@@ -113,32 +103,31 @@ func TestUninstall_NotInstalled(t *testing.T) {
 }
 
 func TestUninstall_YesSkipsConfirmation(t *testing.T) {
-	runner := newFakeRunner()
-	runner.runFunc = func(name string, args ...string) ([]byte, error) {
-		for _, a := range args {
-			if a == "list" {
-				return []byte(`[
-					{"id":"my-plugin@marketplace"},
-					{"id":"dep-a@marketplace"}
-				]`), nil
-			}
-		}
-		return nil, nil
+	adapter := newFakeAdapter("claude")
+	adapter.listInstalledFunc = func(scope platform.Scope) ([]platform.InstalledPlugin, error) {
+		return []platform.InstalledPlugin{
+			{Name: "my-plugin", Source: "my-plugin@marketplace", Platform: "claude"},
+			{Name: "dep-a", Source: "dep-a@marketplace", Platform: "claude"},
+		}, nil
+	}
+	adapter.findDirFunc = func(name string, scope platform.Scope) (string, error) {
+		return "/fake/plugins/" + name, nil
 	}
 
 	fetcher := newFakeFetcher()
-	fetcher.manifests["my-plugin@marketplace"] = &manifest.Manifest{
+	fetcher.manifests["/fake/plugins/my-plugin"] = &manifest.Manifest{
 		Name:        "my-plugin",
 		Description: "Main plugin",
 		Dependencies: []string{"gh:owner/dep-a"},
 	}
 
 	deps := &uninstallDeps{
-		runner:  runner,
-		fetcher: fetcher,
-		stdin:   strings.NewReader(""), // no input
-		stdout:  &bytes.Buffer{},
-		stderr:  &bytes.Buffer{},
+		runner:   newFakeRunner(),
+		fetcher:  fetcher,
+		adapters: []platform.Adapter{adapter},
+		stdin:    strings.NewReader(""), // no input
+		stdout:   &bytes.Buffer{},
+		stderr:   &bytes.Buffer{},
 	}
 
 	uninstallYes = true // --yes flag
@@ -153,15 +142,13 @@ func TestUninstall_YesSkipsConfirmation(t *testing.T) {
 }
 
 func TestUninstall_NoCLIs(t *testing.T) {
-	runner := newFakeRunner()
-	runner.lookPaths = map[string]string{} // No CLIs
-
 	deps := &uninstallDeps{
-		runner:  runner,
-		fetcher: newFakeFetcher(),
-		stdin:   strings.NewReader(""),
-		stdout:  &bytes.Buffer{},
-		stderr:  &bytes.Buffer{},
+		runner:   newFakeRunner(),
+		fetcher:  newFakeFetcher(),
+		adapters: []platform.Adapter{}, // empty = no CLIs
+		stdin:    strings.NewReader(""),
+		stdout:   &bytes.Buffer{},
+		stderr:   &bytes.Buffer{},
 	}
 
 	installScope = "user"
@@ -173,34 +160,29 @@ func TestUninstall_NoCLIs(t *testing.T) {
 }
 
 func TestUninstall_PartialFailure(t *testing.T) {
-	// Simulates: copilot uninstall succeeds, claude uninstall fails
-	runner := newFakeRunner()
-	runner.lookPaths["copilot"] = "/usr/local/bin/copilot"
-	runner.lookPaths["claude"] = "/usr/local/bin/claude"
-	runner.runFunc = func(name string, args ...string) ([]byte, error) {
-		for _, a := range args {
-			if a == "list" {
-				if name == "copilot" {
-					return []byte("  • my-plugin (v1.0.0)\n"), nil
-				}
-				return []byte(`[{"id":"my-plugin@marketplace"}]`), nil
-			}
-			if a == "uninstall" {
-				if name == "claude" {
-					return []byte("Error: plugin not found"), fmt.Errorf("exit status 1")
-				}
-				return nil, nil // copilot succeeds
-			}
-		}
-		return nil, nil
+	copilot := newFakeAdapter("copilot")
+	copilot.listInstalledFunc = func(scope platform.Scope) ([]platform.InstalledPlugin, error) {
+		return []platform.InstalledPlugin{
+			{Name: "my-plugin", Platform: "copilot"},
+		}, nil
+	}
+	claude := newFakeAdapter("claude")
+	claude.listInstalledFunc = func(scope platform.Scope) ([]platform.InstalledPlugin, error) {
+		return []platform.InstalledPlugin{
+			{Name: "my-plugin", Platform: "claude"},
+		}, nil
+	}
+	claude.uninstallFunc = func(name string, scope platform.Scope) error {
+		return fmt.Errorf("plugin not found")
 	}
 
 	deps := &uninstallDeps{
-		runner:  runner,
-		fetcher: newFakeFetcher(),
-		stdin:   strings.NewReader(""),
-		stdout:  &bytes.Buffer{},
-		stderr:  &bytes.Buffer{},
+		runner:   newFakeRunner(),
+		fetcher:  newFakeFetcher(),
+		adapters: []platform.Adapter{copilot, claude},
+		stdin:    strings.NewReader(""),
+		stdout:   &bytes.Buffer{},
+		stderr:   &bytes.Buffer{},
 	}
 
 	uninstallYes = true
@@ -211,41 +193,38 @@ func TestUninstall_PartialFailure(t *testing.T) {
 	require.Error(t, err)
 
 	out := deps.stdout.(*bytes.Buffer).String()
-	// Copilot should show success
 	assert.Contains(t, out, "✓ my-plugin uninstalled (copilot)")
-	// Claude should show failure
 	assert.Contains(t, out, "✗ failed to uninstall my-plugin from claude")
-	// Should report partial uninstall
 	assert.Contains(t, out, "Partially uninstalled")
-	// Error should report the failure count
 	assert.Contains(t, err.Error(), "1 platform(s)")
 }
 
 func TestUninstall_AllPlatformsFail(t *testing.T) {
-	runner := newFakeRunner()
-	runner.lookPaths["copilot"] = "/usr/local/bin/copilot"
-	runner.lookPaths["claude"] = "/usr/local/bin/claude"
-	runner.runFunc = func(name string, args ...string) ([]byte, error) {
-		for _, a := range args {
-			if a == "list" {
-				if name == "copilot" {
-					return []byte("  • my-plugin (v1.0.0)\n"), nil
-				}
-				return []byte(`[{"id":"my-plugin@marketplace"}]`), nil
-			}
-			if a == "uninstall" {
-				return []byte("some error"), fmt.Errorf("exit status 1")
-			}
-		}
-		return nil, nil
+	failUninstall := func(name string, scope platform.Scope) error {
+		return fmt.Errorf("exit status 1")
 	}
+	copilot := newFakeAdapter("copilot")
+	copilot.listInstalledFunc = func(scope platform.Scope) ([]platform.InstalledPlugin, error) {
+		return []platform.InstalledPlugin{
+			{Name: "my-plugin", Platform: "copilot"},
+		}, nil
+	}
+	copilot.uninstallFunc = failUninstall
+	claude := newFakeAdapter("claude")
+	claude.listInstalledFunc = func(scope platform.Scope) ([]platform.InstalledPlugin, error) {
+		return []platform.InstalledPlugin{
+			{Name: "my-plugin", Platform: "claude"},
+		}, nil
+	}
+	claude.uninstallFunc = failUninstall
 
 	deps := &uninstallDeps{
-		runner:  runner,
-		fetcher: newFakeFetcher(),
-		stdin:   strings.NewReader(""),
-		stdout:  &bytes.Buffer{},
-		stderr:  &bytes.Buffer{},
+		runner:   newFakeRunner(),
+		fetcher:  newFakeFetcher(),
+		adapters: []platform.Adapter{copilot, claude},
+		stdin:    strings.NewReader(""),
+		stdout:   &bytes.Buffer{},
+		stderr:   &bytes.Buffer{},
 	}
 
 	uninstallYes = true
@@ -257,32 +236,36 @@ func TestUninstall_AllPlatformsFail(t *testing.T) {
 	assert.Contains(t, err.Error(), "2 platform(s)")
 
 	out := deps.stdout.(*bytes.Buffer).String()
-	// Should NOT show partial uninstall message (none succeeded)
 	assert.NotContains(t, out, "Partially uninstalled")
 }
 
 func TestUninstall_ProjectScope(t *testing.T) {
-	runner := newFakeRunner()
-	runner.lookPaths["copilot"] = "/usr/local/bin/copilot"
-	runner.lookPaths["claude"] = "/usr/local/bin/claude"
-	runner.runFunc = func(name string, args ...string) ([]byte, error) {
-		for _, a := range args {
-			if a == "list" {
-				if name == "copilot" {
-					return []byte("  • my-plugin (v1.0.0)\n"), nil
-				}
-				return []byte(`[{"id":"my-plugin@marketplace","scope":"project"}]`), nil
-			}
-		}
-		return nil, nil
+	var uninstallCalls []struct {
+		name  string
+		scope platform.Scope
+	}
+	claude := newFakeAdapter("claude")
+	claude.scopes = []platform.Scope{platform.ScopeUser, platform.ScopeProject}
+	claude.listInstalledFunc = func(scope platform.Scope) ([]platform.InstalledPlugin, error) {
+		return []platform.InstalledPlugin{
+			{Name: "my-plugin", Platform: "claude", Scope: "project"},
+		}, nil
+	}
+	claude.uninstallFunc = func(name string, scope platform.Scope) error {
+		uninstallCalls = append(uninstallCalls, struct {
+			name  string
+			scope platform.Scope
+		}{name, scope})
+		return nil
 	}
 
 	deps := &uninstallDeps{
-		runner:  runner,
-		fetcher: newFakeFetcher(),
-		stdin:   strings.NewReader(""),
-		stdout:  &bytes.Buffer{},
-		stderr:  &bytes.Buffer{},
+		runner:   newFakeRunner(),
+		fetcher:  newFakeFetcher(),
+		adapters: []platform.Adapter{claude},
+		stdin:    strings.NewReader(""),
+		stdout:   &bytes.Buffer{},
+		stderr:   &bytes.Buffer{},
 	}
 
 	uninstallYes = true
@@ -295,16 +278,59 @@ func TestUninstall_ProjectScope(t *testing.T) {
 	out := deps.stdout.(*bytes.Buffer).String()
 	assert.Contains(t, out, "my-plugin uninstalled")
 
-	// Verify claude's uninstall was called with --scope project
-	var foundClaudeUninstall bool
-	for _, cmd := range runner.commands {
-		if len(cmd) >= 4 && cmd[0] == "claude" && cmd[2] == "uninstall" {
-			foundClaudeUninstall = true
-			assert.Contains(t, cmd, "--scope", "claude uninstall should include --scope flag")
-			assert.Contains(t, cmd, "project", "claude uninstall should use project scope")
-		}
+	// Verify uninstall was called with project scope (from plugin's reported scope)
+	require.Len(t, uninstallCalls, 1)
+	assert.Equal(t, platform.ScopeProject, uninstallCalls[0].scope)
+}
+
+func TestUninstall_DeduplicatesReverseDeps(t *testing.T) {
+	// Same plugin listed on two adapters — should only warn once
+	copilot := newFakeAdapter("copilot")
+	copilot.listInstalledFunc = func(scope platform.Scope) ([]platform.InstalledPlugin, error) {
+		return []platform.InstalledPlugin{
+			{Name: "parent", Platform: "copilot"},
+			{Name: "child", Platform: "copilot"},
+		}, nil
 	}
-	assert.True(t, foundClaudeUninstall, "claude uninstall command should have been called")
+	copilot.findDirFunc = func(name string, scope platform.Scope) (string, error) {
+		return "/fake/" + name, nil
+	}
+	claude := newFakeAdapter("claude")
+	claude.listInstalledFunc = func(scope platform.Scope) ([]platform.InstalledPlugin, error) {
+		return []platform.InstalledPlugin{
+			{Name: "parent", Platform: "claude"},
+			{Name: "child", Platform: "claude"},
+		}, nil
+	}
+	claude.findDirFunc = func(name string, scope platform.Scope) (string, error) {
+		return "/fake/" + name, nil
+	}
+
+	fetcher := newFakeFetcher()
+	fetcher.manifests["/fake/parent"] = &manifest.Manifest{
+		Name:         "parent",
+		Dependencies: []string{"child"},
+	}
+
+	deps := &uninstallDeps{
+		runner:   newFakeRunner(),
+		fetcher:  fetcher,
+		adapters: []platform.Adapter{copilot, claude},
+		stdin:    strings.NewReader("y\n"),
+		stdout:   &bytes.Buffer{},
+		stderr:   &bytes.Buffer{},
+	}
+
+	uninstallYes = false
+	installScope = "user"
+	targetFlag = ""
+
+	err := runUninstall("child", deps)
+	require.NoError(t, err)
+
+	out := deps.stdout.(*bytes.Buffer).String()
+	// "parent" should appear exactly once in the warning
+	assert.Equal(t, 1, strings.Count(out, "• parent"))
 }
 
 // Suppress unused import warning

@@ -44,11 +44,13 @@ func (f *fakeRunner) LookPath(name string) (string, error) {
 }
 
 type fakeAdapter struct {
-	name           string
-	scopes         []platform.Scope
-	installFunc    func(source string, scope platform.Scope) error
-	findDirFunc    func(name string, scope platform.Scope) (string, error)
-	installedCmds  []string // track install calls
+	name              string
+	scopes            []platform.Scope
+	installFunc       func(source string, scope platform.Scope) error
+	uninstallFunc     func(name string, scope platform.Scope) error
+	findDirFunc       func(name string, scope platform.Scope) (string, error)
+	listInstalledFunc func(scope platform.Scope) ([]platform.InstalledPlugin, error)
+	installedCmds     []string // track install calls
 }
 
 func newFakeAdapter(name string) *fakeAdapter {
@@ -70,10 +72,18 @@ func (f *fakeAdapter) Install(source string, scope platform.Scope) error {
 	return nil
 }
 
-func (f *fakeAdapter) Uninstall(name string, scope platform.Scope) error { return nil }
+func (f *fakeAdapter) Uninstall(name string, scope platform.Scope) error {
+	if f.uninstallFunc != nil {
+		return f.uninstallFunc(name, scope)
+	}
+	return nil
+}
 func (f *fakeAdapter) Update(name string, scope platform.Scope) error    { return nil }
 
 func (f *fakeAdapter) ListInstalled(scope platform.Scope) ([]platform.InstalledPlugin, error) {
+	if f.listInstalledFunc != nil {
+		return f.listInstalledFunc(scope)
+	}
 	return nil, nil
 }
 

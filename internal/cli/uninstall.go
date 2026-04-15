@@ -16,17 +16,18 @@ import (
 var uninstallYes bool
 
 type uninstallDeps struct {
-	runner  platform.CommandRunner
-	fetcher manifest.ManifestFetcher
-	stdin   io.Reader
-	stdout  io.Writer
-	stderr  io.Writer
+	runner   platform.CommandRunner
+	fetcher  manifest.ManifestFetcher
+	adapters []platform.Adapter // if non-nil, use instead of auto-detecting
+	stdin    io.Reader
+	stdout   io.Writer
+	stderr   io.Writer
 }
 
 func defaultUninstallDeps() *uninstallDeps {
 	return &uninstallDeps{
 		runner:  &execRunner{},
-		fetcher: manifest.NewRemoteFetcher(nil, &execGitRunner{}),
+		fetcher: manifest.NewLocalManifestFetcher(),
 		stdin:   os.Stdin,
 		stdout:  os.Stdout,
 		stderr:  os.Stderr,
@@ -56,7 +57,12 @@ func runUninstall(name string, deps *uninstallDeps) error {
 		return err
 	}
 
-	adapters := platform.DetectAdapters(deps.runner)
+	var adapters []platform.Adapter
+	if deps.adapters != nil {
+		adapters = deps.adapters
+	} else {
+		adapters = platform.DetectAdapters(deps.runner)
+	}
 	if len(adapters) == 0 {
 		return fmt.Errorf("no supported CLIs detected")
 	}
@@ -79,12 +85,7 @@ func runUninstall(name string, deps *uninstallDeps) error {
 		}
 		for _, p := range plugins {
 			if p.Name == name {
-				actualScope := scope
-				if p.Scope != "" {
-					if parsed, err := platform.ParseScope(p.Scope); err == nil {
-						actualScope = parsed
-					}
-				}
+				actualScope := pluginScope(p, scope)
 				key := a.Name() + ":" + string(actualScope)
 				if !seen[key] {
 					seen[key] = true
@@ -98,23 +99,32 @@ func runUninstall(name string, deps *uninstallDeps) error {
 		return fmt.Errorf("package %q is not installed on any detected CLI", name)
 	}
 
-	// Scan for reverse dependencies
+	// Scan for reverse dependencies by reading local manifests
 	graph := depgraph.NewGraph()
+	processed := make(map[string]bool)
 	for _, a := range adapters {
 		plugins, err := a.ListInstalled(scope)
 		if err != nil {
 			continue
 		}
 		for _, p := range plugins {
+			if processed[p.Name] {
+				continue
+			}
+			processed[p.Name] = true
 			graph.AddNode(&depgraph.Package{Name: p.Name, Source: p.Source})
-			// Fetch manifest to discover dependencies
-			if p.Source != "" && deps.fetcher != nil {
-				m, _ := deps.fetcher.FetchManifest(p.Source)
-				if m != nil {
-					for _, dep := range m.Dependencies {
-						r, _ := resolveDepName(dep)
-						if r != "" {
-							graph.AddEdge(p.Name, r)
+			// Read manifest from local plugin directory to discover dependencies
+			if deps.fetcher != nil {
+				actualScope := pluginScope(p, scope)
+				pluginDir, err := a.FindPluginDir(p.Name, actualScope)
+				if err == nil {
+					m, _ := deps.fetcher.FetchManifest(pluginDir)
+					if m != nil {
+						for _, dep := range m.Dependencies {
+							r, _ := resolveDepName(dep)
+							if r != "" {
+								graph.AddEdge(p.Name, r)
+							}
 						}
 					}
 				}
@@ -184,4 +194,15 @@ func resolveDepName(dep string) (string, error) {
 		return d, nil
 	}
 	return "", fmt.Errorf("empty dep")
+}
+
+// pluginScope returns the effective scope for a plugin, preferring the
+// plugin's reported scope over the command-level default.
+func pluginScope(p platform.InstalledPlugin, defaultScope platform.Scope) platform.Scope {
+	if p.Scope != "" {
+		if parsed, err := platform.ParseScope(p.Scope); err == nil {
+			return parsed
+		}
+	}
+	return defaultScope
 }
