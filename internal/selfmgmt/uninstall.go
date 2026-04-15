@@ -64,14 +64,10 @@ func UninstallWith(paths SummonPaths, w io.Writer, fs FileSystem) error {
 	}
 	// Missing config dir is silently skipped (FR-006)
 
-	// Remove binary
-	if err := fs.Remove(paths.BinaryPath); err != nil {
-		if os.IsPermission(err) {
-			return fmt.Errorf("permission denied removing %s\nTry running with elevated permissions or manually remove the file.", paths.BinaryPath)
-		}
-		return fmt.Errorf("failed to remove %s: %w", paths.BinaryPath, err)
+	// Remove binary (platform-specific: on Windows, handles locked running executables)
+	if err := removeBinary(paths.BinaryPath, fs, w); err != nil {
+		return err
 	}
-	fmt.Fprintf(w, "removed %s\n", paths.BinaryPath)
 
 	return nil
 }
