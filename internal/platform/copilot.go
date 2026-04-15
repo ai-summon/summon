@@ -81,7 +81,7 @@ func (c *CopilotAdapter) ListInstalled(scope Scope) ([]InstalledPlugin, error) {
 
 // parseCopilotPluginList parses text output from `copilot plugin list`.
 // Format: "  • plugin-name (v1.2.3)" or "  • plugin-name@marketplace"
-var copilotPluginLine = regexp.MustCompile(`•\s+(\S+)`)
+var copilotPluginLine = regexp.MustCompile(`•\s+(\S+)(?:\s+\(v?([^)]+)\))?`)
 
 func parseCopilotPluginList(output []byte, plat string) ([]InstalledPlugin, error) {
 	lines := strings.Split(string(output), "\n")
@@ -97,8 +97,13 @@ func parseCopilotPluginList(output []byte, plat string) ([]InstalledPlugin, erro
 		if idx := strings.Index(name, "@"); idx > 0 {
 			name = name[:idx]
 		}
+		version := ""
+		if len(matches) >= 3 {
+			version = matches[2]
+		}
 		plugins = append(plugins, InstalledPlugin{
 			Name:     name,
+			Version:  version,
 			Source:   raw,
 			Platform: plat,
 			Scope:    string(ScopeUser),

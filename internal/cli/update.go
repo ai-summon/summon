@@ -24,6 +24,13 @@ type updateDeps struct {
 	noColor bool
 }
 
+// updateResult tracks per-plugin update outcome across adapters.
+type updateResult struct {
+	updated  int // adapters where version actually changed
+	upToDate int // adapters where version stayed the same
+	failed   int // adapters that errored
+}
+
 func defaultUpdateDeps() *updateDeps {
 	return &updateDeps{
 		runner:  &execRunner{},
@@ -41,7 +48,8 @@ var updateCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		deps := defaultUpdateDeps()
 		if len(args) > 0 {
-			return runUpdate(args[0], deps)
+			_, err := runUpdate(args[0], deps)
+			return err
 		}
 		return runUpdateAll(deps)
 	},
@@ -52,26 +60,28 @@ func init() {
 	rootCmd.AddCommand(updateCmd)
 }
 
-func runUpdate(name string, deps *updateDeps) error {
+func runUpdate(name string, deps *updateDeps) (*updateResult, error) {
 	out := deps.stdout
+	result := &updateResult{}
 	scope, err := platform.ParseScope(installScope)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	adapters := platform.DetectAdapters(deps.runner)
 	if len(adapters) == 0 {
-		return fmt.Errorf("no supported CLIs detected")
+		return nil, fmt.Errorf("no supported CLIs detected")
 	}
 	adapters, err = platform.FilterByTarget(adapters, targetFlag)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	// Find the plugin and capture per-adapter scopes and sources
+	// Find the plugin and capture per-adapter scopes, sources, and pre-update versions
 	var source string
 	pluginScopes := make(map[string]platform.Scope)
 	pluginSources := make(map[string]string)
+	preVersions := make(map[string]string)
 	for _, a := range adapters {
 		plugins, _ := a.ListInstalled(scope)
 		for _, p := range plugins {
@@ -87,11 +97,25 @@ func runUpdate(name string, deps *updateDeps) error {
 				}
 				pluginScopes[a.Name()] = actualScope
 				pluginSources[a.Name()] = p.Source
+				preVersions[a.Name()] = p.Version
 			}
 		}
 	}
 	if source == "" {
-		return fmt.Errorf("package %q is not installed", name)
+		return nil, fmt.Errorf("package %q is not installed", name)
+	}
+
+	// Fill in missing pre-update versions from plugin.json on disk
+	for _, a := range adapters {
+		adapterScope, ok := pluginScopes[a.Name()]
+		if !ok {
+			continue
+		}
+		if preVersions[a.Name()] == "" {
+			if dir, err := a.FindPluginDir(name, adapterScope); err == nil {
+				preVersions[a.Name()] = readPluginVersion(dir)
+			}
+		}
 	}
 
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
@@ -133,14 +157,27 @@ func runUpdate(name string, deps *updateDeps) error {
 		if err := a.Update(updateID, adapterScope); err != nil {
 			fmt.Fprintf(out, "  %s %s%s%s\n", errorStyle.Render("✗"), a.Name(), padding, dimStyle.Render("failed: "+err.Error()))
 			updateErrors = append(updateErrors, fmt.Sprintf("%s: %v", a.Name(), err))
+			result.failed++
 		} else {
-			fmt.Fprintf(out, "  %s %s%s%s\n", checkStyle.Render("✓"), a.Name(), padding, dimStyle.Render("updated"))
+			preVersion := preVersions[a.Name()]
+			postVersion := getPluginVersion(a, name, adapterScope)
+
+			if preVersion != "" && postVersion != "" && preVersion == postVersion {
+				fmt.Fprintf(out, "  %s %s%s%s\n", dimStyle.Render("–"), a.Name(), padding, dimStyle.Render("up to date (v"+postVersion+")"))
+				result.upToDate++
+			} else if preVersion != "" && postVersion != "" && preVersion != postVersion {
+				fmt.Fprintf(out, "  %s %s%s%s\n", checkStyle.Render("✓"), a.Name(), padding, dimStyle.Render("v"+preVersion+" → v"+postVersion))
+				result.updated++
+			} else {
+				fmt.Fprintf(out, "  %s %s%s%s\n", checkStyle.Render("✓"), a.Name(), padding, dimStyle.Render("updated"))
+				result.updated++
+			}
 			updatedOn = append(updatedOn, a.Name())
 		}
 	}
 
 	if len(updateErrors) > 0 && len(updatedOn) == 0 {
-		return fmt.Errorf("update failed on all platforms: %s", strings.Join(updateErrors, "; "))
+		return result, fmt.Errorf("update failed on all platforms: %s", strings.Join(updateErrors, "; "))
 	}
 
 	// Check for new dependencies
@@ -180,7 +217,7 @@ func runUpdate(name string, deps *updateDeps) error {
 					}
 					for _, a := range adapters {
 						if err := a.Install(dep, scope); err != nil {
-							return fmt.Errorf("failed to install new dependency %s: %w", dep, err)
+							return nil, fmt.Errorf("failed to install new dependency %s: %w", dep, err)
 						}
 					}
 					depPadding := strings.Repeat(" ", maxDepLen-len(depName)+2)
@@ -190,7 +227,25 @@ func runUpdate(name string, deps *updateDeps) error {
 		}
 	}
 
-	return nil
+	return result, nil
+}
+
+// getPluginVersion retrieves the current version of a plugin from the adapter.
+// It first checks ListInstalled, then falls back to reading plugin.json on disk.
+func getPluginVersion(a platform.Adapter, name string, scope platform.Scope) string {
+	if plugins, err := a.ListInstalled(scope); err == nil {
+		for _, p := range plugins {
+			if p.Name == name && p.Version != "" {
+				return p.Version
+			}
+		}
+	}
+	if dir, err := a.FindPluginDir(name, scope); err == nil {
+		if v := readPluginVersion(dir); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func runUpdateAll(deps *updateDeps) error {
@@ -238,10 +293,37 @@ func runUpdateAll(deps *updateDeps) error {
 	}
 
 	fmt.Fprintf(out, "\n%s\n", dimStyle.Render(fmt.Sprintf("Updating %d plugins...", len(pluginMap))))
+
+	totalUpdated := 0
+	totalUpToDate := 0
+	totalFailed := 0
 	for _, name := range names {
-		if err := runUpdate(name, deps); err != nil {
+		result, err := runUpdate(name, deps)
+		if err != nil {
 			fmt.Fprintf(deps.stderr, "Warning: failed to update %s: %v\n", name, err)
+			totalFailed++
+		} else if result != nil {
+			if result.updated > 0 {
+				totalUpdated++
+			} else if result.upToDate > 0 {
+				totalUpToDate++
+			}
 		}
+	}
+
+	// Print summary
+	var parts []string
+	if totalUpdated > 0 {
+		parts = append(parts, fmt.Sprintf("%d updated", totalUpdated))
+	}
+	if totalUpToDate > 0 {
+		parts = append(parts, fmt.Sprintf("%d up to date", totalUpToDate))
+	}
+	if totalFailed > 0 {
+		parts = append(parts, fmt.Sprintf("%d failed", totalFailed))
+	}
+	if len(parts) > 0 {
+		fmt.Fprintf(out, "\n%s\n", dimStyle.Render(strings.Join(parts, ", ")))
 	}
 
 	return nil

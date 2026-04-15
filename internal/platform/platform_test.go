@@ -119,9 +119,11 @@ func TestCopilotAdapter_ListInstalled(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, result, 2)
 	assert.Equal(t, "my-plugin", result[0].Name)
+	assert.Equal(t, "1.0.0", result[0].Version)
 	assert.Equal(t, "copilot", result[0].Platform)
 	assert.Equal(t, "user", result[0].Scope)
 	assert.Equal(t, "other-plugin", result[1].Name)
+	assert.Equal(t, "", result[1].Version)
 	assert.Equal(t, "user", result[1].Scope)
 }
 

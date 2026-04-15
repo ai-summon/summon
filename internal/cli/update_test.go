@@ -35,11 +35,12 @@ func TestUpdate_BasicUpdate(t *testing.T) {
 	installScope = "user"
 	targetFlag = ""
 
-	err := runUpdate("my-plugin", deps)
+	_, err := runUpdate("my-plugin", deps)
 	require.NoError(t, err)
 
 	out := deps.stdout.(*bytes.Buffer).String()
 	assert.Contains(t, out, "my-plugin:")
+	// No version info available → fallback to "updated"
 	assert.Contains(t, out, "updated")
 }
 
@@ -73,7 +74,7 @@ func TestUpdate_WithNewDeps(t *testing.T) {
 	installScope = "user"
 	targetFlag = ""
 
-	err := runUpdate("my-plugin", deps)
+	_, err := runUpdate("my-plugin", deps)
 	require.NoError(t, err)
 
 	out := deps.stdout.(*bytes.Buffer).String()
@@ -103,7 +104,7 @@ func TestUpdate_NotInstalled(t *testing.T) {
 	installScope = "user"
 	targetFlag = ""
 
-	err := runUpdate("nonexistent", deps)
+	_, err := runUpdate("nonexistent", deps)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not installed")
 }
@@ -168,12 +169,13 @@ func TestUpdate_ProjectScope(t *testing.T) {
 	installScope = "user"
 	targetFlag = ""
 
-	err := runUpdate("my-plugin", deps)
+	_, err := runUpdate("my-plugin", deps)
 	require.NoError(t, err)
 
 	out := deps.stdout.(*bytes.Buffer).String()
 	assert.Contains(t, out, "my-plugin:")
-	assert.Contains(t, out, "updated")
+	// Copilot has version → shows "up to date"; claude has no version → shows "updated"
+	assert.Contains(t, out, "up to date")
 
 	// Verify claude's update was called with --scope project
 	var foundClaudeUpdate bool
@@ -222,13 +224,13 @@ func TestUpdate_PartialFailure(t *testing.T) {
 	targetFlag = ""
 
 	// Should NOT return error since copilot succeeded
-	err := runUpdate("my-plugin", deps)
+	_, err := runUpdate("my-plugin", deps)
 	require.NoError(t, err)
 
 	out := deps.stdout.(*bytes.Buffer).String()
 	assert.Contains(t, out, "my-plugin:")
 	assert.Contains(t, out, "copilot")
-	assert.Contains(t, out, "updated")
+	assert.Contains(t, out, "up to date")
 	assert.Contains(t, out, "claude")
 	assert.Contains(t, out, "failed")
 }
@@ -262,7 +264,7 @@ func TestUpdate_ClaudeUsesSourceIdentifier(t *testing.T) {
 	installScope = "user"
 	targetFlag = ""
 
-	err := runUpdate("speckit", deps)
+	_, err := runUpdate("speckit", deps)
 	require.NoError(t, err)
 
 	// Verify claude received the full source identifier, not bare name
@@ -315,7 +317,7 @@ func TestUpdate_SkipsAdaptersWhereNotInstalled(t *testing.T) {
 	installScope = "user"
 	targetFlag = ""
 
-	err := runUpdate("copilot-only", deps)
+	_, err := runUpdate("copilot-only", deps)
 	require.NoError(t, err)
 
 	// Verify claude was NOT called for update
@@ -324,4 +326,112 @@ func TestUpdate_SkipsAdaptersWhereNotInstalled(t *testing.T) {
 			t.Fatal("claude update should not be called for a plugin not installed on claude")
 		}
 	}
+}
+
+func TestUpdate_UpToDate(t *testing.T) {
+	// Version unchanged after update → "up to date"
+	runner := newFakeRunner()
+	runner.runFunc = func(name string, args ...string) ([]byte, error) {
+		for _, a := range args {
+			if a == "list" {
+				return []byte(`[{"id":"my-plugin@marketplace","version":"1.2.0"}]`), nil
+			}
+		}
+		return nil, nil
+	}
+
+	deps := &updateDeps{
+		runner:  runner,
+		fetcher: newFakeFetcher(),
+		stdin:   strings.NewReader(""),
+		stdout:  &bytes.Buffer{},
+		stderr:  &bytes.Buffer{},
+		noColor: true,
+	}
+
+	installScope = "user"
+	targetFlag = ""
+
+	result, err := runUpdate("my-plugin", deps)
+	require.NoError(t, err)
+
+	out := deps.stdout.(*bytes.Buffer).String()
+	assert.Contains(t, out, "up to date (v1.2.0)")
+	assert.Contains(t, out, "–")
+	assert.NotContains(t, out, "✓")
+	assert.Equal(t, 0, result.updated)
+	assert.Equal(t, 1, result.upToDate)
+}
+
+func TestUpdate_VersionChanged(t *testing.T) {
+	// Version changes after update → "v1.0.0 → v1.1.0"
+	listCallCount := 0
+	runner := newFakeRunner()
+	runner.runFunc = func(name string, args ...string) ([]byte, error) {
+		for _, a := range args {
+			if a == "list" {
+				listCallCount++
+				if listCallCount <= 1 {
+					return []byte(`[{"id":"my-plugin@marketplace","version":"1.0.0"}]`), nil
+				}
+				return []byte(`[{"id":"my-plugin@marketplace","version":"1.1.0"}]`), nil
+			}
+		}
+		return nil, nil
+	}
+
+	deps := &updateDeps{
+		runner:  runner,
+		fetcher: newFakeFetcher(),
+		stdin:   strings.NewReader(""),
+		stdout:  &bytes.Buffer{},
+		stderr:  &bytes.Buffer{},
+		noColor: true,
+	}
+
+	installScope = "user"
+	targetFlag = ""
+
+	result, err := runUpdate("my-plugin", deps)
+	require.NoError(t, err)
+
+	out := deps.stdout.(*bytes.Buffer).String()
+	assert.Contains(t, out, "v1.0.0 → v1.1.0")
+	assert.Contains(t, out, "✓")
+	assert.Equal(t, 1, result.updated)
+	assert.Equal(t, 0, result.upToDate)
+}
+
+func TestUpdateAll_Summary(t *testing.T) {
+	// Two plugins: one up to date, one with unknown version
+	runner := newFakeRunner()
+	runner.runFunc = func(name string, args ...string) ([]byte, error) {
+		for _, a := range args {
+			if a == "list" {
+				return []byte(`[{"id":"plugin-a@marketplace","version":"1.0.0"},{"id":"plugin-b@marketplace"}]`), nil
+			}
+		}
+		return nil, nil
+	}
+
+	deps := &updateDeps{
+		runner:  runner,
+		fetcher: newFakeFetcher(),
+		stdin:   strings.NewReader(""),
+		stdout:  &bytes.Buffer{},
+		stderr:  &bytes.Buffer{},
+		noColor: true,
+	}
+
+	installScope = "user"
+	targetFlag = ""
+
+	err := runUpdateAll(deps)
+	require.NoError(t, err)
+
+	out := deps.stdout.(*bytes.Buffer).String()
+	assert.Contains(t, out, "Updating")
+	// plugin-a has version → "up to date", plugin-b has no version → "updated"
+	assert.Contains(t, out, "1 updated")
+	assert.Contains(t, out, "1 up to date")
 }
