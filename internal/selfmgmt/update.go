@@ -192,8 +192,6 @@ func RunUpdate(currentVersion string, paths SummonPaths, httpClient HTTPClient, 
 	}
 	defer removeTempFile(tmpFile)
 
-	fmt.Fprintf(w, "downloading summon v%s %s-%s\n", release.Version, runtime.GOOS, runtime.GOARCH)
-
 	// Execute installer with env vars to control behavior
 	cmdName, cmdArgs := installerCommand(tmpFile)
 	env := buildInstallerEnv(paths.BinaryDir, release.TagName)
