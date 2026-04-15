@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/ai-summon/summon/internal/manifest"
 	"github.com/ai-summon/summon/internal/platform"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )
 
@@ -19,6 +21,7 @@ type updateDeps struct {
 	stdin   io.Reader
 	stdout  io.Writer
 	stderr  io.Writer
+	noColor bool
 }
 
 func defaultUpdateDeps() *updateDeps {
@@ -91,40 +94,59 @@ func runUpdate(name string, deps *updateDeps) error {
 		return fmt.Errorf("package %q is not installed", name)
 	}
 
-	// Update via each adapter (best-effort: try all platforms, collect errors)
-	fmt.Fprintf(out, "Updating %s...\n", name)
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
+	checkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	dimStyle := lipgloss.NewStyle().Faint(true)
+	if deps.noColor {
+		headerStyle = lipgloss.NewStyle()
+		checkStyle = lipgloss.NewStyle()
+		errorStyle = lipgloss.NewStyle()
+		dimStyle = lipgloss.NewStyle()
+	}
+
+	fmt.Fprintf(out, "\n%s\n", headerStyle.Render(name+":"))
+
+	// Compute max platform name length for column alignment
+	maxPlatformLen := 0
+	for _, a := range adapters {
+		if _, ok := pluginScopes[a.Name()]; ok {
+			if len(a.Name()) > maxPlatformLen {
+				maxPlatformLen = len(a.Name())
+			}
+		}
+	}
+
+	// Update via each adapter
 	var updatedOn []string
 	var updateErrors []string
 	for _, a := range adapters {
 		adapterScope, ok := pluginScopes[a.Name()]
 		if !ok {
-			continue // plugin not installed on this adapter
+			continue
 		}
 		updateID := name
 		if src := pluginSources[a.Name()]; src != "" {
 			updateID = src
 		}
+		padding := strings.Repeat(" ", maxPlatformLen-len(a.Name())+2)
 		if err := a.Update(updateID, adapterScope); err != nil {
-			fmt.Fprintf(deps.stderr, "  ✗ update failed on %s: %v\n", a.Name(), err)
+			fmt.Fprintf(out, "  %s %s%s%s\n", errorStyle.Render("✗"), a.Name(), padding, dimStyle.Render("failed: "+err.Error()))
 			updateErrors = append(updateErrors, fmt.Sprintf("%s: %v", a.Name(), err))
 		} else {
+			fmt.Fprintf(out, "  %s %s%s%s\n", checkStyle.Render("✓"), a.Name(), padding, dimStyle.Render("updated"))
 			updatedOn = append(updatedOn, a.Name())
 		}
 	}
 
-	if len(updatedOn) > 0 {
-		fmt.Fprintf(out, "  ✓ %s updated (%s)\n", name, strings.Join(updatedOn, ", "))
-	}
 	if len(updateErrors) > 0 && len(updatedOn) == 0 {
 		return fmt.Errorf("update failed on all platforms: %s", strings.Join(updateErrors, "; "))
 	}
 
 	// Check for new dependencies
 	if source != "" && deps.fetcher != nil {
-		fmt.Fprintln(out, "\nChecking for new dependencies...")
 		m, _ := deps.fetcher.FetchManifest(source)
 		if m != nil && len(m.Dependencies) > 0 {
-			// Get installed packages
 			installed := make(map[string]bool)
 			for _, a := range adapters {
 				plugins, _ := a.ListInstalled(scope)
@@ -142,22 +164,28 @@ func runUpdate(name string, deps *updateDeps) error {
 			}
 
 			if len(newDeps) > 0 {
-				for _, dep := range newDeps {
-					fmt.Fprintf(out, "  New dependency: %s (not installed)\n", dep)
-				}
-				// Install new deps using the install flow
-				fmt.Fprintln(out, "\nInstalling new dependencies:")
+				maxDepLen := 0
 				for _, dep := range newDeps {
 					depName, _ := resolveDepName(dep)
+					if len(depName) > maxDepLen {
+						maxDepLen = len(depName)
+					}
+				}
+
+				for i, dep := range newDeps {
+					depName, _ := resolveDepName(dep)
+					connector := "├──"
+					if i == len(newDeps)-1 {
+						connector = "└──"
+					}
 					for _, a := range adapters {
 						if err := a.Install(dep, scope); err != nil {
 							return fmt.Errorf("failed to install new dependency %s: %w", dep, err)
 						}
 					}
-					fmt.Fprintf(out, "  ✓ %s installed\n", depName)
+					depPadding := strings.Repeat(" ", maxDepLen-len(depName)+2)
+					fmt.Fprintf(out, "  %s %s%s%s\n", dimStyle.Render(connector), depName, depPadding, dimStyle.Render("installed (new dependency)"))
 				}
-			} else {
-				fmt.Fprintln(out, "  No new dependencies")
 			}
 		}
 	}
@@ -197,8 +225,20 @@ func runUpdateAll(deps *updateDeps) error {
 		return nil
 	}
 
-	fmt.Fprintf(out, "Updating all %d installed plugins...\n\n", len(pluginMap))
+	// Sort plugin names for deterministic output
+	names := make([]string, 0, len(pluginMap))
 	for name := range pluginMap {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	dimStyle := lipgloss.NewStyle().Faint(true)
+	if deps.noColor {
+		dimStyle = lipgloss.NewStyle()
+	}
+
+	fmt.Fprintf(out, "\n%s\n", dimStyle.Render(fmt.Sprintf("Updating %d plugins...", len(pluginMap))))
+	for _, name := range names {
 		if err := runUpdate(name, deps); err != nil {
 			fmt.Fprintf(deps.stderr, "Warning: failed to update %s: %v\n", name, err)
 		}

@@ -44,8 +44,9 @@ func TestRunVersionCheck_PrintsWarning(t *testing.T) {
 	w.Close()
 	out, _ := io.ReadAll(r)
 	output := string(out)
-	assert.Contains(t, output, "A new version of summon is available")
-	assert.Contains(t, output, "v0.1.0 → v0.2.0")
+	assert.Contains(t, output, "Update available")
+	assert.Contains(t, output, "v0.1.0")
+	assert.Contains(t, output, "v0.2.0")
 	assert.Contains(t, output, "summon self update")
 }
 

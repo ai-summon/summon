@@ -29,6 +29,7 @@ func TestUpdate_BasicUpdate(t *testing.T) {
 		stdin:   strings.NewReader(""),
 		stdout:  &bytes.Buffer{},
 		stderr:  &bytes.Buffer{},
+		noColor: true,
 	}
 
 	installScope = "user"
@@ -38,7 +39,8 @@ func TestUpdate_BasicUpdate(t *testing.T) {
 	require.NoError(t, err)
 
 	out := deps.stdout.(*bytes.Buffer).String()
-	assert.Contains(t, out, "my-plugin updated")
+	assert.Contains(t, out, "my-plugin:")
+	assert.Contains(t, out, "updated")
 }
 
 func TestUpdate_WithNewDeps(t *testing.T) {
@@ -65,6 +67,7 @@ func TestUpdate_WithNewDeps(t *testing.T) {
 		stdin:   strings.NewReader(""),
 		stdout:  &bytes.Buffer{},
 		stderr:  &bytes.Buffer{},
+		noColor: true,
 	}
 
 	installScope = "user"
@@ -74,7 +77,7 @@ func TestUpdate_WithNewDeps(t *testing.T) {
 	require.NoError(t, err)
 
 	out := deps.stdout.(*bytes.Buffer).String()
-	assert.Contains(t, out, "New dependency")
+	assert.Contains(t, out, "new dependency")
 }
 
 func TestUpdate_NotInstalled(t *testing.T) {
@@ -94,6 +97,7 @@ func TestUpdate_NotInstalled(t *testing.T) {
 		stdin:   strings.NewReader(""),
 		stdout:  &bytes.Buffer{},
 		stderr:  &bytes.Buffer{},
+		noColor: true,
 	}
 
 	installScope = "user"
@@ -122,6 +126,7 @@ func TestUpdateAll(t *testing.T) {
 		stdin:   strings.NewReader(""),
 		stdout:  &bytes.Buffer{},
 		stderr:  &bytes.Buffer{},
+		noColor: true,
 	}
 
 	installScope = "user"
@@ -131,7 +136,8 @@ func TestUpdateAll(t *testing.T) {
 	require.NoError(t, err)
 
 	out := deps.stdout.(*bytes.Buffer).String()
-	assert.Contains(t, out, "Updating all")
+	assert.Contains(t, out, "Updating")
+	assert.Contains(t, out, "plugins")
 }
 
 func TestUpdate_ProjectScope(t *testing.T) {
@@ -156,6 +162,7 @@ func TestUpdate_ProjectScope(t *testing.T) {
 		stdin:   strings.NewReader(""),
 		stdout:  &bytes.Buffer{},
 		stderr:  &bytes.Buffer{},
+		noColor: true,
 	}
 
 	installScope = "user"
@@ -165,7 +172,8 @@ func TestUpdate_ProjectScope(t *testing.T) {
 	require.NoError(t, err)
 
 	out := deps.stdout.(*bytes.Buffer).String()
-	assert.Contains(t, out, "my-plugin updated")
+	assert.Contains(t, out, "my-plugin:")
+	assert.Contains(t, out, "updated")
 
 	// Verify claude's update was called with --scope project
 	var foundClaudeUpdate bool
@@ -207,6 +215,7 @@ func TestUpdate_PartialFailure(t *testing.T) {
 		stdin:   strings.NewReader(""),
 		stdout:  &bytes.Buffer{},
 		stderr:  &bytes.Buffer{},
+		noColor: true,
 	}
 
 	installScope = "user"
@@ -217,10 +226,11 @@ func TestUpdate_PartialFailure(t *testing.T) {
 	require.NoError(t, err)
 
 	out := deps.stdout.(*bytes.Buffer).String()
-	assert.Contains(t, out, "my-plugin updated (copilot)")
-
-	errOut := deps.stderr.(*bytes.Buffer).String()
-	assert.Contains(t, errOut, "update failed on claude")
+	assert.Contains(t, out, "my-plugin:")
+	assert.Contains(t, out, "copilot")
+	assert.Contains(t, out, "updated")
+	assert.Contains(t, out, "claude")
+	assert.Contains(t, out, "failed")
 }
 
 func TestUpdate_ClaudeUsesSourceIdentifier(t *testing.T) {
@@ -246,6 +256,7 @@ func TestUpdate_ClaudeUsesSourceIdentifier(t *testing.T) {
 		stdin:   strings.NewReader(""),
 		stdout:  &bytes.Buffer{},
 		stderr:  &bytes.Buffer{},
+		noColor: true,
 	}
 
 	installScope = "user"
@@ -298,6 +309,7 @@ func TestUpdate_SkipsAdaptersWhereNotInstalled(t *testing.T) {
 		stdin:   strings.NewReader(""),
 		stdout:  &bytes.Buffer{},
 		stderr:  &bytes.Buffer{},
+		noColor: true,
 	}
 
 	installScope = "user"

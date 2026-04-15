@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ai-summon/summon/internal/selfmgmt"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -67,7 +68,12 @@ func runVersionCheck(cmd *cobra.Command, deps *versionCheckDeps) {
 	result := selfmgmt.CheckVersionCache(configDir, currentVersion)
 
 	if result.UpdateAvailable {
-		fmt.Fprintf(os.Stderr, "\nA new version of summon is available: v%s → v%s\nRun \"summon self update\" to upgrade.\n\n", result.CurrentVersion, result.LatestVersion)
+		boxStyle := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("3")).
+			Padding(1, 3)
+		content := fmt.Sprintf("Update available: v%s → v%s\nRun \"summon self update\" to upgrade", result.CurrentVersion, result.LatestVersion)
+		fmt.Fprintf(os.Stderr, "\n%s\n\n", boxStyle.Render(content))
 	}
 
 	if result.NeedsRefresh {
