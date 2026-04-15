@@ -36,7 +36,7 @@ type VersionCheckResult struct {
 // against the cached latest version. It does no network I/O.
 func CheckVersionCache(configDir, currentVersion string) VersionCheckResult {
 	current := normalizeVersion(currentVersion)
-	result := VersionCheckResult{CurrentVersion: stripVersion(currentVersion)}
+	result := VersionCheckResult{CurrentVersion: StripVersion(currentVersion)}
 
 	if current == "" {
 		return result
@@ -60,7 +60,7 @@ func CheckVersionCache(configDir, currentVersion string) VersionCheckResult {
 
 	if semver.Compare(latest, current) > 0 {
 		result.UpdateAvailable = true
-		result.LatestVersion = stripVersion(cache.LatestVersion)
+		result.LatestVersion = StripVersion(cache.LatestVersion)
 	}
 
 	return result
@@ -85,7 +85,7 @@ func RefreshVersionCache(configDir string, httpClient HTTPClient) {
 // normalizeVersion ensures the version has a "v" prefix and is valid semver.
 // Returns "" for invalid or dev versions.
 func normalizeVersion(v string) string {
-	v = stripVersion(v)
+	v = StripVersion(v)
 	if v == "" || v == "dev" {
 		return ""
 	}

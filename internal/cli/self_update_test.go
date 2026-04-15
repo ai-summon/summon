@@ -77,13 +77,17 @@ func TestSelfUpdate_AlreadyUpToDate(t *testing.T) {
 			executablePath: "/home/user/.local/bin/summon",
 			homeDir:        "/home/user",
 		},
-		stdout: &stdout,
-		stderr: &bytes.Buffer{},
+		stdout:  &stdout,
+		stderr:  &bytes.Buffer{},
+		noColor: true,
 	}
 
 	err := runSelfUpdate(deps)
 	require.NoError(t, err)
-	assert.Contains(t, stdout.String(), "already up to date")
+	output := stdout.String()
+	assert.Contains(t, output, "Checking for updates...")
+	assert.Contains(t, output, "already on version v0.1.0")
+	assert.Contains(t, output, "the latest version")
 }
 
 func TestSelfUpdate_SuccessfulUpdate(t *testing.T) {
@@ -121,15 +125,17 @@ func TestSelfUpdate_SuccessfulUpdate(t *testing.T) {
 			executablePath: binaryPath,
 			homeDir:        tmpDir,
 		},
-		stdout: &stdout,
-		stderr: &bytes.Buffer{},
+		stdout:  &stdout,
+		stderr:  &bytes.Buffer{},
+		noColor: true,
 	}
 
 	err := runSelfUpdate(deps)
 	require.NoError(t, err)
 	output := stdout.String()
-	assert.Contains(t, output, "updating summon v0.0.13 → v0.1.0")
-	assert.Contains(t, output, "updated successfully")
+	assert.Contains(t, output, "Checking for updates...")
+	assert.Contains(t, output, "Updating summon v0.0.13 → v0.1.0")
+	assert.Contains(t, output, "Updated summon to v0.1.0!")
 }
 
 func TestSelfUpdate_ErrorOutput(t *testing.T) {
@@ -151,8 +157,9 @@ func TestSelfUpdate_ErrorOutput(t *testing.T) {
 			executablePath: "/home/user/.local/bin/summon",
 			homeDir:        "/home/user",
 		},
-		stdout: &stdout,
-		stderr: &bytes.Buffer{},
+		stdout:  &stdout,
+		stderr:  &bytes.Buffer{},
+		noColor: true,
 	}
 
 	err := runSelfUpdate(deps)
