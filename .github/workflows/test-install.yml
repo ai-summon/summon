@@ -75,17 +75,16 @@ jobs:
           SUMMON_DOWNLOAD_BASE: http://localhost:8080
           SUMMON_NO_MODIFY_PATH: "1"
         run: |
-          python3 -m http.server 8080 --directory serve &
+          python3 -m http.server 8080 --bind 127.0.0.1 --directory serve &
           SERVER_PID=$!
-          sleep 2
-          curl -sf http://localhost:8080/v0.0.1-test/checksums.txt || (echo "HTTP server not responding" && exit 1)
+          for i in 1 2 3 4 5; do curl -sf http://localhost:8080/ >/dev/null 2>&1 && break || sleep 1; done
 
           sh install.sh
 
           echo "=== Verifying default install ==="
           "$HOME/.summon/bin/summon" --version
           "$HOME/.summon/bin/summon" --version | grep -q "v0.0.1-test"
-          echo "✓ Default install passed"
+          echo "Default install passed"
 
           kill $SERVER_PID 2>/dev/null || true
 
@@ -98,16 +97,16 @@ jobs:
         run: |
           rm -rf /tmp/custom-summon
 
-          python3 -m http.server 8080 --directory serve &
+          python3 -m http.server 8080 --bind 127.0.0.1 --directory serve &
           SERVER_PID=$!
-          sleep 2
+          for i in 1 2 3 4 5; do curl -sf http://localhost:8080/ >/dev/null 2>&1 && break || sleep 1; done
 
           sh install.sh
 
           echo "=== Verifying custom install dir ==="
           /tmp/custom-summon/bin/summon --version
           /tmp/custom-summon/bin/summon --version | grep -q "v0.0.1-test"
-          echo "✓ Custom install dir passed"
+          echo "Custom install dir passed"
 
           kill $SERVER_PID 2>/dev/null || true
 
@@ -162,7 +161,7 @@ jobs:
           SUMMON_DOWNLOAD_BASE: http://localhost:8080
           SUMMON_NO_MODIFY_PATH: "1"
         run: |
-          $server = Start-Process python -ArgumentList "-m", "http.server", "8080" -WorkingDirectory "serve" -PassThru -NoNewWindow
+          $server = Start-Process python -ArgumentList "-m", "http.server", "8080", "--bind", "127.0.0.1" -WorkingDirectory "serve" -PassThru -NoNewWindow
           Start-Sleep -Seconds 3
 
           try {
@@ -187,7 +186,7 @@ jobs:
         run: |
           if (Test-Path "C:\temp\custom-summon") { Remove-Item -Recurse -Force "C:\temp\custom-summon" }
 
-          $server = Start-Process python -ArgumentList "-m", "http.server", "8080" -WorkingDirectory "serve" -PassThru -NoNewWindow
+          $server = Start-Process python -ArgumentList "-m", "http.server", "8080", "--bind", "127.0.0.1" -WorkingDirectory "serve" -PassThru -NoNewWindow
           Start-Sleep -Seconds 3
 
           try {
