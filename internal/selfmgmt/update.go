@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -51,13 +52,31 @@ type githubRelease struct {
 }
 
 const (
-	releasesAPI = "https://api.github.com/repos/ai-summon/summon/releases/latest"
-	rawGitHub   = "https://raw.githubusercontent.com/ai-summon/summon"
+	defaultReleasesAPI = "https://api.github.com/repos/ai-summon/summon/releases/latest"
+	defaultRawGitHub   = "https://raw.githubusercontent.com/ai-summon/summon"
 )
+
+// getReleasesAPI returns the GitHub Releases API URL.
+// Checks SUMMON_GITHUB_API env var first, falls back to the default.
+func getReleasesAPI() string {
+	if v := os.Getenv("SUMMON_GITHUB_API"); v != "" {
+		return v
+	}
+	return defaultReleasesAPI
+}
+
+// getRawGitHub returns the base URL for downloading raw content (installer scripts).
+// Checks SUMMON_DOWNLOAD_BASE env var first, falls back to the default.
+func getRawGitHub() string {
+	if v := os.Getenv("SUMMON_DOWNLOAD_BASE"); v != "" {
+		return v
+	}
+	return defaultRawGitHub
+}
 
 // FetchLatestVersion queries the GitHub Releases API for the latest release.
 func FetchLatestVersion(httpClient HTTPClient) (ReleaseInfo, error) {
-	req, err := http.NewRequest("GET", releasesAPI, nil)
+	req, err := http.NewRequest("GET", getReleasesAPI(), nil)
 	if err != nil {
 		return ReleaseInfo{}, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -143,7 +162,7 @@ func RunUpdate(currentVersion string, paths SummonPaths, httpClient HTTPClient, 
 
 	// Download installer script
 	scriptName := installerScriptName()
-	scriptURL := fmt.Sprintf("%s/%s/%s", rawGitHub, release.TagName, scriptName)
+	scriptURL := fmt.Sprintf("%s/%s/%s", getRawGitHub(), release.TagName, scriptName)
 
 	req, err := http.NewRequest("GET", scriptURL, nil)
 	if err != nil {

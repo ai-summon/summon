@@ -55,6 +55,9 @@ func (f *fakeSelfUpdateExecRunner) RunWithEnv(name string, args []string, env []
 }
 
 func TestSelfUpdate_AlreadyUpToDate(t *testing.T) {
+	t.Setenv("SUMMON_GITHUB_API", "")
+	t.Setenv("SUMMON_DOWNLOAD_BASE", "")
+
 	// Set version
 	oldVersion := rootCmd.Version
 	rootCmd.Version = "0.1.0"
@@ -81,6 +84,9 @@ func TestSelfUpdate_AlreadyUpToDate(t *testing.T) {
 }
 
 func TestSelfUpdate_SuccessfulUpdate(t *testing.T) {
+	t.Setenv("SUMMON_GITHUB_API", "")
+	t.Setenv("SUMMON_DOWNLOAD_BASE", "")
+
 	oldVersion := rootCmd.Version
 	rootCmd.Version = "0.0.13"
 	defer func() { rootCmd.Version = oldVersion }()
@@ -109,6 +115,9 @@ func TestSelfUpdate_SuccessfulUpdate(t *testing.T) {
 }
 
 func TestSelfUpdate_ErrorOutput(t *testing.T) {
+	t.Setenv("SUMMON_GITHUB_API", "")
+	t.Setenv("SUMMON_DOWNLOAD_BASE", "")
+
 	oldVersion := rootCmd.Version
 	rootCmd.Version = "0.1.0"
 	defer func() { rootCmd.Version = oldVersion }()

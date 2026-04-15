@@ -45,6 +45,12 @@ func (f *fakeHTTPClient) setJSON(url string, statusCode int, body string) {
 	}
 }
 
+// clearURLEnvVars ensures tests use default URLs regardless of host environment.
+func clearURLEnvVars(t *testing.T) {
+	t.Setenv("SUMMON_GITHUB_API", "")
+	t.Setenv("SUMMON_DOWNLOAD_BASE", "")
+}
+
 type fakeExecRunner struct {
 	commands []string
 	err      error
@@ -56,8 +62,9 @@ func (f *fakeExecRunner) RunWithEnv(name string, args []string, env []string, st
 }
 
 func TestFetchLatestVersion_Success(t *testing.T) {
+	clearURLEnvVars(t)
 	client := newFakeHTTPClient()
-	client.setJSON(releasesAPI, 200, `{"tag_name":"v0.2.0"}`)
+	client.setJSON(defaultReleasesAPI, 200, `{"tag_name":"v0.2.0"}`)
 
 	info, err := FetchLatestVersion(client)
 	require.NoError(t, err)
@@ -66,8 +73,9 @@ func TestFetchLatestVersion_Success(t *testing.T) {
 }
 
 func TestFetchLatestVersion_NetworkError(t *testing.T) {
+	clearURLEnvVars(t)
 	client := newFakeHTTPClient()
-	client.errors[releasesAPI] = fmt.Errorf("dial tcp: lookup api.github.com: no such host")
+	client.errors[defaultReleasesAPI] = fmt.Errorf("dial tcp: lookup api.github.com: no such host")
 
 	_, err := FetchLatestVersion(client)
 	require.Error(t, err)
@@ -75,8 +83,9 @@ func TestFetchLatestVersion_NetworkError(t *testing.T) {
 }
 
 func TestFetchLatestVersion_NoReleases(t *testing.T) {
+	clearURLEnvVars(t)
 	client := newFakeHTTPClient()
-	client.setJSON(releasesAPI, 404, ``)
+	client.setJSON(defaultReleasesAPI, 404, ``)
 
 	_, err := FetchLatestVersion(client)
 	require.Error(t, err)
@@ -84,8 +93,9 @@ func TestFetchLatestVersion_NoReleases(t *testing.T) {
 }
 
 func TestFetchLatestVersion_MalformedJSON(t *testing.T) {
+	clearURLEnvVars(t)
 	client := newFakeHTTPClient()
-	client.setJSON(releasesAPI, 200, `{invalid json`)
+	client.setJSON(defaultReleasesAPI, 200, `{invalid json`)
 
 	_, err := FetchLatestVersion(client)
 	require.Error(t, err)
@@ -93,8 +103,9 @@ func TestFetchLatestVersion_MalformedJSON(t *testing.T) {
 }
 
 func TestFetchLatestVersion_EmptyTagName(t *testing.T) {
+	clearURLEnvVars(t)
 	client := newFakeHTTPClient()
-	client.setJSON(releasesAPI, 200, `{"tag_name":""}`)
+	client.setJSON(defaultReleasesAPI, 200, `{"tag_name":""}`)
 
 	_, err := FetchLatestVersion(client)
 	require.Error(t, err)
@@ -102,8 +113,9 @@ func TestFetchLatestVersion_EmptyTagName(t *testing.T) {
 }
 
 func TestRunUpdate_AlreadyUpToDate(t *testing.T) {
+	clearURLEnvVars(t)
 	client := newFakeHTTPClient()
-	client.setJSON(releasesAPI, 200, `{"tag_name":"v0.1.0"}`)
+	client.setJSON(defaultReleasesAPI, 200, `{"tag_name":"v0.1.0"}`)
 	runner := &fakeExecRunner{}
 	paths := SummonPaths{
 		BinaryPath: "/usr/local/bin/summon",
@@ -122,11 +134,12 @@ func TestRunUpdate_AlreadyUpToDate(t *testing.T) {
 }
 
 func TestRunUpdate_SuccessfulUpdate(t *testing.T) {
+	clearURLEnvVars(t)
 	client := newFakeHTTPClient()
-	client.setJSON(releasesAPI, 200, `{"tag_name":"v0.2.0"}`)
+	client.setJSON(defaultReleasesAPI, 200, `{"tag_name":"v0.2.0"}`)
 
 	// Serve installer script
-	installerURL := fmt.Sprintf("%s/v0.2.0/install.sh", rawGitHub)
+	installerURL := fmt.Sprintf("%s/v0.2.0/install.sh", defaultRawGitHub)
 	client.setJSON(installerURL, 200, `#!/bin/sh\necho "installed"`)
 
 	runner := &fakeExecRunner{}
@@ -148,8 +161,9 @@ func TestRunUpdate_SuccessfulUpdate(t *testing.T) {
 }
 
 func TestRunUpdate_DownloadFailure(t *testing.T) {
+	clearURLEnvVars(t)
 	client := newFakeHTTPClient()
-	client.setJSON(releasesAPI, 200, `{"tag_name":"v0.2.0"}`)
+	client.setJSON(defaultReleasesAPI, 200, `{"tag_name":"v0.2.0"}`)
 	// No installer script served → will get 404
 
 	runner := &fakeExecRunner{}
@@ -168,10 +182,11 @@ func TestRunUpdate_DownloadFailure(t *testing.T) {
 }
 
 func TestRunUpdate_InstallerFailure(t *testing.T) {
+	clearURLEnvVars(t)
 	client := newFakeHTTPClient()
-	client.setJSON(releasesAPI, 200, `{"tag_name":"v0.2.0"}`)
+	client.setJSON(defaultReleasesAPI, 200, `{"tag_name":"v0.2.0"}`)
 
-	installerURL := fmt.Sprintf("%s/v0.2.0/install.sh", rawGitHub)
+	installerURL := fmt.Sprintf("%s/v0.2.0/install.sh", defaultRawGitHub)
 	client.setJSON(installerURL, 200, `#!/bin/sh\nexit 1`)
 
 	runner := &fakeExecRunner{err: fmt.Errorf("exit status 1")}
@@ -188,8 +203,9 @@ func TestRunUpdate_InstallerFailure(t *testing.T) {
 }
 
 func TestRunUpdate_NetworkError(t *testing.T) {
+	clearURLEnvVars(t)
 	client := newFakeHTTPClient()
-	client.errors[releasesAPI] = fmt.Errorf("network unreachable")
+	client.errors[defaultReleasesAPI] = fmt.Errorf("network unreachable")
 
 	runner := &fakeExecRunner{}
 	paths := SummonPaths{
@@ -208,4 +224,24 @@ func TestStripVersion(t *testing.T) {
 	assert.Equal(t, "0.1.0", stripVersion("v0.1.0"))
 	assert.Equal(t, "0.1.0", stripVersion("0.1.0"))
 	assert.Equal(t, "dev", stripVersion("dev"))
+}
+
+func TestGetReleasesAPI_Default(t *testing.T) {
+	t.Setenv("SUMMON_GITHUB_API", "")
+	assert.Equal(t, defaultReleasesAPI, getReleasesAPI())
+}
+
+func TestGetReleasesAPI_EnvOverride(t *testing.T) {
+	t.Setenv("SUMMON_GITHUB_API", "http://localhost:8080/repos/ai-summon/summon/releases/latest")
+	assert.Equal(t, "http://localhost:8080/repos/ai-summon/summon/releases/latest", getReleasesAPI())
+}
+
+func TestGetRawGitHub_Default(t *testing.T) {
+	t.Setenv("SUMMON_DOWNLOAD_BASE", "")
+	assert.Equal(t, defaultRawGitHub, getRawGitHub())
+}
+
+func TestGetRawGitHub_EnvOverride(t *testing.T) {
+	t.Setenv("SUMMON_DOWNLOAD_BASE", "http://localhost:8080")
+	assert.Equal(t, "http://localhost:8080", getRawGitHub())
 }

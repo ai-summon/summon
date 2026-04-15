@@ -1,17 +1,9 @@
-name: Test Installers
+name: Integration Tests
 
 on:
   push:
     branches: [main]
-    paths:
-      - 'install.sh'
-      - 'install.ps1'
-      - '.github/workflows/test-install.yml'
   pull_request:
-    paths:
-      - 'install.sh'
-      - 'install.ps1'
-      - '.github/workflows/test-install.yml'
   workflow_dispatch:
 
 jobs:
@@ -110,6 +102,84 @@ jobs:
 
           kill $SERVER_PID 2>/dev/null || true
 
+      - name: Build v0.0.2-test binary
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -ldflags "-s -w -X main.version=v0.0.2-test" -o summon-v2 ./cmd/summon
+
+      - name: Prepare self-update test assets
+        run: |
+          VERSION="v0.0.2-test"
+          ARCHIVE="summon-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz"
+          mkdir -p "serve/${VERSION}"
+
+          mkdir -p tmp_v2
+          cp summon-v2 tmp_v2/summon
+          tar czf "serve/${VERSION}/${ARCHIVE}" -C tmp_v2 summon
+          rm -rf tmp_v2
+
+          python3 -c "
+          import hashlib, os
+          d = 'serve/${VERSION}'
+          for f in sorted(os.listdir(d)):
+              if f.startswith('summon-'):
+                  h = hashlib.sha256(open(os.path.join(d, f), 'rb').read()).hexdigest()
+                  print(f'{h}  {f}')
+          " > "serve/${VERSION}/checksums.txt"
+
+          cp install.sh "serve/${VERSION}/install.sh"
+
+          mkdir -p serve/repos/ai-summon/summon/releases
+          echo '{"tag_name":"v0.0.2-test"}' > serve/repos/ai-summon/summon/releases/latest
+
+          echo "=== Self-update serve directory ==="
+          find serve -type f | sort
+
+      - name: Test self update
+        env:
+          SUMMON_GITHUB_API: http://localhost:8080/repos/ai-summon/summon/releases/latest
+          SUMMON_DOWNLOAD_BASE: http://localhost:8080
+        run: |
+          python3 -m http.server 8080 --bind 127.0.0.1 --directory serve &
+          SERVER_PID=$!
+          for i in 1 2 3 4 5; do curl -sf http://localhost:8080/ >/dev/null 2>&1 && break || sleep 1; done
+
+          echo "=== Testing self update ==="
+          "$HOME/.local/bin/summon" self update
+
+          echo "=== Verifying updated version ==="
+          "$HOME/.local/bin/summon" --version
+          "$HOME/.local/bin/summon" --version | grep -q "v0.0.2-test"
+          echo "[PASS] Self update passed"
+
+          echo "=== Testing already up to date ==="
+          OUTPUT=$("$HOME/.local/bin/summon" self update 2>&1)
+          echo "$OUTPUT"
+          echo "$OUTPUT" | grep -q "already up to date"
+          echo "[PASS] Already up to date passed"
+
+          kill $SERVER_PID 2>/dev/null || true
+
+      - name: Test self uninstall
+        run: |
+          mkdir -p "$HOME/.summon"
+
+          echo "=== Testing self uninstall ==="
+          "$HOME/.local/bin/summon" self uninstall --confirm
+
+          echo "=== Verifying uninstall ==="
+          if [ -f "$HOME/.local/bin/summon" ]; then
+            echo "FAIL: Binary still exists"
+            exit 1
+          fi
+          if [ -d "$HOME/.summon" ]; then
+            echo "FAIL: Config directory still exists"
+            exit 1
+          fi
+          echo "[PASS] Self uninstall passed"
+
   test-windows:
     name: Test Windows (amd64)
     runs-on: windows-latest
@@ -200,3 +270,81 @@ jobs:
           } finally {
               Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
           }
+
+      - name: Build v0.0.2-test binary
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          GOOS: windows
+          GOARCH: amd64
+        run: go build -ldflags "-s -w -X main.version=v0.0.2-test" -o summon-v2.exe ./cmd/summon
+
+      - name: Prepare self-update test assets
+        shell: bash
+        run: |
+          VERSION="v0.0.2-test"
+          ARCHIVE="summon-windows-amd64.zip"
+          mkdir -p "serve/${VERSION}"
+
+          python -c "
+          import zipfile
+          with zipfile.ZipFile('serve/${VERSION}/${ARCHIVE}', 'w', zipfile.ZIP_DEFLATED) as zf:
+              zf.write('summon-v2.exe', 'summon.exe')
+          "
+          python -c "
+          import hashlib, os
+          d = 'serve/${VERSION}'
+          for f in sorted(os.listdir(d)):
+              if f.startswith('summon-'):
+                  h = hashlib.sha256(open(os.path.join(d, f), 'rb').read()).hexdigest()
+                  print(f'{h}  {f}')
+          " > "serve/${VERSION}/checksums.txt"
+
+          cp install.ps1 "serve/${VERSION}/install.ps1"
+
+          mkdir -p serve/repos/ai-summon/summon/releases
+          echo '{"tag_name":"v0.0.2-test"}' > serve/repos/ai-summon/summon/releases/latest
+
+          echo "=== Self-update serve directory ==="
+          find serve -type f | sort
+
+      - name: Test self update
+        shell: powershell
+        env:
+          SUMMON_GITHUB_API: http://localhost:8080/repos/ai-summon/summon/releases/latest
+          SUMMON_DOWNLOAD_BASE: http://localhost:8080
+        run: |
+          $server = Start-Process python -ArgumentList "-m", "http.server", "8080", "--bind", "127.0.0.1" -WorkingDirectory "serve" -PassThru -NoNewWindow
+          Start-Sleep -Seconds 3
+
+          try {
+              Write-Host "=== Testing self update ==="
+              & "$HOME\.local\bin\summon.exe" self update
+
+              Write-Host "=== Verifying updated version ==="
+              $output = & "$HOME\.local\bin\summon.exe" --version
+              Write-Host $output
+              if ($output -notmatch "v0.0.2-test") { throw "Update failed: $output" }
+              Write-Host "[PASS] Self update passed"
+
+              Write-Host "=== Testing already up to date ==="
+              $output = & "$HOME\.local\bin\summon.exe" self update 2>&1 | Out-String
+              Write-Host $output
+              if ($output -notmatch "already up to date") { throw "Expected already up to date: $output" }
+              Write-Host "[PASS] Already up to date passed"
+          } finally {
+              Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Test self uninstall
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path "$HOME\.summon" | Out-Null
+
+          Write-Host "=== Testing self uninstall ==="
+          & "$HOME\.local\bin\summon.exe" self uninstall --confirm
+
+          Write-Host "=== Verifying uninstall ==="
+          if (Test-Path "$HOME\.local\bin\summon.exe") { throw "Binary still exists" }
+          if (Test-Path "$HOME\.summon") { throw "Config directory still exists" }
+          Write-Host "[PASS] Self uninstall passed"
