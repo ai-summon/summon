@@ -243,7 +243,7 @@ func TestCheck_CrossPlatform_DepMissingOnOne(t *testing.T) {
 	out := buf.String()
 	assert.Contains(t, out, "copilot:")
 	assert.Contains(t, out, "claude:")
-	assert.Contains(t, out, "not installed (required)")
+	assert.Contains(t, out, "✗ required")
 }
 
 func TestCheck_SinglePlugin_MultiPlatform(t *testing.T) {
@@ -301,7 +301,7 @@ func TestCheck_SinglePlugin_MultiPlatform(t *testing.T) {
 	out := buf.String()
 	assert.Contains(t, out, "copilot:")
 	assert.Contains(t, out, "claude:")
-	assert.Contains(t, out, "not installed (required)")
+	assert.Contains(t, out, "✗ required")
 }
 
 func TestCheck_CrossPlatform_JSON(t *testing.T) {

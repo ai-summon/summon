@@ -357,7 +357,7 @@ func pluginSummary(r checkResult, checkStyle, errorStyle, warnStyle lipgloss.Sty
 }
 
 func printCheckResult(w io.Writer, r checkResult, maxNameLen int, checkStyle, errorStyle, warnStyle, dimStyle lipgloss.Style) {
-	icon, summary, summaryStyle := pluginSummary(r, checkStyle, errorStyle, warnStyle)
+	icon, summary, _ := pluginSummary(r, checkStyle, errorStyle, warnStyle)
 	padding := strings.Repeat(" ", maxNameLen-len(r.Name)+2)
 	fmt.Fprintf(w, "  %s %s%s%s\n", icon, r.Name, padding, dimStyle.Render(summary))
 
@@ -379,16 +379,16 @@ func printCheckResult(w io.Writer, r checkResult, maxNameLen int, checkStyle, er
 		if d.Installed {
 			rows = append(rows, depRow{
 				name:   d.Name,
-				status: "installed",
+				status: "",
 				icon:   checkStyle.Render("✓"),
 				style:  dimStyle,
 			})
 		} else {
 			rows = append(rows, depRow{
 				name:   d.Name,
-				status: "not installed (required)",
+				status: "required",
 				icon:   errorStyle.Render("✗"),
-				style:  summaryStyle,
+				style:  errorStyle,
 			})
 		}
 	}
@@ -397,7 +397,7 @@ func printCheckResult(w io.Writer, r checkResult, maxNameLen int, checkStyle, er
 		if s.Found {
 			rows = append(rows, depRow{
 				name:   s.Name,
-				status: s.Path,
+				status: "",
 				icon:   checkStyle.Render("✓"),
 				style:  dimStyle,
 			})
@@ -408,14 +408,14 @@ func printCheckResult(w io.Writer, r checkResult, maxNameLen int, checkStyle, er
 			}
 			rows = append(rows, depRow{
 				name:   s.Name,
-				status: "not found (" + reason + ")",
+				status: reason,
 				icon:   warnStyle.Render("⚠"),
 				style:  warnStyle,
 			})
 		} else {
 			rows = append(rows, depRow{
 				name:   s.Name,
-				status: "not found (required)",
+				status: "required",
 				icon:   errorStyle.Render("✗"),
 				style:  errorStyle,
 			})
@@ -435,7 +435,11 @@ func printCheckResult(w io.Writer, r checkResult, maxNameLen int, checkStyle, er
 		if i == len(rows)-1 {
 			connector = "└──"
 		}
-		depPadding := strings.Repeat(" ", maxDepLen-len(row.name)+2)
-		fmt.Fprintf(w, "      %s %s%s%s\n", dimStyle.Render(connector), row.name, depPadding, dimStyle.Render(row.status))
+		if row.status == "" {
+			fmt.Fprintf(w, "      %s %s  %s\n", dimStyle.Render(connector), row.name, row.icon)
+		} else {
+			depPadding := strings.Repeat(" ", maxDepLen-len(row.name)+2)
+			fmt.Fprintf(w, "      %s %s%s%s %s\n", dimStyle.Render(connector), row.name, depPadding, row.icon, dimStyle.Render(row.status))
+		}
 	}
 }
