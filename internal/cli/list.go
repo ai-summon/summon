@@ -15,15 +15,16 @@ import (
 var listJSON bool
 
 type listDeps struct {
-	runner  platform.CommandRunner
-	fetcher manifest.ManifestFetcher
-	stdout  io.Writer
+	runner   platform.CommandRunner
+	fetcher  manifest.ManifestFetcher
+	adapters []platform.Adapter // if non-nil, use instead of auto-detecting
+	stdout   io.Writer
 }
 
 func defaultListDeps() *listDeps {
 	return &listDeps{
 		runner:  &execRunner{},
-		fetcher: manifest.NewRemoteFetcher(nil, &execGitRunner{}),
+		fetcher: manifest.NewLocalManifestFetcher(),
 		stdout:  os.Stdout,
 	}
 }
@@ -56,7 +57,12 @@ func runList(deps *listDeps) error {
 	out := deps.stdout
 	scope, _ := platform.ParseScope(installScope)
 
-	adapters := platform.DetectAdapters(deps.runner)
+	var adapters []platform.Adapter
+	if deps.adapters != nil {
+		adapters = deps.adapters
+	} else {
+		adapters = platform.DetectAdapters(deps.runner)
+	}
 	if len(adapters) == 0 {
 		return fmt.Errorf("no supported CLIs detected")
 	}
@@ -77,14 +83,18 @@ func runList(deps *listDeps) error {
 		for _, p := range plugins {
 			lp := listPlugin{Name: p.Name}
 
-			// Try to fetch manifest for dependency info
-			if p.Source != "" && deps.fetcher != nil {
-				m, _ := deps.fetcher.FetchManifest(p.Source)
-				if m != nil {
-					for _, dep := range m.Dependencies {
-						depName, _ := resolveDepName(dep)
-						if depName != "" {
-							lp.Dependencies = append(lp.Dependencies, depName)
+			// Read manifest from local plugin directory for dependency info
+			if deps.fetcher != nil {
+				actualScope := pluginScope(p, scope)
+				pluginDir, err := a.FindPluginDir(p.Name, actualScope)
+				if err == nil {
+					m, _ := deps.fetcher.FetchManifest(pluginDir)
+					if m != nil {
+						for _, dep := range m.Dependencies {
+							depName, _ := resolveDepName(dep)
+							if depName != "" {
+								lp.Dependencies = append(lp.Dependencies, depName)
+							}
 						}
 					}
 				}

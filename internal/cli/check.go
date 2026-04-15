@@ -15,15 +15,16 @@ import (
 var checkJSON bool
 
 type checkDeps struct {
-	runner  platform.CommandRunner
-	fetcher manifest.ManifestFetcher
-	stdout  io.Writer
+	runner   platform.CommandRunner
+	fetcher  manifest.ManifestFetcher
+	adapters []platform.Adapter // if non-nil, use instead of auto-detecting
+	stdout   io.Writer
 }
 
 func defaultCheckDeps() *checkDeps {
 	return &checkDeps{
 		runner:  &execRunner{},
-		fetcher: manifest.NewRemoteFetcher(nil, &execGitRunner{}),
+		fetcher: manifest.NewLocalManifestFetcher(),
 		stdout:  os.Stdout,
 	}
 }
@@ -70,7 +71,12 @@ type sysStatus struct {
 
 func runCheckAll(deps *checkDeps) error {
 	scope, _ := platform.ParseScope(installScope)
-	adapters := platform.DetectAdapters(deps.runner)
+	var adapters []platform.Adapter
+	if deps.adapters != nil {
+		adapters = deps.adapters
+	} else {
+		adapters = platform.DetectAdapters(deps.runner)
+	}
 	if len(adapters) == 0 {
 		return fmt.Errorf("no supported CLIs detected")
 	}
@@ -79,8 +85,12 @@ func runCheckAll(deps *checkDeps) error {
 		return err
 	}
 
-	// Collect unique plugins
-	pluginMap := make(map[string]platform.InstalledPlugin)
+	// Collect unique plugins, tracking which adapter found each
+	type pluginEntry struct {
+		plugin  platform.InstalledPlugin
+		adapter platform.Adapter
+	}
+	pluginMap := make(map[string]pluginEntry)
 	for _, a := range adapters {
 		plugins, err := a.ListInstalled(scope)
 		if err != nil {
@@ -88,7 +98,7 @@ func runCheckAll(deps *checkDeps) error {
 		}
 		for _, p := range plugins {
 			if _, exists := pluginMap[p.Name]; !exists {
-				pluginMap[p.Name] = p
+				pluginMap[p.Name] = pluginEntry{plugin: p, adapter: a}
 			}
 		}
 	}
@@ -98,13 +108,20 @@ func runCheckAll(deps *checkDeps) error {
 		return nil
 	}
 
+	// Build installed set for dependency checking
+	installed := make(map[string]platform.InstalledPlugin)
+	for name, entry := range pluginMap {
+		installed[name] = entry.plugin
+	}
+
 	fmt.Fprintln(deps.stdout, "Checking all installed plugins...")
 	fmt.Fprintln(deps.stdout)
 
 	var results []checkResult
 	hasIssues := false
-	for _, p := range pluginMap {
-		result := checkPlugin(p, pluginMap, deps)
+	for _, entry := range pluginMap {
+		m := resolveLocalManifest(entry.adapter, entry.plugin, scope, deps.fetcher)
+		result := checkPlugin(entry.plugin, m, installed)
 		results = append(results, result)
 		if !result.OK {
 			hasIssues = true
@@ -128,7 +145,12 @@ func runCheckAll(deps *checkDeps) error {
 
 func runCheckSingle(name string, deps *checkDeps) error {
 	scope, _ := platform.ParseScope(installScope)
-	adapters := platform.DetectAdapters(deps.runner)
+	var adapters []platform.Adapter
+	if deps.adapters != nil {
+		adapters = deps.adapters
+	} else {
+		adapters = platform.DetectAdapters(deps.runner)
+	}
 	if len(adapters) == 0 {
 		return fmt.Errorf("no supported CLIs detected")
 	}
@@ -137,19 +159,21 @@ func runCheckSingle(name string, deps *checkDeps) error {
 		return err
 	}
 
-	// Find the plugin
-	pluginMap := make(map[string]platform.InstalledPlugin)
+	// Find the plugin and track which adapter found it
+	installed := make(map[string]platform.InstalledPlugin)
 	var target *platform.InstalledPlugin
+	var targetAdapter platform.Adapter
 	for _, a := range adapters {
 		plugins, err := a.ListInstalled(scope)
 		if err != nil {
 			continue
 		}
 		for _, p := range plugins {
-			pluginMap[p.Name] = p
+			installed[p.Name] = p
 			if p.Name == name {
 				cp := p
 				target = &cp
+				targetAdapter = a
 			}
 		}
 	}
@@ -158,7 +182,8 @@ func runCheckSingle(name string, deps *checkDeps) error {
 		return fmt.Errorf("package %q is not installed", name)
 	}
 
-	result := checkPlugin(*target, pluginMap, deps)
+	m := resolveLocalManifest(targetAdapter, *target, scope, deps.fetcher)
+	result := checkPlugin(*target, m, installed)
 
 	if checkJSON {
 		data, _ := json.MarshalIndent(result, "", "  ")
@@ -173,14 +198,23 @@ func runCheckSingle(name string, deps *checkDeps) error {
 	return nil
 }
 
-func checkPlugin(p platform.InstalledPlugin, installed map[string]platform.InstalledPlugin, deps *checkDeps) checkResult {
+// resolveLocalManifest reads a plugin's manifest from its local install directory.
+func resolveLocalManifest(a platform.Adapter, p platform.InstalledPlugin, defaultScope platform.Scope, fetcher manifest.ManifestFetcher) *manifest.Manifest {
+	if fetcher == nil {
+		return nil
+	}
+	actualScope := pluginScope(p, defaultScope)
+	pluginDir, err := a.FindPluginDir(p.Name, actualScope)
+	if err != nil {
+		return nil
+	}
+	m, _ := fetcher.FetchManifest(pluginDir)
+	return m
+}
+
+func checkPlugin(p platform.InstalledPlugin, m *manifest.Manifest, installed map[string]platform.InstalledPlugin) checkResult {
 	result := checkResult{Name: p.Name, OK: true}
 
-	if deps.fetcher == nil || p.Source == "" {
-		return result
-	}
-
-	m, _ := deps.fetcher.FetchManifest(p.Source)
 	if m == nil {
 		return result
 	}

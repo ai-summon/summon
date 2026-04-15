@@ -5,35 +5,35 @@ import (
 	"testing"
 
 	"github.com/ai-summon/summon/internal/manifest"
+	"github.com/ai-summon/summon/internal/platform"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestList_WithPlugins(t *testing.T) {
-	runner := newFakeRunner()
-	runner.runFunc = func(name string, args ...string) ([]byte, error) {
-		for _, a := range args {
-			if a == "list" {
-				return []byte(`[
-					{"id":"my-plugin@marketplace"},
-					{"id":"other-plugin@marketplace"}
-				]`), nil
-			}
-		}
-		return nil, nil
+	adapter := newFakeAdapter("claude")
+	adapter.listInstalledFunc = func(scope platform.Scope) ([]platform.InstalledPlugin, error) {
+		return []platform.InstalledPlugin{
+			{Name: "my-plugin", Source: "my-plugin@marketplace", Platform: "claude"},
+			{Name: "other-plugin", Source: "other-plugin@marketplace", Platform: "claude"},
+		}, nil
+	}
+	adapter.findDirFunc = func(name string, scope platform.Scope) (string, error) {
+		return "/fake/plugins/" + name, nil
 	}
 
 	fetcher := newFakeFetcher()
-	fetcher.manifests["my-plugin@marketplace"] = &manifest.Manifest{
+	fetcher.manifests["/fake/plugins/my-plugin"] = &manifest.Manifest{
 		Name:        "my-plugin",
 		Description: "Plugin",
 		Dependencies: []string{"gh:owner/other-plugin"},
 	}
 
 	deps := &listDeps{
-		runner:  runner,
-		fetcher: fetcher,
-		stdout:  &bytes.Buffer{},
+		runner:   newFakeRunner(),
+		fetcher:  fetcher,
+		adapters: []platform.Adapter{adapter},
+		stdout:   &bytes.Buffer{},
 	}
 
 	listJSON = false
@@ -50,20 +50,13 @@ func TestList_WithPlugins(t *testing.T) {
 }
 
 func TestList_NoPlugins(t *testing.T) {
-	runner := newFakeRunner()
-	runner.runFunc = func(name string, args ...string) ([]byte, error) {
-		for _, a := range args {
-			if a == "list" {
-				return []byte("[]"), nil
-			}
-		}
-		return nil, nil
-	}
+	adapter := newFakeAdapter("claude")
 
 	deps := &listDeps{
-		runner:  runner,
-		fetcher: newFakeFetcher(),
-		stdout:  &bytes.Buffer{},
+		runner:   newFakeRunner(),
+		fetcher:  newFakeFetcher(),
+		adapters: []platform.Adapter{adapter},
+		stdout:   &bytes.Buffer{},
 	}
 
 	listJSON = false
@@ -78,20 +71,18 @@ func TestList_NoPlugins(t *testing.T) {
 }
 
 func TestList_JSONOutput(t *testing.T) {
-	runner := newFakeRunner()
-	runner.runFunc = func(name string, args ...string) ([]byte, error) {
-		for _, a := range args {
-			if a == "list" {
-				return []byte(`[{"id":"my-plugin@marketplace"}]`), nil
-			}
-		}
-		return nil, nil
+	adapter := newFakeAdapter("claude")
+	adapter.listInstalledFunc = func(scope platform.Scope) ([]platform.InstalledPlugin, error) {
+		return []platform.InstalledPlugin{
+			{Name: "my-plugin", Source: "my-plugin@marketplace", Platform: "claude"},
+		}, nil
 	}
 
 	deps := &listDeps{
-		runner:  runner,
-		fetcher: newFakeFetcher(),
-		stdout:  &bytes.Buffer{},
+		runner:   newFakeRunner(),
+		fetcher:  newFakeFetcher(),
+		adapters: []platform.Adapter{adapter},
+		stdout:   &bytes.Buffer{},
 	}
 
 	listJSON = true
@@ -107,20 +98,24 @@ func TestList_JSONOutput(t *testing.T) {
 }
 
 func TestList_TargetFilter(t *testing.T) {
-	runner := newFakeRunner()
-	runner.runFunc = func(name string, args ...string) ([]byte, error) {
-		for _, a := range args {
-			if a == "list" {
-				return []byte(`[{"id":"my-plugin@marketplace"}]`), nil
-			}
-		}
-		return nil, nil
+	claude := newFakeAdapter("claude")
+	claude.listInstalledFunc = func(scope platform.Scope) ([]platform.InstalledPlugin, error) {
+		return []platform.InstalledPlugin{
+			{Name: "my-plugin", Platform: "claude"},
+		}, nil
+	}
+	copilot := newFakeAdapter("copilot")
+	copilot.listInstalledFunc = func(scope platform.Scope) ([]platform.InstalledPlugin, error) {
+		return []platform.InstalledPlugin{
+			{Name: "copilot-only", Platform: "copilot"},
+		}, nil
 	}
 
 	deps := &listDeps{
-		runner:  runner,
-		fetcher: newFakeFetcher(),
-		stdout:  &bytes.Buffer{},
+		runner:   newFakeRunner(),
+		fetcher:  newFakeFetcher(),
+		adapters: []platform.Adapter{copilot, claude},
+		stdout:   &bytes.Buffer{},
 	}
 
 	listJSON = false
@@ -132,4 +127,6 @@ func TestList_TargetFilter(t *testing.T) {
 
 	out := deps.stdout.(*bytes.Buffer).String()
 	assert.Contains(t, out, "claude")
+	assert.Contains(t, out, "my-plugin")
+	assert.NotContains(t, out, "copilot-only")
 }
