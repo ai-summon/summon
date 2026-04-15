@@ -436,10 +436,10 @@ func printCheckResult(w io.Writer, r checkResult, maxNameLen int, checkStyle, er
 			connector = "└──"
 		}
 		if row.status == "" {
-			fmt.Fprintf(w, "      %s %s  %s\n", dimStyle.Render(connector), row.name, row.icon)
+			fmt.Fprintf(w, "      %s %s %s\n", dimStyle.Render(connector), row.icon, row.name)
 		} else {
 			depPadding := strings.Repeat(" ", maxDepLen-len(row.name)+2)
-			fmt.Fprintf(w, "      %s %s%s%s %s\n", dimStyle.Render(connector), row.name, depPadding, row.icon, dimStyle.Render(row.status))
+			fmt.Fprintf(w, "      %s %s %s%s%s\n", dimStyle.Render(connector), row.icon, row.name, depPadding, dimStyle.Render(row.status))
 		}
 	}
 }
