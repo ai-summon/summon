@@ -22,6 +22,7 @@ install/uninstall experience while delegating actual plugin operations to the na
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&targetFlag, "target", "", "Target a specific CLI: copilot or claude")
+	rootCmd.CompletionOptions.HiddenDefaultCmd = true
 }
 
 // SetVersion configures the version string displayed by --version.
