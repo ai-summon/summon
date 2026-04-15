@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/ai-summon/summon/internal/manifest"
@@ -109,8 +110,15 @@ func runList(deps *listDeps) error {
 			}
 			output.Plugins = append(output.Plugins, lp)
 		}
+		sort.Slice(output.Plugins, func(i, j int) bool {
+			return output.Plugins[i].Name < output.Plugins[j].Name
+		})
 		outputs = append(outputs, output)
 	}
+
+	sort.Slice(outputs, func(i, j int) bool {
+		return outputs[i].CLI < outputs[j].CLI
+	})
 
 	if listJSON {
 		result := make(map[string][]listPlugin)
@@ -121,6 +129,8 @@ func runList(deps *listDeps) error {
 		fmt.Fprintln(out, string(data))
 		return nil
 	}
+
+	fmt.Fprintln(out)
 
 	// Human-readable styled output
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
