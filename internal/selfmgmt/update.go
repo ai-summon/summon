@@ -1,0 +1,188 @@
+package selfmgmt
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os/exec"
+	"runtime"
+	"strings"
+)
+
+// HTTPClient abstracts HTTP requests for testability.
+type HTTPClient interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
+// ExecRunner abstracts subprocess execution for testability.
+type ExecRunner interface {
+	RunWithEnv(name string, args []string, env []string, stdout, stderr io.Writer) error
+}
+
+// ExecRunnerAdapter is the default ExecRunner using os/exec.
+type ExecRunnerAdapter struct{}
+
+func (o *ExecRunnerAdapter) RunWithEnv(name string, args []string, env []string, stdout, stderr io.Writer) error {
+	cmd := exec.Command(name, args...)
+	cmd.Env = env
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	return cmd.Run()
+}
+
+// ReleaseInfo holds information about a GitHub release.
+type ReleaseInfo struct {
+	TagName string // Version tag (e.g., "v0.1.0")
+	Version string // Stripped version (e.g., "0.1.0")
+}
+
+// UpdateResult represents the outcome of a self-update operation.
+type UpdateResult struct {
+	CurrentVersion  string
+	LatestVersion   string
+	AlreadyUpToDate bool
+	Updated         bool
+}
+
+// githubRelease is the subset of the GitHub release API response we need.
+type githubRelease struct {
+	TagName string `json:"tag_name"`
+}
+
+const (
+	releasesAPI = "https://api.github.com/repos/ai-summon/summon/releases/latest"
+	rawGitHub   = "https://raw.githubusercontent.com/ai-summon/summon"
+)
+
+// FetchLatestVersion queries the GitHub Releases API for the latest release.
+func FetchLatestVersion(httpClient HTTPClient) (ReleaseInfo, error) {
+	req, err := http.NewRequest("GET", releasesAPI, nil)
+	if err != nil {
+		return ReleaseInfo{}, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "summon-self-update")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return ReleaseInfo{}, fmt.Errorf("failed to check for updates: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return ReleaseInfo{}, fmt.Errorf("no releases found for ai-summon/summon")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return ReleaseInfo{}, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+	}
+
+	var release githubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return ReleaseInfo{}, fmt.Errorf("failed to parse release information: %w", err)
+	}
+
+	if release.TagName == "" {
+		return ReleaseInfo{}, fmt.Errorf("no releases found for ai-summon/summon")
+	}
+
+	return ReleaseInfo{
+		TagName: release.TagName,
+		Version: strings.TrimPrefix(release.TagName, "v"),
+	}, nil
+}
+
+// stripVersion removes the "v" prefix from a version string.
+func stripVersion(v string) string {
+	return strings.TrimPrefix(v, "v")
+}
+
+// installerScriptName returns the installer script name for the current platform.
+func installerScriptName() string {
+	if runtime.GOOS == "windows" {
+		return "install.ps1"
+	}
+	return "install.sh"
+}
+
+// installerCommand returns the command and args to execute the installer.
+func installerCommand(scriptPath string) (string, []string) {
+	if runtime.GOOS == "windows" {
+		return "powershell", []string{"-ExecutionPolicy", "Bypass", "-File", scriptPath}
+	}
+	return "sh", []string{scriptPath}
+}
+
+// RunUpdate checks for a newer version and updates the binary if available.
+func RunUpdate(currentVersion string, paths SummonPaths, httpClient HTTPClient, runner ExecRunner, w io.Writer) (*UpdateResult, error) {
+	current := stripVersion(currentVersion)
+
+	// Check latest version
+	release, err := FetchLatestVersion(httpClient)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &UpdateResult{
+		CurrentVersion: current,
+		LatestVersion:  release.Version,
+	}
+
+	// Compare versions (simple string equality per spec)
+	if current == release.Version {
+		result.AlreadyUpToDate = true
+		return result, nil
+	}
+
+	fmt.Fprintf(w, "updating summon v%s → v%s\n", current, release.Version)
+
+	// Platform-specific preparation (rename on Windows, no-op on Unix)
+	if err := PrepareForUpdate(paths.BinaryPath); err != nil {
+		return nil, fmt.Errorf("failed to prepare for update: %w", err)
+	}
+
+	// Download installer script
+	scriptName := installerScriptName()
+	scriptURL := fmt.Sprintf("%s/%s/%s", rawGitHub, release.TagName, scriptName)
+
+	req, err := http.NewRequest("GET", scriptURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create download request: %w", err)
+	}
+	req.Header.Set("User-Agent", "summon-self-update")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("update failed: %w\nThe current installation has not been modified.", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("update failed: could not download installer (HTTP %d)\nThe current installation has not been modified.", resp.StatusCode)
+	}
+
+	scriptContent, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("update failed: could not read installer script\nThe current installation has not been modified.")
+	}
+
+	// Write installer script to a temporary file
+	tmpFile, err := createTempScript(scriptContent, scriptName)
+	if err != nil {
+		return nil, fmt.Errorf("update failed: could not write installer script: %w", err)
+	}
+	defer removeTempFile(tmpFile)
+
+	fmt.Fprintf(w, "downloading summon v%s %s-%s\n", release.Version, runtime.GOOS, runtime.GOARCH)
+
+	// Execute installer with env vars to control behavior
+	cmdName, cmdArgs := installerCommand(tmpFile)
+	env := buildInstallerEnv(paths.BinaryDir, release.TagName)
+
+	if err := runner.RunWithEnv(cmdName, cmdArgs, env, w, w); err != nil {
+		return nil, fmt.Errorf("update failed: installer exited with error\nThe current installation has not been modified.")
+	}
+
+	result.Updated = true
+	return result, nil
+}
