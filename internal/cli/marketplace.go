@@ -2,9 +2,11 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/ai-summon/summon/internal/marketplace"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )
 
@@ -80,23 +82,53 @@ func runMarketplaceAdd(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+type marketplaceListDeps struct {
+	stdout  io.Writer
+	noColor bool
+}
+
 func runMarketplaceList(cmd *cobra.Command, args []string) error {
-	out := cmd.OutOrStdout()
+	deps := &marketplaceListDeps{
+		stdout: cmd.OutOrStdout(),
+	}
+	return runMarketplaceListWith(deps)
+}
+
+func runMarketplaceListWith(deps *marketplaceListDeps) error {
+	out := deps.stdout
 
 	cfg, err := marketplace.LoadConfig(getConfigPath())
 	if err != nil {
 		return err
 	}
 
-	fmt.Fprintln(out, "Registered marketplaces:")
-	fmt.Fprintln(out)
-	fmt.Fprintf(out, "  %-25s %s\n", "summon-marketplace", marketplace.OfficialMarketplaceURL+" (official)")
-
-	for _, m := range cfg.Marketplaces {
-		fmt.Fprintf(out, "  %-25s %s\n", m.Name, m.Source)
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
+	starStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	bulletStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	badgeStyle := lipgloss.NewStyle().Faint(true)
+	urlStyle := lipgloss.NewStyle().Faint(true)
+	if deps.noColor {
+		headerStyle = lipgloss.NewStyle()
+		starStyle = lipgloss.NewStyle()
+		bulletStyle = lipgloss.NewStyle()
+		badgeStyle = lipgloss.NewStyle()
+		urlStyle = lipgloss.NewStyle()
 	}
 
-	fmt.Fprintf(out, "\n%d marketplace(s) total\n", 1+len(cfg.Marketplaces))
+	fmt.Fprintln(out)
+	fmt.Fprintf(out, "%s\n", headerStyle.Render("Marketplaces:"))
+
+	// Official marketplace
+	fmt.Fprintf(out, "\n  %s %s  %s\n", starStyle.Render("★"), "summon-marketplace", badgeStyle.Render("official"))
+	fmt.Fprintf(out, "    %s\n", urlStyle.Render(marketplace.OfficialMarketplaceURL))
+
+	// User-registered marketplaces
+	for _, m := range cfg.Marketplaces {
+		fmt.Fprintf(out, "\n  %s %s\n", bulletStyle.Render("●"), m.Name)
+		fmt.Fprintf(out, "    %s\n", urlStyle.Render(m.Source))
+	}
+
+	fmt.Fprintf(out, "\n%d marketplace(s) registered\n", 1+len(cfg.Marketplaces))
 	return nil
 }
 
