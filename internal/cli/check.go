@@ -48,11 +48,16 @@ func init() {
 	rootCmd.AddCommand(checkCmd)
 }
 
+type checkOutput struct {
+	CLI     string        `json:"cli"`
+	Results []checkResult `json:"results"`
+}
+
 type checkResult struct {
-	Name       string       `json:"name"`
-	PluginDeps []depStatus  `json:"plugin_deps,omitempty"`
-	SystemDeps []sysStatus  `json:"system_deps,omitempty"`
-	OK         bool         `json:"ok"`
+	Name       string      `json:"name"`
+	PluginDeps []depStatus `json:"plugin_deps,omitempty"`
+	SystemDeps []sysStatus `json:"system_deps,omitempty"`
+	OK         bool        `json:"ok"`
 }
 
 type depStatus struct {
@@ -69,8 +74,7 @@ type sysStatus struct {
 	Reason   string `json:"reason,omitempty"`
 }
 
-func runCheckAll(deps *checkDeps) error {
-	scope, _ := platform.ParseScope(installScope)
+func resolveAdapters(deps *checkDeps) ([]platform.Adapter, error) {
 	var adapters []platform.Adapter
 	if deps.adapters != nil {
 		adapters = deps.adapters
@@ -78,64 +82,57 @@ func runCheckAll(deps *checkDeps) error {
 		adapters = platform.DetectAdapters(deps.runner)
 	}
 	if len(adapters) == 0 {
-		return fmt.Errorf("no supported CLIs detected")
+		return nil, fmt.Errorf("no supported CLIs detected")
 	}
-	adapters, err := platform.FilterByTarget(adapters, targetFlag)
+	return platform.FilterByTarget(adapters, targetFlag)
+}
+
+func runCheckAll(deps *checkDeps) error {
+	scope, _ := platform.ParseScope(installScope)
+	adapters, err := resolveAdapters(deps)
 	if err != nil {
 		return err
 	}
 
-	// Collect unique plugins, tracking which adapter found each
-	type pluginEntry struct {
-		plugin  platform.InstalledPlugin
-		adapter platform.Adapter
-	}
-	pluginMap := make(map[string]pluginEntry)
+	var outputs []checkOutput
+	hasIssues := false
+	totalPlugins := 0
+
 	for _, a := range adapters {
 		plugins, err := a.ListInstalled(scope)
 		if err != nil {
 			continue
 		}
+
+		// Build installed set for THIS platform only
+		installed := make(map[string]platform.InstalledPlugin)
 		for _, p := range plugins {
-			if _, exists := pluginMap[p.Name]; !exists {
-				pluginMap[p.Name] = pluginEntry{plugin: p, adapter: a}
+			installed[p.Name] = p
+		}
+
+		output := checkOutput{CLI: a.Name()}
+		for _, p := range plugins {
+			m := resolveLocalManifest(a, p, scope, deps.fetcher)
+			result := checkPlugin(p, m, installed)
+			output.Results = append(output.Results, result)
+			if !result.OK {
+				hasIssues = true
 			}
 		}
+		outputs = append(outputs, output)
+		totalPlugins += len(plugins)
 	}
 
-	if len(pluginMap) == 0 {
-		fmt.Fprintln(deps.stdout, "No plugins installed.")
+	if totalPlugins == 0 {
+		if checkJSON {
+			fmt.Fprintln(deps.stdout, "{}")
+		} else {
+			fmt.Fprintln(deps.stdout, "No plugins installed.")
+		}
 		return nil
 	}
 
-	// Build installed set for dependency checking
-	installed := make(map[string]platform.InstalledPlugin)
-	for name, entry := range pluginMap {
-		installed[name] = entry.plugin
-	}
-
-	fmt.Fprintln(deps.stdout, "Checking all installed plugins...")
-	fmt.Fprintln(deps.stdout)
-
-	var results []checkResult
-	hasIssues := false
-	for _, entry := range pluginMap {
-		m := resolveLocalManifest(entry.adapter, entry.plugin, scope, deps.fetcher)
-		result := checkPlugin(entry.plugin, m, installed)
-		results = append(results, result)
-		if !result.OK {
-			hasIssues = true
-		}
-	}
-
-	if checkJSON {
-		data, _ := json.MarshalIndent(results, "", "  ")
-		fmt.Fprintln(deps.stdout, string(data))
-	} else {
-		for _, r := range results {
-			printCheckResult(deps.stdout, r)
-		}
-	}
+	printCheckOutputs(deps.stdout, outputs)
 
 	if hasIssues {
 		return fmt.Errorf("health check failed: required dependencies missing")
@@ -145,54 +142,55 @@ func runCheckAll(deps *checkDeps) error {
 
 func runCheckSingle(name string, deps *checkDeps) error {
 	scope, _ := platform.ParseScope(installScope)
-	var adapters []platform.Adapter
-	if deps.adapters != nil {
-		adapters = deps.adapters
-	} else {
-		adapters = platform.DetectAdapters(deps.runner)
-	}
-	if len(adapters) == 0 {
-		return fmt.Errorf("no supported CLIs detected")
-	}
-	adapters, err := platform.FilterByTarget(adapters, targetFlag)
+	adapters, err := resolveAdapters(deps)
 	if err != nil {
 		return err
 	}
 
-	// Find the plugin and track which adapter found it
-	installed := make(map[string]platform.InstalledPlugin)
-	var target *platform.InstalledPlugin
-	var targetAdapter platform.Adapter
+	var outputs []checkOutput
+	hasIssues := false
+	found := false
+
 	for _, a := range adapters {
 		plugins, err := a.ListInstalled(scope)
 		if err != nil {
 			continue
 		}
+
+		// Build installed set for THIS platform only
+		installed := make(map[string]platform.InstalledPlugin)
+		var target *platform.InstalledPlugin
 		for _, p := range plugins {
 			installed[p.Name] = p
 			if p.Name == name {
 				cp := p
 				target = &cp
-				targetAdapter = a
 			}
+		}
+
+		if target == nil {
+			continue
+		}
+		found = true
+
+		m := resolveLocalManifest(a, *target, scope, deps.fetcher)
+		result := checkPlugin(*target, m, installed)
+		outputs = append(outputs, checkOutput{
+			CLI:     a.Name(),
+			Results: []checkResult{result},
+		})
+		if !result.OK {
+			hasIssues = true
 		}
 	}
 
-	if target == nil {
+	if !found {
 		return fmt.Errorf("package %q is not installed", name)
 	}
 
-	m := resolveLocalManifest(targetAdapter, *target, scope, deps.fetcher)
-	result := checkPlugin(*target, m, installed)
+	printCheckOutputs(deps.stdout, outputs)
 
-	if checkJSON {
-		data, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Fprintln(deps.stdout, string(data))
-	} else {
-		printCheckResult(deps.stdout, result)
-	}
-
-	if !result.OK {
+	if hasIssues {
 		return fmt.Errorf("health check failed for %s", name)
 	}
 	return nil
@@ -262,27 +260,53 @@ func checkPlugin(p platform.InstalledPlugin, m *manifest.Manifest, installed map
 	return result
 }
 
+func printCheckOutputs(w io.Writer, outputs []checkOutput) {
+	if checkJSON {
+		result := make(map[string][]checkResult)
+		for _, o := range outputs {
+			result[o.CLI] = o.Results
+		}
+		data, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Fprintln(w, string(data))
+		return
+	}
+
+	fmt.Fprintln(w, "Checking installed plugins...")
+	fmt.Fprintln(w)
+	for _, o := range outputs {
+		fmt.Fprintf(w, "%s:\n", o.CLI)
+		if len(o.Results) == 0 {
+			fmt.Fprintln(w, "  (none)")
+			fmt.Fprintln(w)
+			continue
+		}
+		for _, r := range o.Results {
+			printCheckResult(w, r)
+		}
+	}
+}
+
 func printCheckResult(w io.Writer, r checkResult) {
-	fmt.Fprintf(w, "%s:\n", r.Name)
+	fmt.Fprintf(w, "  %s:\n", r.Name)
 	if len(r.PluginDeps) > 0 {
-		fmt.Fprintln(w, "  Plugin deps:")
+		fmt.Fprintln(w, "    Plugin deps:")
 		for _, d := range r.PluginDeps {
 			if d.Installed {
-				fmt.Fprintf(w, "    ✓ %s (installed)\n", d.Name)
+				fmt.Fprintf(w, "      ✓ %s (installed)\n", d.Name)
 			} else {
-				fmt.Fprintf(w, "    ✗ %s (NOT installed) [required]\n", d.Name)
+				fmt.Fprintf(w, "      ✗ %s (NOT installed) [required]\n", d.Name)
 			}
 		}
 	}
 	if len(r.SystemDeps) > 0 {
-		fmt.Fprintln(w, "  System deps:")
+		fmt.Fprintln(w, "    System deps:")
 		for _, s := range r.SystemDeps {
 			if s.Found {
-				fmt.Fprintf(w, "    ✓ %s (found: %s)\n", s.Name, s.Path)
+				fmt.Fprintf(w, "      ✓ %s (found: %s)\n", s.Name, s.Path)
 			} else if s.Optional {
-				fmt.Fprintf(w, "    ✗ %s (not found) [recommended: %s]\n", s.Name, s.Reason)
+				fmt.Fprintf(w, "      ✗ %s (not found) [recommended: %s]\n", s.Name, s.Reason)
 			} else {
-				fmt.Fprintf(w, "    ✗ %s (not found) [required]\n", s.Name)
+				fmt.Fprintf(w, "      ✗ %s (not found) [required]\n", s.Name)
 			}
 		}
 	}
