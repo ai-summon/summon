@@ -111,7 +111,12 @@ func (c *CopilotAdapter) EnsureMarketplace(name, source string) error {
 	}
 	for _, m := range marketplaces {
 		if m.Name == name {
-			return nil // already registered
+			// Refresh the marketplace index to pick up newly added plugins
+			output, err := c.runner.Run("copilot", "plugin", "marketplace", "update", name)
+			if err != nil {
+				return fmt.Errorf("marketplace update failed: %w", cliError("copilot marketplace update", output, err))
+			}
+			return nil
 		}
 	}
 

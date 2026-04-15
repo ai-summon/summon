@@ -436,6 +436,11 @@ func TestCopilotAdapter_EnsureMarketplace_AlreadyRegistered(t *testing.T) {
 			assert.NotEqual(t, "add", a, "should not call marketplace add when already registered")
 		}
 	}
+
+	// Should have called marketplace update
+	lastCmd := runner.Commands[len(runner.Commands)-1]
+	assert.Contains(t, lastCmd, "update")
+	assert.Contains(t, lastCmd, "summon-marketplace")
 }
 
 func TestCopilotAdapter_EnsureMarketplace_NotRegistered(t *testing.T) {
@@ -480,6 +485,11 @@ func TestClaudeAdapter_EnsureMarketplace_AlreadyRegistered(t *testing.T) {
 			assert.NotEqual(t, "add", a)
 		}
 	}
+
+	// Should have called marketplace update
+	lastCmd := runner.Commands[len(runner.Commands)-1]
+	assert.Contains(t, lastCmd, "update")
+	assert.Contains(t, lastCmd, "summon-marketplace")
 }
 
 func TestClaudeAdapter_EnsureMarketplace_NotRegistered(t *testing.T) {
@@ -500,4 +510,46 @@ func TestClaudeAdapter_EnsureMarketplace_NotRegistered(t *testing.T) {
 	lastCmd := runner.Commands[len(runner.Commands)-1]
 	assert.Contains(t, lastCmd, "add")
 	assert.Contains(t, lastCmd, "ai-summon/summon-marketplace")
+}
+
+func TestCopilotAdapter_EnsureMarketplace_UpdateFailure(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.LookPaths["copilot"] = "/usr/local/bin/copilot"
+	realOutput := "Registered marketplaces:\n" +
+		"  • summon-marketplace (GitHub: ai-summon/summon-marketplace)\n"
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		for _, a := range args {
+			if a == "list" {
+				return []byte(realOutput), nil
+			}
+			if a == "update" {
+				return []byte("network error"), fmt.Errorf("exit status 1")
+			}
+		}
+		return nil, nil
+	}
+	adapter := NewCopilotAdapter(runner)
+	err := adapter.EnsureMarketplace("summon-marketplace", "ai-summon/summon-marketplace")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "update")
+}
+
+func TestClaudeAdapter_EnsureMarketplace_UpdateFailure(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.LookPaths["claude"] = "/usr/local/bin/claude"
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		for _, a := range args {
+			if a == "list" {
+				return []byte(`[{"name":"summon-marketplace","source":"ai-summon/summon-marketplace"}]`), nil
+			}
+			if a == "update" {
+				return []byte("network error"), fmt.Errorf("exit status 1")
+			}
+		}
+		return nil, nil
+	}
+	adapter := NewClaudeAdapter(runner)
+	err := adapter.EnsureMarketplace("summon-marketplace", "ai-summon/summon-marketplace")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "update")
 }
