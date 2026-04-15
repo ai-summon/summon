@@ -105,13 +105,11 @@ function Add-ToPath {
 $TempDir = $null
 try {
     $Arch = Get-SummonArch
-    Write-Host "Detecting platform: windows/$Arch"
 
     $TempDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName())
     New-Item -ItemType Directory -Path $TempDir -Force | Out-Null
 
     $Version = Get-LatestVersion
-    Write-Host "Installing summon $Version"
 
     $Archive = "summon-windows-${Arch}.zip"
     $DownloadBase = if ($env:SUMMON_DOWNLOAD_BASE) { $env:SUMMON_DOWNLOAD_BASE } else { "https://github.com/$Repo/releases/download" }
@@ -121,24 +119,22 @@ try {
     $ArchivePath = Join-Path $TempDir $Archive
     $ChecksumsPath = Join-Path $TempDir "checksums.txt"
 
-    Write-Host "Downloading $Archive..."
+    Write-Host "downloading summon $Version windows-$Arch"
     Invoke-WebRequest -Uri $DownloadUrl -OutFile $ArchivePath -UseBasicParsing
     Invoke-WebRequest -Uri $ChecksumsUrl -OutFile $ChecksumsPath -UseBasicParsing
 
-    Write-Host "Verifying checksum..."
     Test-Checksum -ArchivePath $ArchivePath -ChecksumsPath $ChecksumsPath
 
     $BinDir = Resolve-InstallDir
     New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
     Expand-Archive -Path $ArchivePath -DestinationPath $BinDir -Force
 
+    Write-Host "installing to $BinDir"
+    Write-Host "    summon.exe"
+
     Add-ToPath
 
-    Write-Host ""
-    Write-Host "summon $Version installed successfully to $(Join-Path $BinDir 'summon.exe')"
-    if ($env:SUMMON_NO_MODIFY_PATH) {
-        Write-Host "Add the following to your PATH: $BinDir"
-    }
+    Write-Host "everything's installed!"
 } catch {
     Write-Error $_.Exception.Message
     exit 1

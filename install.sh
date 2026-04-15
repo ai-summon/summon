@@ -308,24 +308,20 @@ main() {
     ARCH=$(detect_arch)
     DOWNLOAD_TOOL=$(detect_download_tool)
 
-    printf "Detecting platform: %s/%s\n" "$OS" "$ARCH"
-
     TMPDIR=$(mktemp -d)
     trap 'rm -rf "$TMPDIR"' EXIT
 
     VERSION=$(get_latest_version)
-    printf "Installing summon %s\n" "$VERSION"
 
     ARCHIVE="summon-${OS}-${ARCH}.tar.gz"
     DOWNLOAD_BASE="${SUMMON_DOWNLOAD_BASE:-https://github.com/${REPO}/releases/download}"
     DOWNLOAD_URL="${DOWNLOAD_BASE}/${VERSION}/${ARCHIVE}"
     CHECKSUMS_URL="${DOWNLOAD_BASE}/${VERSION}/checksums.txt"
 
-    printf "Downloading %s...\n" "$ARCHIVE"
+    printf "downloading summon %s %s-%s\n" "$VERSION" "$OS" "$ARCH"
     download "$DOWNLOAD_URL" "${TMPDIR}/${ARCHIVE}" || err "Failed to download ${ARCHIVE} (HTTP 404). Version ${VERSION} may not exist."
     download "$CHECKSUMS_URL" "${TMPDIR}/checksums.txt" || err "Failed to download checksums.txt."
 
-    printf "Verifying checksum...\n"
     verify_checksum "${TMPDIR}/${ARCHIVE}" "${TMPDIR}/checksums.txt"
 
     BIN_DIR=$(resolve_install_dir)
@@ -333,12 +329,12 @@ main() {
     tar xzf "${TMPDIR}/${ARCHIVE}" -C "$BIN_DIR"
     chmod +x "${BIN_DIR}/summon"
 
+    printf "installing to %s\n" "$BIN_DIR"
+    printf "    summon\n"
+
     add_to_path
 
-    printf "\nsummon %s installed successfully to %s/summon\n" "$VERSION" "$BIN_DIR"
-    if [ "${SUMMON_NO_MODIFY_PATH:-}" ]; then
-        printf "Add the following to your shell profile:\n  export PATH=\"%s:\$PATH\"\n" "$BIN_DIR"
-    fi
+    printf "everything's installed!\n"
 }
 
 main
