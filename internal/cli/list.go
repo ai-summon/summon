@@ -10,6 +10,7 @@ import (
 
 	"github.com/ai-summon/summon/internal/manifest"
 	"github.com/ai-summon/summon/internal/platform"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )
 
@@ -20,6 +21,7 @@ type listDeps struct {
 	fetcher  manifest.ManifestFetcher
 	adapters []platform.Adapter // if non-nil, use instead of auto-detecting
 	stdout   io.Writer
+	noColor  bool
 }
 
 func defaultListDeps() *listDeps {
@@ -120,23 +122,44 @@ func runList(deps *listDeps) error {
 		return nil
 	}
 
-	// Human-readable tree output
-	fmt.Fprintln(out, "Installed plugins:")
-	fmt.Fprintln(out)
+	// Human-readable styled output
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
+	checkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	dimStyle := lipgloss.NewStyle().Faint(true)
+	if deps.noColor {
+		headerStyle = lipgloss.NewStyle()
+		checkStyle = lipgloss.NewStyle()
+		dimStyle = lipgloss.NewStyle()
+	}
+
+	// Find the longest plugin name for column alignment
+	maxNameLen := 0
 	for _, o := range outputs {
-		fmt.Fprintf(out, "  %s:\n", o.CLI)
+		for _, p := range o.Plugins {
+			if len(p.Name) > maxNameLen {
+				maxNameLen = len(p.Name)
+			}
+		}
+	}
+
+	for _, o := range outputs {
+		fmt.Fprintf(out, "%s\n", headerStyle.Render(o.CLI+":"))
 		if len(o.Plugins) == 0 {
-			fmt.Fprintln(out, "    (none)")
+			fmt.Fprintln(out, "  (none)")
+			fmt.Fprintln(out)
 			continue
 		}
 		for _, p := range o.Plugins {
+			check := checkStyle.Render("✓")
 			if p.Version != "" {
-				fmt.Fprintf(out, "    %s (v%s)\n", p.Name, p.Version)
+				padding := strings.Repeat(" ", maxNameLen-len(p.Name)+2)
+				version := dimStyle.Render("v" + p.Version)
+				fmt.Fprintf(out, "  %s %s%s%s\n", check, p.Name, padding, version)
 			} else {
-				fmt.Fprintf(out, "    %s\n", p.Name)
+				fmt.Fprintf(out, "  %s %s\n", check, p.Name)
 			}
 			for _, dep := range p.Dependencies {
-				fmt.Fprintf(out, "    └── %s\n", dep)
+				fmt.Fprintf(out, "      └── %s\n", dimStyle.Render(dep))
 			}
 		}
 		fmt.Fprintln(out)

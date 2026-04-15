@@ -36,6 +36,7 @@ func TestList_WithPlugins(t *testing.T) {
 		fetcher:  fetcher,
 		adapters: []platform.Adapter{adapter},
 		stdout:   &bytes.Buffer{},
+		noColor:  true,
 	}
 
 	listJSON = false
@@ -46,7 +47,8 @@ func TestList_WithPlugins(t *testing.T) {
 	require.NoError(t, err)
 
 	out := deps.stdout.(*bytes.Buffer).String()
-	assert.Contains(t, out, "my-plugin (v1.2.0)")
+	assert.Contains(t, out, "my-plugin")
+	assert.Contains(t, out, "v1.2.0")
 	assert.Contains(t, out, "other-plugin")
 	assert.Contains(t, out, "└──")
 }
@@ -78,6 +80,7 @@ func TestList_VersionFromPluginJSON(t *testing.T) {
 		fetcher:  newFakeFetcher(),
 		adapters: []platform.Adapter{adapter},
 		stdout:   &bytes.Buffer{},
+		noColor:  true,
 	}
 
 	listJSON = false
@@ -88,7 +91,8 @@ func TestList_VersionFromPluginJSON(t *testing.T) {
 	require.NoError(t, err)
 
 	out := deps.stdout.(*bytes.Buffer).String()
-	assert.Contains(t, out, "test-plugin (v0.5.0)")
+	assert.Contains(t, out, "test-plugin")
+	assert.Contains(t, out, "v0.5.0")
 }
 
 func TestList_NoPlugins(t *testing.T) {
