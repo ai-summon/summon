@@ -75,11 +75,10 @@ jobs:
           SUMMON_DOWNLOAD_BASE: http://localhost:8080
           SUMMON_NO_MODIFY_PATH: "1"
         run: |
-          cd serve && python3 -m http.server 8080 &
+          python3 -m http.server 8080 --directory serve &
           SERVER_PID=$!
           sleep 2
           curl -sf http://localhost:8080/v0.0.1-test/checksums.txt || (echo "HTTP server not responding" && exit 1)
-          cd ..
 
           sh install.sh
 
@@ -99,10 +98,9 @@ jobs:
         run: |
           rm -rf /tmp/custom-summon
 
-          cd serve && python3 -m http.server 8080 &
+          python3 -m http.server 8080 --directory serve &
           SERVER_PID=$!
           sleep 2
-          cd ..
 
           sh install.sh
 
