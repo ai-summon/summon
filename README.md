@@ -60,6 +60,35 @@ summon check
 summon update
 ```
 
+## The `summon.yaml` Manifest
+
+Every plugin has a `summon.yaml` that declares what it needs. Here's an example:
+
+```yaml
+name: my-plugin
+description: Analyses code quality and suggests improvements
+
+dependencies:
+  - wingman                      # plugin from the default marketplace
+  - speckit@acme-marketplace     # plugin from a specific marketplace
+
+system_requirements:
+  - git                          # required — install fails if missing
+  - name: docker
+    optional: true
+    reason: "Only needed for containerized analysis"
+```
+
+That's it. When someone runs `summon install my-plugin`, Summon resolves the full dependency tree — `wingman` and its own dependencies, `speckit` from the right marketplace, and verifies `git` is on the system — all automatically.
+
+| Field | Required | Description |
+|---|---|---|
+| `name` | ✓ | Kebab-case plugin name |
+| `description` | ✓ | Short description of the plugin |
+| `dependencies` | | Plugins this plugin depends on |
+| `system_requirements` | | System binaries that must be present |
+| `marketplaces` | | Named marketplace aliases for dependencies |
+
 ## Commands
 
 | Command | Description |
@@ -70,10 +99,13 @@ summon update
 | `summon list` | List installed plugins with dependency tree |
 | `summon check [package]` | Verify plugin health and system dependencies |
 | `summon validate` | Validate a `summon.yaml` manifest in the current directory |
+| `summon platform list` | Show which CLIs are enabled |
+| `summon platform enable <name>` | Enable a platform (claude or copilot) |
+| `summon platform disable <name>` | Disable a platform |
 
 ### Target a specific CLI
 
-By default, Summon installs to every Claude & Copilot CLIs if detects. To target just one:
+By default, Summon installs to every CLI it detects. To target just one:
 
 ```sh
 summon install my-plugin --target claude
