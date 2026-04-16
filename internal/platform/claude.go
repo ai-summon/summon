@@ -203,6 +203,7 @@ func (c *ClaudeAdapter) ListMarketplaces() ([]MarketplaceInfo, error) {
 		Name   string `json:"name"`
 		Source string `json:"source"`
 		Repo   string `json:"repo"`
+		URL    string `json:"url"`
 	}
 	if err := json.Unmarshal([]byte(trimmed), &raw); err != nil {
 		return nil, fmt.Errorf("failed to parse claude marketplace list JSON: %w", err)
@@ -211,6 +212,9 @@ func (c *ClaudeAdapter) ListMarketplaces() ([]MarketplaceInfo, error) {
 	var marketplaces []MarketplaceInfo
 	for _, r := range raw {
 		source := r.Repo
+		if source == "" {
+			source = r.URL
+		}
 		if source == "" {
 			source = r.Source
 		}

@@ -433,6 +433,29 @@ func TestCopilotAdapter_ListMarketplaces_URLFormat(t *testing.T) {
 	assert.Equal(t, "https://cc-github.bmwgroup.net/ismaeljimenez-martinez/bmw-ai-marketplace", marketplaces[2].Source)
 }
 
+func TestClaudeAdapter_ListMarketplaces_GitSource(t *testing.T) {
+	// Claude CLI returns "source":"git" + "url":"..." for non-GitHub.com marketplaces
+	jsonOutput := `[
+		{"name":"bmw-ai-marketplace","source":"git","url":"https://cc-github.bmwgroup.net/ismaeljimenez-martinez/bmw-ai-marketplace.git"},
+		{"name":"claude-plugins-official","source":"github","repo":"anthropics/claude-plugins-official"},
+		{"name":"summon-marketplace","source":"github","repo":"ai-summon/summon-marketplace"}
+	]`
+
+	runner := NewFakeRunner()
+	runner.LookPaths["claude"] = "/usr/local/bin/claude"
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return []byte(jsonOutput), nil
+	}
+	adapter := NewClaudeAdapter(runner)
+	marketplaces, err := adapter.ListMarketplaces()
+	require.NoError(t, err)
+	assert.Len(t, marketplaces, 3)
+	assert.Equal(t, "bmw-ai-marketplace", marketplaces[0].Name)
+	assert.Equal(t, "https://cc-github.bmwgroup.net/ismaeljimenez-martinez/bmw-ai-marketplace.git", marketplaces[0].Source)
+	assert.Equal(t, "anthropics/claude-plugins-official", marketplaces[1].Source)
+	assert.Equal(t, "ai-summon/summon-marketplace", marketplaces[2].Source)
+}
+
 // --- EnsureMarketplace Tests ---
 
 func TestCopilotAdapter_EnsureMarketplace_AlreadyRegistered(t *testing.T) {
