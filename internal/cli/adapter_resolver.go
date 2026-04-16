@@ -10,11 +10,12 @@ import (
 
 // adapterResolverDeps holds the injectable dependencies for adapter resolution.
 type adapterResolverDeps struct {
-	runner     platform.CommandRunner
-	adapters   []platform.Adapter // test injection; if non-nil, skip detection
-	configPath string             // override config path for testing; empty = default
-	target     string             // --target flag value
-	stderr     io.Writer          // for warnings
+	runner       platform.CommandRunner
+	adapters     []platform.Adapter // test injection; if non-nil, skip detection
+	configPath   string             // override config path for testing; empty = default
+	target       string             // --target flag value
+	stderr       io.Writer          // for warnings
+	configSaveFn func(string, config.Config) error // optional; defaults to config.Save
 }
 
 // resolveEnabledAdapters returns the adapters to use for a command, respecting:
@@ -63,8 +64,12 @@ func resolveEnabledAdapters(deps *adapterResolverDeps) ([]platform.Adapter, erro
 	}
 
 	// 5. If no config exists, bootstrap: enable all detected platforms, try to save
+	saveFn := deps.configSaveFn
+	if saveFn == nil {
+		saveFn = config.Save
+	}
 	if !cfg.HasPlatforms() {
-		return bootstrapFromDetection(allDetected, cfgPath, deps.stderr)
+		return bootstrapFromDetection(allDetected, cfgPath, saveFn, deps.stderr)
 	}
 
 	// 6. Apply config filter
@@ -96,7 +101,7 @@ func filterByTargetWithWarning(detected []platform.Adapter, target string, cfg c
 }
 
 // bootstrapFromDetection enables all detected platforms and saves config.
-func bootstrapFromDetection(detected []platform.Adapter, cfgPath string, stderr io.Writer) ([]platform.Adapter, error) {
+func bootstrapFromDetection(detected []platform.Adapter, cfgPath string, saveFn func(string, config.Config) error, stderr io.Writer) ([]platform.Adapter, error) {
 	if len(detected) == 0 {
 		return nil, fmt.Errorf("no supported CLIs detected")
 	}
@@ -108,7 +113,7 @@ func bootstrapFromDetection(detected []platform.Adapter, cfgPath string, stderr 
 		_ = cfg.SetPlatform(a.Name(), true)
 		names = append(names, a.Name())
 	}
-	if err := config.Save(cfgPath, cfg); err != nil {
+	if err := saveFn(cfgPath, cfg); err != nil {
 		fmt.Fprintf(stderr, "⚠ could not save config: %v\n", err)
 	}
 

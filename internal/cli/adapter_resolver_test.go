@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -215,12 +216,9 @@ func TestResolveAdapters_UnreadableConfigFallsBack(t *testing.T) {
 }
 
 func TestResolveAdapters_BootstrapSaveFailureNonFatal(t *testing.T) {
-	// Create a read-only directory so MkdirAll for the config subdir fails
-	dir := t.TempDir()
-	readonlyDir := filepath.Join(dir, "readonly")
-	require.NoError(t, os.Mkdir(readonlyDir, 0o555))
-	t.Cleanup(func() { os.Chmod(readonlyDir, 0o755) })
-	cfgPath := filepath.Join(readonlyDir, "sub", "config.yaml")
+	// Use an injectable save function that always fails — avoids platform-
+	// specific filesystem permission tricks that don't work on Windows.
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 
 	runner := newFakeRunner()
 	runner.lookPaths["claude"] = "/usr/local/bin/claude"
@@ -231,6 +229,9 @@ func TestResolveAdapters_BootstrapSaveFailureNonFatal(t *testing.T) {
 		runner:     runner,
 		configPath: cfgPath,
 		stderr:     stderr,
+		configSaveFn: func(string, config.Config) error {
+			return fmt.Errorf("disk full")
+		},
 	}
 	result, err := resolveEnabledAdapters(deps)
 	require.NoError(t, err)

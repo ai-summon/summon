@@ -5,11 +5,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// setHome sets the home directory env vars for both Unix (HOME) and Windows (USERPROFILE).
+func setHome(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv("HOME", dir)
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", dir)
+	}
+}
 
 // FakeRunner is a mock CommandRunner for testing.
 type FakeRunner struct {
@@ -609,7 +619,7 @@ func TestClaudeAdapter_EnsureMarketplace_UpdateFailure(t *testing.T) {
 
 func TestCopilotAdapter_FindPluginDir_ConfigJSON(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHome(t, home)
 
 	// Create plugin directory
 	pluginDir := filepath.Join(home, ".copilot", "installed-plugins", "bmw-ai-marketplace", "sli-reprocessing")
@@ -642,7 +652,7 @@ func TestCopilotAdapter_FindPluginDir_ConfigJSON(t *testing.T) {
 
 func TestCopilotAdapter_FindPluginDir_DynamicScan(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHome(t, home)
 
 	// Create plugin directory under a non-standard marketplace (no config.json)
 	pluginDir := filepath.Join(home, ".copilot", "installed-plugins", "custom-marketplace", "my-plugin")
@@ -659,7 +669,7 @@ func TestCopilotAdapter_FindPluginDir_DynamicScan(t *testing.T) {
 
 func TestCopilotAdapter_FindPluginDir_NotFound(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHome(t, home)
 
 	runner := NewFakeRunner()
 	runner.LookPaths["copilot"] = "/usr/local/bin/copilot"
@@ -672,7 +682,7 @@ func TestCopilotAdapter_FindPluginDir_NotFound(t *testing.T) {
 
 func TestClaudeAdapter_FindPluginDir_DynamicScan(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHome(t, home)
 
 	// Create plugin directory under a non-standard marketplace with version subdirectory
 	versionDir := filepath.Join(home, ".claude", "plugins", "cache", "custom-marketplace", "my-plugin", "0.2.0")
