@@ -409,6 +409,30 @@ func TestCopilotAdapter_ListMarketplaces_MixedSymbols(t *testing.T) {
 	assert.Equal(t, "ai-summon/summon-marketplace", marketplaces[2].Source)
 }
 
+func TestCopilotAdapter_ListMarketplaces_URLFormat(t *testing.T) {
+	// GHE-hosted marketplaces use "URL:" instead of "GitHub:"
+	output := "✨ Included with GitHub Copilot:\n" +
+		"  ◆ copilot-plugins (GitHub: github/copilot-plugins)\n" +
+		"\n" +
+		"Registered marketplaces:\n" +
+		"  • summon-marketplace (GitHub: ai-summon/summon-marketplace)\n" +
+		"  • bmw-ai-marketplace (URL: https://cc-github.bmwgroup.net/ismaeljimenez-martinez/bmw-ai-marketplace)\n"
+
+	runner := NewFakeRunner()
+	runner.LookPaths["copilot"] = "/usr/local/bin/copilot"
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return []byte(output), nil
+	}
+	adapter := NewCopilotAdapter(runner)
+	marketplaces, err := adapter.ListMarketplaces()
+	require.NoError(t, err)
+	assert.Len(t, marketplaces, 3)
+	assert.Equal(t, "copilot-plugins", marketplaces[0].Name)
+	assert.Equal(t, "summon-marketplace", marketplaces[1].Name)
+	assert.Equal(t, "bmw-ai-marketplace", marketplaces[2].Name)
+	assert.Equal(t, "https://cc-github.bmwgroup.net/ismaeljimenez-martinez/bmw-ai-marketplace", marketplaces[2].Source)
+}
+
 // --- EnsureMarketplace Tests ---
 
 func TestCopilotAdapter_EnsureMarketplace_AlreadyRegistered(t *testing.T) {

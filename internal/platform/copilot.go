@@ -146,8 +146,9 @@ func (c *CopilotAdapter) RemoveMarketplace(name string) error {
 }
 
 // copilotMarketplaceLine parses marketplace entries from copilot plugin marketplace list output.
-// Built-in marketplaces use "◆" and user-registered use "•": both followed by "name (GitHub: owner/repo)".
-var copilotMarketplaceLine = regexp.MustCompile(`[◆•]\s+(\S+)\s+\(GitHub:\s+(\S+)\)`)
+// Built-in marketplaces use "◆" and user-registered use "•": both followed by
+// "name (GitHub: owner/repo)" for github.com sources or "name (URL: https://...)" for GHE/custom URLs.
+var copilotMarketplaceLine = regexp.MustCompile(`[◆•]\s+(\S+)\s+\((?:GitHub|URL):\s+(\S+)\)`)
 
 func (c *CopilotAdapter) ListMarketplaces() ([]MarketplaceInfo, error) {
 	output, err := c.runner.Run("copilot", "plugin", "marketplace", "list")
