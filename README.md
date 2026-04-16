@@ -68,9 +68,12 @@ Every plugin has a `summon.yaml` that declares what it needs. Here's an example:
 name: my-plugin
 description: Analyses code quality and suggests improvements
 
+marketplaces:
+  acme-marketplace: gh:acme-org/acme-marketplace
+
 dependencies:
   - wingman                      # plugin from the default marketplace
-  - speckit@acme-marketplace     # plugin from a specific marketplace
+  - speckit@acme-marketplace     # plugin from a named marketplace (registered above)
 
 system_requirements:
   - git                          # required — install fails if missing
