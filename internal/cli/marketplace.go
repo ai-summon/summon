@@ -166,10 +166,12 @@ func runMarketplaceListWith(deps *marketplaceListDeps) error {
 				icon = starStyle.Render("★")
 				badge = "  " + badgeStyle.Render("official")
 			}
-			fmt.Fprintf(out, "  %s %s%s  %s\n", icon, m.Name, badge, urlStyle.Render(m.Source))
+			fmt.Fprintf(out, "\n  %s %s%s\n", icon, m.Name, badge)
+			fmt.Fprintf(out, "    %s\n", urlStyle.Render(m.Source))
 		}
 	}
 
+	fmt.Fprintln(out)
 	return nil
 }
 
