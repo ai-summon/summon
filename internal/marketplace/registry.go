@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/ai-summon/summon/internal/git"
@@ -239,4 +241,47 @@ func parseGitHubURL(source string) (owner, repo string, ok bool) {
 	}
 
 	return "", "", false
+}
+
+// ReadLocalIndex reads a marketplace index from the native CLI's local cache.
+// It checks known cache paths where Claude Code and Copilot CLI store marketplace data.
+// Returns the parsed Index or an error if no local cache is found.
+func ReadLocalIndex(name string) (Index, error) {
+	return readLocalIndexWithHome(name, "")
+}
+
+// ReadLocalIndexWithHome is the testable version of ReadLocalIndex that accepts a home directory.
+func ReadLocalIndexWithHome(name string, homeDir string) (Index, error) {
+	return readLocalIndexWithHome(name, homeDir)
+}
+
+// readLocalIndexWithHome is the internal implementation.
+func readLocalIndexWithHome(name string, homeDir string) (Index, error) {
+	if homeDir == "" {
+		var err error
+		homeDir, err = os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("cannot determine home directory: %w", err)
+		}
+	}
+
+	// Known local cache paths for marketplace indices
+	paths := []string{
+		// Claude Code stores marketplace indices here
+		filepath.Join(homeDir, ".claude", "plugins", "marketplaces", name, ".claude-plugin", "marketplace.json"),
+	}
+
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		idx, err := FetchIndex(data)
+		if err != nil {
+			continue
+		}
+		return idx, nil
+	}
+
+	return nil, fmt.Errorf("no local cache found for marketplace %q", name)
 }

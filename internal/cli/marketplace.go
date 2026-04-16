@@ -3,6 +3,8 @@ package cli
 import (
 	"fmt"
 	"io"
+	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/ai-summon/summon/internal/marketplace"
@@ -153,13 +155,99 @@ func runMarketplaceRemove(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runMarketplaceBrowse(cmd *cobra.Command, args []string) error {
-	out := cmd.OutOrStdout()
+// browseDeps holds injectable dependencies for the browse command.
+type browseDeps struct {
+	stdout     io.Writer
+	noColor    bool
+	configPath string
+	localReader func(name string) (marketplace.Index, error)
+	fetcher     marketplace.IndexFetcher
+}
 
-	// For now, show a placeholder — full implementation requires cloning the marketplace repo
-	fmt.Fprintf(out, "Browsing marketplace %q...\n", args[0])
-	fmt.Fprintln(out, "(Marketplace browsing requires network access to clone the marketplace repository)")
+func runMarketplaceBrowse(cmd *cobra.Command, args []string) error {
+	deps := &browseDeps{
+		stdout:      cmd.OutOrStdout(),
+		configPath:  getConfigPath(),
+		localReader: marketplace.ReadLocalIndex,
+		fetcher:     marketplace.NewDefaultIndexFetcher(&http.Client{}, &execGitRunner{}),
+	}
+	return runMarketplaceBrowseWith(args[0], deps)
+}
+
+func runMarketplaceBrowseWith(name string, deps *browseDeps) error {
+	out := deps.stdout
+
+	// Try local cache first
+	idx, err := deps.localReader(name)
+	if err != nil {
+		// Fall back to remote fetch
+		source, sourceErr := resolveMarketplaceSource(name, deps.configPath)
+		if sourceErr != nil {
+			return sourceErr
+		}
+		idx, err = deps.fetcher.FetchMarketplaceIndex(source)
+		if err != nil {
+			return fmt.Errorf("failed to fetch marketplace index: %w", err)
+		}
+	}
+
+	if len(idx) == 0 {
+		fmt.Fprintf(out, "No packages found in %s\n", name)
+		return nil
+	}
+
+	// Collect and sort package names
+	names := make([]string, 0, len(idx))
+	for n := range idx {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	// Find longest name for column alignment
+	maxLen := 0
+	for _, n := range names {
+		if len(n) > maxLen {
+			maxLen = len(n)
+		}
+	}
+
+	// Styled output
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
+	nameStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	descStyle := lipgloss.NewStyle().Faint(true)
+	if deps.noColor {
+		headerStyle = lipgloss.NewStyle()
+		nameStyle = lipgloss.NewStyle()
+		descStyle = lipgloss.NewStyle()
+	}
+
+	fmt.Fprintf(out, "\n%s\n\n", headerStyle.Render(fmt.Sprintf("Packages in %s:", name)))
+	for _, n := range names {
+		entry := idx[n]
+		padding := strings.Repeat(" ", maxLen-len(n)+4)
+		fmt.Fprintf(out, "  %s%s%s\n", nameStyle.Render(n), padding, descStyle.Render(entry.Description))
+	}
+	fmt.Fprintf(out, "\n%d package(s) available\n", len(names))
+
 	return nil
+}
+
+// resolveMarketplaceSource resolves a marketplace name to its source URL.
+func resolveMarketplaceSource(name, configPath string) (string, error) {
+	if name == "summon-marketplace" {
+		return marketplace.OfficialMarketplaceURL, nil
+	}
+
+	cfg, err := marketplace.LoadConfig(configPath)
+	if err != nil {
+		return "", err
+	}
+
+	entry := cfg.FindMarketplace(name)
+	if entry == nil {
+		return "", fmt.Errorf("marketplace %q not found. Use 'summon marketplace add' to register it", name)
+	}
+	return entry.Source, nil
 }
 
 func deriveMarketplaceName(source string) string {
