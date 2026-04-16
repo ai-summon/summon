@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ai-summon/summon/internal/marketplace"
@@ -268,7 +269,7 @@ func TestRunMarketplaceAddWith_NoAdapters(t *testing.T) {
 
 // --- List tests ---
 
-func TestRunMarketplaceListWith_MergesAdapters(t *testing.T) {
+func TestRunMarketplaceListWith_GroupsByPlatform(t *testing.T) {
 	var buf bytes.Buffer
 	a1 := newFakeAdapter("copilot")
 	a1.listMarketplacesFunc = func() ([]platform.MarketplaceInfo, error) {
@@ -294,11 +295,103 @@ func TestRunMarketplaceListWith_MergesAdapters(t *testing.T) {
 	require.NoError(t, err)
 
 	output := buf.String()
-	assert.Contains(t, output, "summon-marketplace")
-	assert.Contains(t, output, "(copilot, claude)") // deduplicated across adapters
-	assert.Contains(t, output, "my-mkt")
-	assert.Contains(t, output, "(copilot)") // only in copilot
-	assert.Contains(t, output, "2 marketplace(s) registered")
+	assert.Contains(t, output, "Copilot (2):")
+	assert.Contains(t, output, "Claude (1):")
+	// summon-marketplace appears in both sections (count lines containing the icon + name pattern)
+	lines := strings.Split(output, "\n")
+	mktCount := 0
+	myMktCount := 0
+	for _, line := range lines {
+		if strings.Contains(line, "summon-marketplace") && (strings.Contains(line, "★") || strings.Contains(line, "●")) {
+			mktCount++
+		}
+		if strings.Contains(line, "my-mkt") && strings.Contains(line, "●") {
+			myMktCount++
+		}
+	}
+	assert.Equal(t, 2, mktCount, "summon-marketplace should appear in both platform sections")
+	assert.Equal(t, 1, myMktCount, "my-mkt should appear only in copilot section")
+	// No total count line
+	assert.NotContains(t, output, "marketplace(s) registered")
+}
+
+func TestRunMarketplaceListWith_SingleAdapter(t *testing.T) {
+	var buf bytes.Buffer
+	a := newFakeAdapter("copilot")
+	a.listMarketplacesFunc = func() ([]platform.MarketplaceInfo, error) {
+		return []platform.MarketplaceInfo{
+			{Name: "my-mkt", Source: "https://github.com/org/my-mkt"},
+		}, nil
+	}
+
+	deps := &marketplaceListDeps{
+		stdout:   &buf,
+		noColor:  true,
+		adapters: []platform.Adapter{a},
+	}
+
+	err := runMarketplaceListWith(deps)
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "Copilot (1):")
+	assert.NotContains(t, output, "Claude")
+}
+
+func TestRunMarketplaceListWith_OfficialSortsFirst(t *testing.T) {
+	var buf bytes.Buffer
+	a := newFakeAdapter("copilot")
+	a.listMarketplacesFunc = func() ([]platform.MarketplaceInfo, error) {
+		return []platform.MarketplaceInfo{
+			{Name: "zzz-marketplace", Source: "https://github.com/org/zzz"},
+			{Name: "aaa-marketplace", Source: "https://github.com/org/aaa"},
+			{Name: "summon-marketplace", Source: "https://github.com/ai-summon/summon-marketplace"},
+		}, nil
+	}
+
+	deps := &marketplaceListDeps{
+		stdout:   &buf,
+		noColor:  true,
+		adapters: []platform.Adapter{a},
+	}
+
+	err := runMarketplaceListWith(deps)
+	require.NoError(t, err)
+
+	output := buf.String()
+	summonIdx := strings.Index(output, "summon-marketplace")
+	aaaIdx := strings.Index(output, "aaa-marketplace")
+	zzzIdx := strings.Index(output, "zzz-marketplace")
+	assert.Less(t, summonIdx, aaaIdx, "official marketplace should appear before aaa")
+	assert.Less(t, aaaIdx, zzzIdx, "aaa should appear before zzz")
+	assert.Contains(t, output, "official")
+}
+
+func TestRunMarketplaceListWith_AdapterErrorSkipped(t *testing.T) {
+	var buf bytes.Buffer
+	failing := newFakeAdapter("copilot")
+	failing.listMarketplacesFunc = func() ([]platform.MarketplaceInfo, error) {
+		return nil, fmt.Errorf("connection refused")
+	}
+	working := newFakeAdapter("claude")
+	working.listMarketplacesFunc = func() ([]platform.MarketplaceInfo, error) {
+		return []platform.MarketplaceInfo{
+			{Name: "summon-marketplace", Source: "https://github.com/ai-summon/summon-marketplace"},
+		}, nil
+	}
+
+	deps := &marketplaceListDeps{
+		stdout:   &buf,
+		noColor:  true,
+		adapters: []platform.Adapter{failing, working},
+	}
+
+	err := runMarketplaceListWith(deps)
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.NotContains(t, output, "Copilot")
+	assert.Contains(t, output, "Claude (1):")
 }
 
 func TestRunMarketplaceListWith_NoAdapters(t *testing.T) {

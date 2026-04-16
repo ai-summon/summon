@@ -120,30 +120,6 @@ func runMarketplaceListWith(deps *marketplaceListDeps) error {
 		return fmt.Errorf("no supported CLIs detected")
 	}
 
-	// Collect marketplaces from all adapters, deduplicate by name
-	type mktEntry struct {
-		name   string
-		source string
-		clis   []string
-	}
-	seen := make(map[string]*mktEntry)
-	var order []string
-
-	for _, a := range deps.adapters {
-		marketplaces, err := a.ListMarketplaces()
-		if err != nil {
-			continue
-		}
-		for _, m := range marketplaces {
-			if entry, ok := seen[m.Name]; ok {
-				entry.clis = append(entry.clis, a.Name())
-			} else {
-				seen[m.Name] = &mktEntry{name: m.Name, source: m.Source, clis: []string{a.Name()}}
-				order = append(order, m.Name)
-			}
-		}
-	}
-
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
 	starStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 	bulletStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
@@ -157,23 +133,43 @@ func runMarketplaceListWith(deps *marketplaceListDeps) error {
 		urlStyle = lipgloss.NewStyle()
 	}
 
-	fmt.Fprintln(out)
-	fmt.Fprintf(out, "%s\n", headerStyle.Render("Marketplaces:"))
-
-	for _, name := range order {
-		entry := seen[name]
-		icon := bulletStyle.Render("●")
-		badge := ""
-		if name == "summon-marketplace" {
-			icon = starStyle.Render("★")
-			badge = "  " + badgeStyle.Render("official")
+	first := true
+	for _, a := range deps.adapters {
+		marketplaces, err := a.ListMarketplaces()
+		if err != nil {
+			continue
 		}
-		cliInfo := badgeStyle.Render("(" + strings.Join(entry.clis, ", ") + ")")
-		fmt.Fprintf(out, "\n  %s %s%s  %s\n", icon, name, badge, cliInfo)
-		fmt.Fprintf(out, "    %s\n", urlStyle.Render(entry.source))
+
+		// Sort: official marketplace first, then alphabetical
+		sort.Slice(marketplaces, func(i, j int) bool {
+			iOfficial := marketplaces[i].Name == "summon-marketplace"
+			jOfficial := marketplaces[j].Name == "summon-marketplace"
+			if iOfficial != jOfficial {
+				return iOfficial
+			}
+			return marketplaces[i].Name < marketplaces[j].Name
+		})
+
+		// Title-case the adapter name for the header
+		title := strings.ToUpper(a.Name()[:1]) + a.Name()[1:]
+
+		if !first {
+			fmt.Fprintln(out)
+		}
+		first = false
+		fmt.Fprintf(out, "\n%s\n", headerStyle.Render(fmt.Sprintf("%s (%d):", title, len(marketplaces))))
+
+		for _, m := range marketplaces {
+			icon := bulletStyle.Render("●")
+			badge := ""
+			if m.Name == "summon-marketplace" {
+				icon = starStyle.Render("★")
+				badge = "  " + badgeStyle.Render("official")
+			}
+			fmt.Fprintf(out, "  %s %s%s  %s\n", icon, m.Name, badge, urlStyle.Render(m.Source))
+		}
 	}
 
-	fmt.Fprintf(out, "\n%d marketplace(s) registered\n", len(seen))
 	return nil
 }
 
