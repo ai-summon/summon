@@ -30,7 +30,41 @@ func TestPlatformList_BothDetected_NoConfig(t *testing.T) {
 	out := stdout.String()
 	assert.Contains(t, out, "claude")
 	assert.Contains(t, out, "copilot")
+	assert.Contains(t, out, "detected")
+	assert.Contains(t, out, "not enabled")
+	assert.NotContains(t, out, "enabled\n") // should not show bare "enabled"
+}
+
+func TestPlatformList_OneConfigured_OneDetected(t *testing.T) {
+	runner := newFakeRunner()
+	runner.lookPaths["copilot"] = "/usr/local/bin/copilot"
+	runner.lookPaths["claude"] = "/usr/local/bin/claude"
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	require.NoError(t, config.Save(cfgPath, config.Config{
+		Platforms: config.Platforms{
+			Claude: boolPtr(true),
+		},
+	}))
+
+	stdout := &bytes.Buffer{}
+	deps := &platformDeps{
+		runner:     runner,
+		stdout:     stdout,
+		stderr:     &bytes.Buffer{},
+		configPath: cfgPath,
+		noColor:    true,
+	}
+
+	err := runPlatformList(deps)
+	require.NoError(t, err)
+	out := stdout.String()
+	assert.Contains(t, out, "claude")
 	assert.Contains(t, out, "enabled")
+	assert.Contains(t, out, "copilot")
+	assert.Contains(t, out, "detected")
+	assert.Contains(t, out, "not enabled")
 }
 
 func TestPlatformList_OneDisabledOneEnabled(t *testing.T) {
