@@ -8,11 +8,10 @@ import (
 	"strings"
 
 	"github.com/ai-summon/summon/internal/marketplace"
+	"github.com/ai-summon/summon/internal/platform"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )
-
-var configPath string
 
 var marketplaceCmd = &cobra.Command{
 	Use:   "marketplace",
@@ -22,7 +21,6 @@ var marketplaceCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(marketplaceCmd)
 
-	// Add subcommands
 	addCmd := &cobra.Command{
 		Use:   "add <source>",
 		Short: "Register a custom marketplace",
@@ -53,45 +51,64 @@ func init() {
 	marketplaceCmd.AddCommand(addCmd, listMktCmd, removeCmd, browseCmd)
 }
 
-func getConfigPath() string {
-	if configPath != "" {
-		return configPath
-	}
-	return marketplace.DefaultConfigPath()
+// --- marketplace add ---
+
+type addDeps struct {
+	stdout   io.Writer
+	stderr   io.Writer
+	adapters []platform.Adapter
 }
 
 func runMarketplaceAdd(cmd *cobra.Command, args []string) error {
-	source := args[0]
-	out := cmd.OutOrStdout()
+	runner := &execRunner{}
+	adapters := platform.DetectAdapters(runner)
+	adapters, _ = platform.FilterByTarget(adapters, targetFlag)
 
-	// Derive name from source
+	deps := &addDeps{
+		stdout:   cmd.OutOrStdout(),
+		stderr:   cmd.ErrOrStderr(),
+		adapters: adapters,
+	}
+	return runMarketplaceAddWith(args[0], deps)
+}
+
+func runMarketplaceAddWith(source string, deps *addDeps) error {
+	out := deps.stdout
 	name := deriveMarketplaceName(source)
 
-	cfg, err := marketplace.LoadConfig(getConfigPath())
-	if err != nil {
-		return err
+	if len(deps.adapters) == 0 {
+		return fmt.Errorf("no supported CLIs detected. Install copilot or claude CLI first")
 	}
 
-	if err := cfg.AddMarketplace(name, source); err != nil {
-		return err
+	fmt.Fprintf(out, "Registering marketplace %q (%s)\n", name, source)
+
+	for _, a := range deps.adapters {
+		if err := a.EnsureMarketplace(name, source); err != nil {
+			fmt.Fprintf(deps.stderr, "⚠ %s: failed to register marketplace: %v\n", a.Name(), err)
+		} else {
+			fmt.Fprintf(out, "  ✓ %s: marketplace registered\n", a.Name())
+		}
 	}
 
-	if err := marketplace.SaveConfig(getConfigPath(), cfg); err != nil {
-		return err
-	}
-
-	fmt.Fprintf(out, "Marketplace %q registered (%s)\n", name, source)
 	return nil
 }
 
+// --- marketplace list ---
+
 type marketplaceListDeps struct {
-	stdout  io.Writer
-	noColor bool
+	stdout   io.Writer
+	noColor  bool
+	adapters []platform.Adapter
 }
 
 func runMarketplaceList(cmd *cobra.Command, args []string) error {
+	runner := &execRunner{}
+	adapters := platform.DetectAdapters(runner)
+	adapters, _ = platform.FilterByTarget(adapters, targetFlag)
+
 	deps := &marketplaceListDeps{
-		stdout: cmd.OutOrStdout(),
+		stdout:   cmd.OutOrStdout(),
+		adapters: adapters,
 	}
 	return runMarketplaceListWith(deps)
 }
@@ -99,9 +116,32 @@ func runMarketplaceList(cmd *cobra.Command, args []string) error {
 func runMarketplaceListWith(deps *marketplaceListDeps) error {
 	out := deps.stdout
 
-	cfg, err := marketplace.LoadConfig(getConfigPath())
-	if err != nil {
-		return err
+	if len(deps.adapters) == 0 {
+		return fmt.Errorf("no supported CLIs detected")
+	}
+
+	// Collect marketplaces from all adapters, deduplicate by name
+	type mktEntry struct {
+		name   string
+		source string
+		clis   []string
+	}
+	seen := make(map[string]*mktEntry)
+	var order []string
+
+	for _, a := range deps.adapters {
+		marketplaces, err := a.ListMarketplaces()
+		if err != nil {
+			continue
+		}
+		for _, m := range marketplaces {
+			if entry, ok := seen[m.Name]; ok {
+				entry.clis = append(entry.clis, a.Name())
+			} else {
+				seen[m.Name] = &mktEntry{name: m.Name, source: m.Source, clis: []string{a.Name()}}
+				order = append(order, m.Name)
+			}
+		}
 	}
 
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
@@ -120,54 +160,86 @@ func runMarketplaceListWith(deps *marketplaceListDeps) error {
 	fmt.Fprintln(out)
 	fmt.Fprintf(out, "%s\n", headerStyle.Render("Marketplaces:"))
 
-	// Official marketplace
-	fmt.Fprintf(out, "\n  %s %s  %s\n", starStyle.Render("★"), "summon-marketplace", badgeStyle.Render("official"))
-	fmt.Fprintf(out, "    %s\n", urlStyle.Render(marketplace.OfficialMarketplaceURL))
-
-	// User-registered marketplaces
-	for _, m := range cfg.Marketplaces {
-		fmt.Fprintf(out, "\n  %s %s\n", bulletStyle.Render("●"), m.Name)
-		fmt.Fprintf(out, "    %s\n", urlStyle.Render(m.Source))
+	for _, name := range order {
+		entry := seen[name]
+		icon := bulletStyle.Render("●")
+		badge := ""
+		if name == "summon-marketplace" {
+			icon = starStyle.Render("★")
+			badge = "  " + badgeStyle.Render("official")
+		}
+		cliInfo := badgeStyle.Render("(" + strings.Join(entry.clis, ", ") + ")")
+		fmt.Fprintf(out, "\n  %s %s%s  %s\n", icon, name, badge, cliInfo)
+		fmt.Fprintf(out, "    %s\n", urlStyle.Render(entry.source))
 	}
 
-	fmt.Fprintf(out, "\n%d marketplace(s) registered\n", 1+len(cfg.Marketplaces))
+	fmt.Fprintf(out, "\n%d marketplace(s) registered\n", len(seen))
 	return nil
+}
+
+// --- marketplace remove ---
+
+type removeDeps struct {
+	stdout   io.Writer
+	stderr   io.Writer
+	adapters []platform.Adapter
 }
 
 func runMarketplaceRemove(cmd *cobra.Command, args []string) error {
-	name := args[0]
-	out := cmd.OutOrStdout()
+	runner := &execRunner{}
+	adapters := platform.DetectAdapters(runner)
+	adapters, _ = platform.FilterByTarget(adapters, targetFlag)
 
-	cfg, err := marketplace.LoadConfig(getConfigPath())
-	if err != nil {
-		return err
+	deps := &removeDeps{
+		stdout:   cmd.OutOrStdout(),
+		stderr:   cmd.ErrOrStderr(),
+		adapters: adapters,
+	}
+	return runMarketplaceRemoveWith(args[0], deps)
+}
+
+func runMarketplaceRemoveWith(name string, deps *removeDeps) error {
+	out := deps.stdout
+
+	if len(deps.adapters) == 0 {
+		return fmt.Errorf("no supported CLIs detected")
 	}
 
-	if err := cfg.RemoveMarketplace(name); err != nil {
-		return err
+	if name == "summon-marketplace" {
+		return fmt.Errorf("cannot remove the official marketplace")
 	}
 
-	if err := marketplace.SaveConfig(getConfigPath(), cfg); err != nil {
-		return err
+	fmt.Fprintf(out, "Removing marketplace %q\n", name)
+
+	for _, a := range deps.adapters {
+		if err := a.RemoveMarketplace(name); err != nil {
+			fmt.Fprintf(deps.stderr, "⚠ %s: %v\n", a.Name(), err)
+		} else {
+			fmt.Fprintf(out, "  ✓ %s: marketplace removed\n", a.Name())
+		}
 	}
 
-	fmt.Fprintf(out, "Marketplace %q removed\n", name)
 	return nil
 }
 
-// browseDeps holds injectable dependencies for the browse command.
+// --- marketplace browse ---
+
 type browseDeps struct {
-	stdout     io.Writer
-	noColor    bool
-	configPath string
+	stdout      io.Writer
+	noColor     bool
+	adapters    []platform.Adapter
 	localReader func(name string) (marketplace.Index, error)
 	fetcher     marketplace.IndexFetcher
 }
 
 func runMarketplaceBrowse(cmd *cobra.Command, args []string) error {
+	runner := &execRunner{}
+	adapters := platform.DetectAdapters(runner)
+	adapters, _ = platform.FilterByTarget(adapters, targetFlag)
+
 	deps := &browseDeps{
 		stdout:      cmd.OutOrStdout(),
-		configPath:  getConfigPath(),
+		adapters:    adapters,
 		localReader: marketplace.ReadLocalIndex,
 		fetcher:     marketplace.NewDefaultIndexFetcher(&http.Client{}, &execGitRunner{}),
 	}
@@ -180,8 +252,8 @@ func runMarketplaceBrowseWith(name string, deps *browseDeps) error {
 	// Try local cache first
 	idx, err := deps.localReader(name)
 	if err != nil {
-		// Fall back to remote fetch
-		source, sourceErr := resolveMarketplaceSource(name, deps.configPath)
+		// Fall back to remote fetch — resolve source from adapters
+		source, sourceErr := resolveMarketplaceSourceFromAdapters(name, deps.adapters)
 		if sourceErr != nil {
 			return sourceErr
 		}
@@ -232,26 +304,31 @@ func runMarketplaceBrowseWith(name string, deps *browseDeps) error {
 	return nil
 }
 
-// resolveMarketplaceSource resolves a marketplace name to its source URL.
-func resolveMarketplaceSource(name, configPath string) (string, error) {
+// resolveMarketplaceSourceFromAdapters resolves a marketplace name to its source URL
+// by querying native CLIs.
+func resolveMarketplaceSourceFromAdapters(name string, adapters []platform.Adapter) (string, error) {
 	if name == "summon-marketplace" {
 		return marketplace.OfficialMarketplaceURL, nil
 	}
 
-	cfg, err := marketplace.LoadConfig(configPath)
-	if err != nil {
-		return "", err
+	for _, a := range adapters {
+		marketplaces, err := a.ListMarketplaces()
+		if err != nil {
+			continue
+		}
+		for _, m := range marketplaces {
+			if m.Name == name {
+				return m.Source, nil
+			}
+		}
 	}
 
-	entry := cfg.FindMarketplace(name)
-	if entry == nil {
-		return "", fmt.Errorf("marketplace %q not found. Use 'summon marketplace add' to register it", name)
-	}
-	return entry.Source, nil
+	return "", fmt.Errorf("marketplace %q not found. Use 'summon marketplace add' to register it", name)
 }
 
+// --- helpers ---
+
 func deriveMarketplaceName(source string) string {
-	// Try to extract a clean name from the source URL
 	source = strings.TrimSuffix(source, ".git")
 	parts := strings.Split(strings.TrimRight(source, "/"), "/")
 	if len(parts) > 0 {
@@ -259,5 +336,3 @@ func deriveMarketplaceName(source string) string {
 	}
 	return source
 }
-
-

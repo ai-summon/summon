@@ -50,6 +50,9 @@ type fakeAdapter struct {
 	uninstallFunc     func(name string, scope platform.Scope) error
 	findDirFunc       func(name string, scope platform.Scope) (string, error)
 	listInstalledFunc func(scope platform.Scope) ([]platform.InstalledPlugin, error)
+	ensureMarketplaceFunc func(name, source string) error
+	removeMarketplaceFunc func(name string) error
+	listMarketplacesFunc  func() ([]platform.MarketplaceInfo, error)
 	installedCmds     []string // track install calls
 }
 
@@ -87,10 +90,25 @@ func (f *fakeAdapter) ListInstalled(scope platform.Scope) ([]platform.InstalledP
 	return nil, nil
 }
 
-func (f *fakeAdapter) EnsureMarketplace(name, source string) error { return nil }
+func (f *fakeAdapter) EnsureMarketplace(name, source string) error {
+	if f.ensureMarketplaceFunc != nil {
+		return f.ensureMarketplaceFunc(name, source)
+	}
+	return nil
+}
 
 func (f *fakeAdapter) ListMarketplaces() ([]platform.MarketplaceInfo, error) {
+	if f.listMarketplacesFunc != nil {
+		return f.listMarketplacesFunc()
+	}
 	return nil, nil
+}
+
+func (f *fakeAdapter) RemoveMarketplace(name string) error {
+	if f.removeMarketplaceFunc != nil {
+		return f.removeMarketplaceFunc(name)
+	}
+	return nil
 }
 
 func (f *fakeAdapter) FindPluginDir(name string, scope platform.Scope) (string, error) {

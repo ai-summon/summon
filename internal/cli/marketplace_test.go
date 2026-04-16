@@ -2,14 +2,18 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/ai-summon/summon/internal/marketplace"
+	"github.com/ai-summon/summon/internal/platform"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// --- Browse tests ---
 
 func TestRunMarketplaceBrowseWith_LocalCache(t *testing.T) {
 	var buf bytes.Buffer
@@ -67,9 +71,8 @@ func TestRunMarketplaceBrowseWith_FallbackToHTTP(t *testing.T) {
 	fetcherCalled := false
 
 	deps := &browseDeps{
-		stdout:     &buf,
-		noColor:    true,
-		configPath: "/nonexistent/config.yaml",
+		stdout:  &buf,
+		noColor: true,
 		localReader: func(name string) (marketplace.Index, error) {
 			localCalled = true
 			return nil, assert.AnError
@@ -82,6 +85,7 @@ func TestRunMarketplaceBrowseWith_FallbackToHTTP(t *testing.T) {
 		},
 	}
 
+	// Official marketplace resolves source without adapters
 	err := runMarketplaceBrowseWith("summon-marketplace", deps)
 	require.NoError(t, err)
 
@@ -91,17 +95,46 @@ func TestRunMarketplaceBrowseWith_FallbackToHTTP(t *testing.T) {
 	assert.Contains(t, buf.String(), "From remote")
 }
 
-func TestRunMarketplaceBrowseWith_MarketplaceNotFound(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "config.yaml")
-	// Empty config
-	require.NoError(t, os.WriteFile(configPath, []byte("marketplaces: []\n"), 0644))
-
+func TestRunMarketplaceBrowseWith_FallbackUsesAdapter(t *testing.T) {
 	var buf bytes.Buffer
+	adapter := newFakeAdapter("copilot")
+	adapter.listMarketplacesFunc = func() ([]platform.MarketplaceInfo, error) {
+		return []platform.MarketplaceInfo{
+			{Name: "my-marketplace", Source: "https://github.com/org/my-marketplace"},
+		}, nil
+	}
+
 	deps := &browseDeps{
-		stdout:     &buf,
-		noColor:    true,
-		configPath: configPath,
+		stdout:  &buf,
+		noColor: true,
+		adapters: []platform.Adapter{adapter},
+		localReader: func(name string) (marketplace.Index, error) {
+			return nil, assert.AnError
+		},
+		fetcher: &fakeIndexFetcherForBrowse{
+			index: marketplace.Index{
+				"custom-tool": {Source: "gh:org/custom-tool", Description: "Custom tool"},
+			},
+		},
+	}
+
+	err := runMarketplaceBrowseWith("my-marketplace", deps)
+	require.NoError(t, err)
+	assert.Contains(t, buf.String(), "custom-tool")
+	assert.Contains(t, buf.String(), "Custom tool")
+}
+
+func TestRunMarketplaceBrowseWith_MarketplaceNotFound(t *testing.T) {
+	var buf bytes.Buffer
+	adapter := newFakeAdapter("copilot")
+	adapter.listMarketplacesFunc = func() ([]platform.MarketplaceInfo, error) {
+		return nil, nil
+	}
+
+	deps := &browseDeps{
+		stdout:   &buf,
+		noColor:  true,
+		adapters: []platform.Adapter{adapter},
 		localReader: func(name string) (marketplace.Index, error) {
 			return nil, assert.AnError
 		},
@@ -127,36 +160,8 @@ func TestRunMarketplaceBrowseWith_EmptyIndex(t *testing.T) {
 	assert.Contains(t, buf.String(), "No packages found")
 }
 
-func TestRunMarketplaceBrowseWith_UserRegisteredMarketplace(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "config.yaml")
-	configData := "marketplaces:\n  - name: my-marketplace\n    source: https://github.com/org/my-marketplace\n"
-	require.NoError(t, os.WriteFile(configPath, []byte(configData), 0644))
-
-	var buf bytes.Buffer
-	deps := &browseDeps{
-		stdout:     &buf,
-		noColor:    true,
-		configPath: configPath,
-		localReader: func(name string) (marketplace.Index, error) {
-			return nil, assert.AnError
-		},
-		fetcher: &fakeIndexFetcherForBrowse{
-			index: marketplace.Index{
-				"custom-tool": {Source: "gh:org/custom-tool", Description: "Custom tool"},
-			},
-		},
-	}
-
-	err := runMarketplaceBrowseWith("my-marketplace", deps)
-	require.NoError(t, err)
-	assert.Contains(t, buf.String(), "custom-tool")
-	assert.Contains(t, buf.String(), "Custom tool")
-}
-
 func TestReadLocalIndex_WithLocalFile(t *testing.T) {
 	tmpDir := t.TempDir()
-	// Create Claude cache structure
 	mktDir := filepath.Join(tmpDir, ".claude", "plugins", "marketplaces", "test-mkt", ".claude-plugin")
 	require.NoError(t, os.MkdirAll(mktDir, 0755))
 
@@ -188,6 +193,180 @@ func TestReadLocalIndex_NoLocalFile(t *testing.T) {
 	_, err := marketplace.ReadLocalIndexWithHome("nonexistent-mkt", tmpDir)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no local cache found")
+}
+
+// --- Add tests ---
+
+func TestRunMarketplaceAddWith_DelegatesToAdapters(t *testing.T) {
+	var outBuf, errBuf bytes.Buffer
+	adapter1 := newFakeAdapter("copilot")
+	adapter2 := newFakeAdapter("claude")
+
+	var ensured []string
+	ensureFunc := func(name, source string) error {
+		ensured = append(ensured, name+"@"+source)
+		return nil
+	}
+	adapter1.ensureMarketplaceFunc = ensureFunc
+	adapter2.ensureMarketplaceFunc = ensureFunc
+
+	deps := &addDeps{
+		stdout:   &outBuf,
+		stderr:   &errBuf,
+		adapters: []platform.Adapter{adapter1, adapter2},
+	}
+
+	err := runMarketplaceAddWith("https://github.com/org/my-marketplace", deps)
+	require.NoError(t, err)
+
+	assert.Len(t, ensured, 2)
+	assert.Contains(t, ensured[0], "my-marketplace@")
+	assert.Contains(t, ensured[1], "my-marketplace@")
+
+	output := outBuf.String()
+	assert.Contains(t, output, `Registering marketplace "my-marketplace"`)
+	assert.Contains(t, output, "✓ copilot: marketplace registered")
+	assert.Contains(t, output, "✓ claude: marketplace registered")
+}
+
+func TestRunMarketplaceAddWith_ContinuesOnAdapterFailure(t *testing.T) {
+	var outBuf, errBuf bytes.Buffer
+	failAdapter := newFakeAdapter("copilot")
+	failAdapter.ensureMarketplaceFunc = func(name, source string) error {
+		return fmt.Errorf("copilot not available")
+	}
+	okAdapter := newFakeAdapter("claude")
+	okAdapter.ensureMarketplaceFunc = func(name, source string) error {
+		return nil
+	}
+
+	deps := &addDeps{
+		stdout:   &outBuf,
+		stderr:   &errBuf,
+		adapters: []platform.Adapter{failAdapter, okAdapter},
+	}
+
+	err := runMarketplaceAddWith("https://github.com/org/test-mkt", deps)
+	require.NoError(t, err)
+
+	assert.Contains(t, errBuf.String(), "⚠ copilot: failed to register marketplace")
+	assert.Contains(t, outBuf.String(), "✓ claude: marketplace registered")
+}
+
+func TestRunMarketplaceAddWith_NoAdapters(t *testing.T) {
+	var outBuf, errBuf bytes.Buffer
+	deps := &addDeps{
+		stdout:   &outBuf,
+		stderr:   &errBuf,
+		adapters: nil,
+	}
+
+	err := runMarketplaceAddWith("https://github.com/org/solo-mkt", deps)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no supported CLIs detected")
+}
+
+// --- List tests ---
+
+func TestRunMarketplaceListWith_MergesAdapters(t *testing.T) {
+	var buf bytes.Buffer
+	a1 := newFakeAdapter("copilot")
+	a1.listMarketplacesFunc = func() ([]platform.MarketplaceInfo, error) {
+		return []platform.MarketplaceInfo{
+			{Name: "summon-marketplace", Source: "https://github.com/ai-summon/summon-marketplace"},
+			{Name: "my-mkt", Source: "https://github.com/org/my-mkt"},
+		}, nil
+	}
+	a2 := newFakeAdapter("claude")
+	a2.listMarketplacesFunc = func() ([]platform.MarketplaceInfo, error) {
+		return []platform.MarketplaceInfo{
+			{Name: "summon-marketplace", Source: "https://github.com/ai-summon/summon-marketplace"},
+		}, nil
+	}
+
+	deps := &marketplaceListDeps{
+		stdout:   &buf,
+		noColor:  true,
+		adapters: []platform.Adapter{a1, a2},
+	}
+
+	err := runMarketplaceListWith(deps)
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "summon-marketplace")
+	assert.Contains(t, output, "(copilot, claude)") // deduplicated across adapters
+	assert.Contains(t, output, "my-mkt")
+	assert.Contains(t, output, "(copilot)") // only in copilot
+	assert.Contains(t, output, "2 marketplace(s) registered")
+}
+
+func TestRunMarketplaceListWith_NoAdapters(t *testing.T) {
+	var buf bytes.Buffer
+	deps := &marketplaceListDeps{
+		stdout:   &buf,
+		adapters: nil,
+	}
+
+	err := runMarketplaceListWith(deps)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no supported CLIs detected")
+}
+
+// --- Remove tests ---
+
+func TestRunMarketplaceRemoveWith_DelegatesToAdapters(t *testing.T) {
+	var outBuf, errBuf bytes.Buffer
+	var removed []string
+	a1 := newFakeAdapter("copilot")
+	a1.removeMarketplaceFunc = func(name string) error {
+		removed = append(removed, "copilot:"+name)
+		return nil
+	}
+	a2 := newFakeAdapter("claude")
+	a2.removeMarketplaceFunc = func(name string) error {
+		removed = append(removed, "claude:"+name)
+		return nil
+	}
+
+	deps := &removeDeps{
+		stdout:   &outBuf,
+		stderr:   &errBuf,
+		adapters: []platform.Adapter{a1, a2},
+	}
+
+	err := runMarketplaceRemoveWith("my-mkt", deps)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"copilot:my-mkt", "claude:my-mkt"}, removed)
+	assert.Contains(t, outBuf.String(), "✓ copilot: marketplace removed")
+	assert.Contains(t, outBuf.String(), "✓ claude: marketplace removed")
+}
+
+func TestRunMarketplaceRemoveWith_BlocksOfficialRemoval(t *testing.T) {
+	var outBuf, errBuf bytes.Buffer
+	deps := &removeDeps{
+		stdout:   &outBuf,
+		stderr:   &errBuf,
+		adapters: []platform.Adapter{newFakeAdapter("copilot")},
+	}
+
+	err := runMarketplaceRemoveWith("summon-marketplace", deps)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot remove the official marketplace")
+}
+
+func TestRunMarketplaceRemoveWith_NoAdapters(t *testing.T) {
+	var outBuf, errBuf bytes.Buffer
+	deps := &removeDeps{
+		stdout:   &outBuf,
+		stderr:   &errBuf,
+		adapters: nil,
+	}
+
+	err := runMarketplaceRemoveWith("test", deps)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no supported CLIs detected")
 }
 
 // --- Fake IndexFetcher for browse tests ---

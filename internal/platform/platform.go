@@ -63,6 +63,7 @@ type Adapter interface {
 
 	// Marketplace management
 	EnsureMarketplace(name, source string) error
+	RemoveMarketplace(name string) error
 	ListMarketplaces() ([]MarketplaceInfo, error)
 
 	// Local plugin directory discovery

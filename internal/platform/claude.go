@@ -180,6 +180,14 @@ func (c *ClaudeAdapter) EnsureMarketplace(name, source string) error {
 	return nil
 }
 
+func (c *ClaudeAdapter) RemoveMarketplace(name string) error {
+	output, err := c.runner.Run("claude", "plugin", "marketplace", "remove", name)
+	if err != nil {
+		return cliError("claude marketplace remove", output, err)
+	}
+	return nil
+}
+
 func (c *ClaudeAdapter) ListMarketplaces() ([]MarketplaceInfo, error) {
 	output, err := c.runner.Run("claude", "plugin", "marketplace", "list", "--json")
 	if err != nil {
