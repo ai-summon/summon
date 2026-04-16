@@ -16,12 +16,13 @@ import (
 var updateYes bool
 
 type updateDeps struct {
-	runner  platform.CommandRunner
-	fetcher manifest.ManifestFetcher
-	stdin   io.Reader
-	stdout  io.Writer
-	stderr  io.Writer
-	noColor bool
+	runner     platform.CommandRunner
+	fetcher    manifest.ManifestFetcher
+	stdin      io.Reader
+	stdout     io.Writer
+	stderr     io.Writer
+	noColor    bool
+	configPath string // override for testing; empty = default
 }
 
 // pluginUpdateOutcome tracks the result of updating a single plugin on a single platform.
@@ -378,11 +379,12 @@ func runUpdate(name string, deps *updateDeps) error {
 		return err
 	}
 
-	adapters := platform.DetectAdapters(deps.runner)
-	if len(adapters) == 0 {
-		return fmt.Errorf("no supported CLIs detected")
-	}
-	adapters, err = platform.FilterByTarget(adapters, targetFlag)
+	adapters, err := resolveEnabledAdapters(&adapterResolverDeps{
+		runner:     deps.runner,
+		target:     targetFlag,
+		stderr:     deps.stderr,
+		configPath: deps.configPath,
+	})
 	if err != nil {
 		return err
 	}
@@ -513,11 +515,12 @@ func runUpdateAll(deps *updateDeps) error {
 		return err
 	}
 
-	adapters := platform.DetectAdapters(deps.runner)
-	if len(adapters) == 0 {
-		return fmt.Errorf("no supported CLIs detected")
-	}
-	adapters, err = platform.FilterByTarget(adapters, targetFlag)
+	adapters, err := resolveEnabledAdapters(&adapterResolverDeps{
+		runner:     deps.runner,
+		target:     targetFlag,
+		stderr:     deps.stderr,
+		configPath: deps.configPath,
+	})
 	if err != nil {
 		return err
 	}

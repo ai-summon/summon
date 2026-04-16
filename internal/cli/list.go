@@ -22,6 +22,7 @@ type listDeps struct {
 	fetcher  manifest.ManifestFetcher
 	adapters []platform.Adapter // if non-nil, use instead of auto-detecting
 	stdout   io.Writer
+	stderr   io.Writer
 	noColor  bool
 }
 
@@ -30,6 +31,7 @@ func defaultListDeps() *listDeps {
 		runner:  &execRunner{},
 		fetcher: manifest.NewLocalManifestFetcher(),
 		stdout:  os.Stdout,
+		stderr:  os.Stderr,
 	}
 }
 
@@ -62,16 +64,12 @@ func runList(deps *listDeps) error {
 	out := deps.stdout
 	scope, _ := platform.ParseScope(installScope)
 
-	var adapters []platform.Adapter
-	if deps.adapters != nil {
-		adapters = deps.adapters
-	} else {
-		adapters = platform.DetectAdapters(deps.runner)
-	}
-	if len(adapters) == 0 {
-		return fmt.Errorf("no supported CLIs detected")
-	}
-	adapters, err := platform.FilterByTarget(adapters, targetFlag)
+	adapters, err := resolveEnabledAdapters(&adapterResolverDeps{
+		runner:   deps.runner,
+		adapters: deps.adapters,
+		target:   targetFlag,
+		stderr:   deps.stderr,
+	})
 	if err != nil {
 		return err
 	}

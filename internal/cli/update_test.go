@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -24,6 +25,7 @@ func TestUpdate_BasicUpdate(t *testing.T) {
 
 	fetcher := newFakeFetcher()
 	deps := &updateDeps{
+		configPath: filepath.Join(t.TempDir(), "config.yaml"),
 		runner:  runner,
 		fetcher: fetcher,
 		stdin:   strings.NewReader(""),
@@ -64,6 +66,7 @@ func TestUpdate_WithNewDeps(t *testing.T) {
 	}
 
 	deps := &updateDeps{
+		configPath: filepath.Join(t.TempDir(), "config.yaml"),
 		runner:  runner,
 		fetcher: fetcher,
 		stdin:   strings.NewReader(""),
@@ -95,6 +98,7 @@ func TestUpdate_NotInstalled(t *testing.T) {
 	}
 
 	deps := &updateDeps{
+		configPath: filepath.Join(t.TempDir(), "config.yaml"),
 		runner:  runner,
 		fetcher: newFakeFetcher(),
 		stdin:   strings.NewReader(""),
@@ -124,6 +128,7 @@ func TestUpdateAll(t *testing.T) {
 
 	fetcher := newFakeFetcher()
 	deps := &updateDeps{
+		configPath: filepath.Join(t.TempDir(), "config.yaml"),
 		runner:  runner,
 		fetcher: fetcher,
 		stdin:   strings.NewReader(""),
@@ -162,6 +167,7 @@ func TestUpdate_ProjectScope(t *testing.T) {
 	}
 
 	deps := &updateDeps{
+		configPath: filepath.Join(t.TempDir(), "config.yaml"),
 		runner:  runner,
 		fetcher: newFakeFetcher(),
 		stdin:   strings.NewReader(""),
@@ -218,6 +224,7 @@ func TestUpdate_PartialFailure(t *testing.T) {
 	}
 
 	deps := &updateDeps{
+		configPath: filepath.Join(t.TempDir(), "config.yaml"),
 		runner:  runner,
 		fetcher: newFakeFetcher(),
 		stdin:   strings.NewReader(""),
@@ -259,6 +266,7 @@ func TestUpdate_ClaudeUsesSourceIdentifier(t *testing.T) {
 	}
 
 	deps := &updateDeps{
+		configPath: filepath.Join(t.TempDir(), "config.yaml"),
 		runner:  runner,
 		fetcher: newFakeFetcher(),
 		stdin:   strings.NewReader(""),
@@ -312,6 +320,7 @@ func TestUpdate_SkipsAdaptersWhereNotInstalled(t *testing.T) {
 	}
 
 	deps := &updateDeps{
+		configPath: filepath.Join(t.TempDir(), "config.yaml"),
 		runner:  runner,
 		fetcher: newFakeFetcher(),
 		stdin:   strings.NewReader(""),
@@ -352,6 +361,7 @@ func TestUpdate_UpToDate(t *testing.T) {
 	}
 
 	deps := &updateDeps{
+		configPath: filepath.Join(t.TempDir(), "config.yaml"),
 		runner:  runner,
 		fetcher: newFakeFetcher(),
 		stdin:   strings.NewReader(""),
@@ -390,6 +400,7 @@ func TestUpdate_VersionChanged(t *testing.T) {
 	}
 
 	deps := &updateDeps{
+		configPath: filepath.Join(t.TempDir(), "config.yaml"),
 		runner:  runner,
 		fetcher: newFakeFetcher(),
 		stdin:   strings.NewReader(""),
@@ -422,6 +433,7 @@ func TestUpdateAll_Summary(t *testing.T) {
 	}
 
 	deps := &updateDeps{
+		configPath: filepath.Join(t.TempDir(), "config.yaml"),
 		runner:  runner,
 		fetcher: newFakeFetcher(),
 		stdin:   strings.NewReader(""),
@@ -460,6 +472,7 @@ func TestUpdateAll_PerPlatformOutput(t *testing.T) {
 	}
 
 	deps := &updateDeps{
+		configPath: filepath.Join(t.TempDir(), "config.yaml"),
 		runner:  runner,
 		fetcher: newFakeFetcher(),
 		stdin:   strings.NewReader(""),
@@ -507,6 +520,7 @@ func TestUpdate_AllPlatformsFail(t *testing.T) {
 	}
 
 	deps := &updateDeps{
+		configPath: filepath.Join(t.TempDir(), "config.yaml"),
 		runner:  runner,
 		fetcher: newFakeFetcher(),
 		stdin:   strings.NewReader(""),

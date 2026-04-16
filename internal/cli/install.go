@@ -106,27 +106,12 @@ func runInstall(specifier string, deps *installDeps) error {
 	}
 
 	// 2. Detect platform adapters
-	var adapters []platform.Adapter
-	if deps.adapters != nil {
-		adapters = deps.adapters
-	} else {
-		allAdapters := []platform.Adapter{
-			platform.NewCopilotAdapter(deps.runner),
-			platform.NewClaudeAdapter(deps.runner),
-		}
-		for _, a := range allAdapters {
-			if a.Detect() {
-				adapters = append(adapters, a)
-			} else {
-				fmt.Fprintf(deps.stderr, "⚠ %s not detected, skipping\n", a.Name())
-			}
-		}
-	}
-	if len(adapters) == 0 {
-		return fmt.Errorf("no supported CLIs detected. Install copilot or claude CLI first")
-	}
-
-	adapters, err = platform.FilterByTarget(adapters, targetFlag)
+	adapters, err := resolveEnabledAdapters(&adapterResolverDeps{
+		runner:   deps.runner,
+		adapters: deps.adapters,
+		target:   targetFlag,
+		stderr:   deps.stderr,
+	})
 	if err != nil {
 		return err
 	}

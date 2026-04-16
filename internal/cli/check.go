@@ -22,6 +22,7 @@ type checkDeps struct {
 	fetcher  manifest.ManifestFetcher
 	adapters []platform.Adapter // if non-nil, use instead of auto-detecting
 	stdout   io.Writer
+	stderr   io.Writer
 	noColor  bool
 }
 
@@ -30,6 +31,7 @@ func defaultCheckDeps() *checkDeps {
 		runner:  &execRunner{},
 		fetcher: manifest.NewLocalManifestFetcher(),
 		stdout:  os.Stdout,
+		stderr:  os.Stderr,
 	}
 }
 
@@ -78,22 +80,22 @@ type sysStatus struct {
 	Reason   string `json:"reason,omitempty"`
 }
 
-func resolveAdapters(deps *checkDeps) ([]platform.Adapter, error) {
-	var adapters []platform.Adapter
-	if deps.adapters != nil {
-		adapters = deps.adapters
-	} else {
-		adapters = platform.DetectAdapters(deps.runner)
+func resolveCheckAdapters(deps *checkDeps) ([]platform.Adapter, error) {
+	stderr := deps.stderr
+	if stderr == nil {
+		stderr = io.Discard
 	}
-	if len(adapters) == 0 {
-		return nil, fmt.Errorf("no supported CLIs detected")
-	}
-	return platform.FilterByTarget(adapters, targetFlag)
+	return resolveEnabledAdapters(&adapterResolverDeps{
+		runner:   deps.runner,
+		adapters: deps.adapters,
+		target:   targetFlag,
+		stderr:   stderr,
+	})
 }
 
 func runCheckAll(deps *checkDeps) error {
 	scope, _ := platform.ParseScope(installScope)
-	adapters, err := resolveAdapters(deps)
+	adapters, err := resolveCheckAdapters(deps)
 	if err != nil {
 		return err
 	}
@@ -146,7 +148,7 @@ func runCheckAll(deps *checkDeps) error {
 
 func runCheckSingle(name string, deps *checkDeps) error {
 	scope, _ := platform.ParseScope(installScope)
-	adapters, err := resolveAdapters(deps)
+	adapters, err := resolveCheckAdapters(deps)
 	if err != nil {
 		return err
 	}

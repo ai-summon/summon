@@ -61,8 +61,14 @@ type addDeps struct {
 
 func runMarketplaceAdd(cmd *cobra.Command, args []string) error {
 	runner := &execRunner{}
-	adapters := platform.DetectAdapters(runner)
-	adapters, _ = platform.FilterByTarget(adapters, targetFlag)
+	adapters, err := resolveEnabledAdapters(&adapterResolverDeps{
+		runner: runner,
+		target: targetFlag,
+		stderr: cmd.ErrOrStderr(),
+	})
+	if err != nil {
+		return err
+	}
 
 	deps := &addDeps{
 		stdout:   cmd.OutOrStdout(),
@@ -103,8 +109,14 @@ type marketplaceListDeps struct {
 
 func runMarketplaceList(cmd *cobra.Command, args []string) error {
 	runner := &execRunner{}
-	adapters := platform.DetectAdapters(runner)
-	adapters, _ = platform.FilterByTarget(adapters, targetFlag)
+	adapters, err := resolveEnabledAdapters(&adapterResolverDeps{
+		runner: runner,
+		target: targetFlag,
+		stderr: cmd.ErrOrStderr(),
+	})
+	if err != nil {
+		return err
+	}
 
 	deps := &marketplaceListDeps{
 		stdout:   cmd.OutOrStdout(),
@@ -185,8 +197,14 @@ type removeDeps struct {
 
 func runMarketplaceRemove(cmd *cobra.Command, args []string) error {
 	runner := &execRunner{}
-	adapters := platform.DetectAdapters(runner)
-	adapters, _ = platform.FilterByTarget(adapters, targetFlag)
+	adapters, err := resolveEnabledAdapters(&adapterResolverDeps{
+		runner: runner,
+		target: targetFlag,
+		stderr: cmd.ErrOrStderr(),
+	})
+	if err != nil {
+		return err
+	}
 
 	deps := &removeDeps{
 		stdout:   cmd.OutOrStdout(),
@@ -232,8 +250,14 @@ type browseDeps struct {
 
 func runMarketplaceBrowse(cmd *cobra.Command, args []string) error {
 	runner := &execRunner{}
-	adapters := platform.DetectAdapters(runner)
-	adapters, _ = platform.FilterByTarget(adapters, targetFlag)
+	adapters, err := resolveEnabledAdapters(&adapterResolverDeps{
+		runner: runner,
+		target: targetFlag,
+		stderr: cmd.ErrOrStderr(),
+	})
+	if err != nil {
+		return err
+	}
 
 	deps := &browseDeps{
 		stdout:      cmd.OutOrStdout(),
