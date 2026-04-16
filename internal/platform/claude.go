@@ -244,21 +244,25 @@ func (c *ClaudeAdapter) FindPluginDir(name string, scope Scope) (string, error) 
 		basePath = filepath.Join(c.cwd, ".claude", "plugins", "cache")
 	}
 
-	// Strategy 1: Scan cache directory for marketplace/name/version pattern
-	marketplaces := []string{"summon-marketplace", "claude-plugins-official"}
-	for _, mkt := range marketplaces {
-		mktDir := filepath.Join(basePath, mkt, name)
-		if entries, err := os.ReadDir(mktDir); err == nil {
-			// Find the latest version directory
-			var latestVersion string
-			for _, e := range entries {
-				if e.IsDir() {
-					latestVersion = e.Name()
-				}
+	// Strategy 1: Scan all marketplace directories under cache for name/version pattern
+	if cacheEntries, err := os.ReadDir(basePath); err == nil {
+		for _, ce := range cacheEntries {
+			if !ce.IsDir() {
+				continue
 			}
-			if latestVersion != "" {
-				dir := filepath.Join(mktDir, latestVersion)
-				return dir, nil
+			mktDir := filepath.Join(basePath, ce.Name(), name)
+			if entries, err := os.ReadDir(mktDir); err == nil {
+				// Find the latest version directory
+				var latestVersion string
+				for _, e := range entries {
+					if e.IsDir() {
+						latestVersion = e.Name()
+					}
+				}
+				if latestVersion != "" {
+					dir := filepath.Join(mktDir, latestVersion)
+					return dir, nil
+				}
 			}
 		}
 	}

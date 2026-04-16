@@ -180,14 +180,14 @@ func (c *CopilotAdapter) FindPluginDir(name string, scope Scope) (string, error)
 		return "", fmt.Errorf("cannot determine home directory: %w", err)
 	}
 
-	// Strategy 1: Read ~/.copilot/config.json for cache_path
+	// Strategy 1: Read ~/.copilot/config.json for cache_path (authoritative)
 	configPath := filepath.Join(homeDir, ".copilot", "config.json")
 	if data, err := os.ReadFile(configPath); err == nil {
 		var config struct {
 			InstalledPlugins []struct {
 				Name      string `json:"name"`
 				CachePath string `json:"cache_path"`
-			} `json:"installed_plugins"`
+			} `json:"installedPlugins"`
 		}
 		if err := json.Unmarshal(data, &config); err == nil {
 			for _, p := range config.InstalledPlugins {
@@ -204,13 +204,17 @@ func (c *CopilotAdapter) FindPluginDir(name string, scope Scope) (string, error)
 		}
 	}
 
-	// Strategy 2: Check well-known marketplace directory paths
+	// Strategy 2: Scan all marketplace directories under installed-plugins
 	basePath := filepath.Join(homeDir, ".copilot", "installed-plugins")
-	marketplaces := []string{"summon-marketplace", "copilot-plugins", "awesome-copilot", "_direct"}
-	for _, mkt := range marketplaces {
-		dir := filepath.Join(basePath, mkt, name)
-		if _, err := os.Stat(dir); err == nil {
-			return dir, nil
+	if entries, err := os.ReadDir(basePath); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			dir := filepath.Join(basePath, e.Name(), name)
+			if _, err := os.Stat(dir); err == nil {
+				return dir, nil
+			}
 		}
 	}
 

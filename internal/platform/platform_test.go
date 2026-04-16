@@ -1,7 +1,10 @@
 package platform
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -602,4 +605,84 @@ func TestClaudeAdapter_EnsureMarketplace_UpdateFailure(t *testing.T) {
 	err := adapter.EnsureMarketplace("summon-marketplace", "ai-summon/summon-marketplace")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "update")
+}
+
+func TestCopilotAdapter_FindPluginDir_ConfigJSON(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Create plugin directory
+	pluginDir := filepath.Join(home, ".copilot", "installed-plugins", "bmw-ai-marketplace", "sli-reprocessing")
+	require.NoError(t, os.MkdirAll(pluginDir, 0o755))
+
+	// Write config.json with camelCase key (as copilot CLI writes it)
+	config := map[string]interface{}{
+		"installedPlugins": []map[string]interface{}{
+			{
+				"name":       "sli-reprocessing",
+				"marketplace": "bmw-ai-marketplace",
+				"cache_path": pluginDir,
+			},
+		},
+	}
+	data, err := json.Marshal(config)
+	require.NoError(t, err)
+	configDir := filepath.Join(home, ".copilot")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), data, 0o644))
+
+	runner := NewFakeRunner()
+	runner.LookPaths["copilot"] = "/usr/local/bin/copilot"
+	adapter := NewCopilotAdapter(runner)
+
+	dir, err := adapter.FindPluginDir("sli-reprocessing", ScopeUser)
+	require.NoError(t, err)
+	assert.Equal(t, pluginDir, dir)
+}
+
+func TestCopilotAdapter_FindPluginDir_DynamicScan(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Create plugin directory under a non-standard marketplace (no config.json)
+	pluginDir := filepath.Join(home, ".copilot", "installed-plugins", "custom-marketplace", "my-plugin")
+	require.NoError(t, os.MkdirAll(pluginDir, 0o755))
+
+	runner := NewFakeRunner()
+	runner.LookPaths["copilot"] = "/usr/local/bin/copilot"
+	adapter := NewCopilotAdapter(runner)
+
+	dir, err := adapter.FindPluginDir("my-plugin", ScopeUser)
+	require.NoError(t, err)
+	assert.Equal(t, pluginDir, dir)
+}
+
+func TestCopilotAdapter_FindPluginDir_NotFound(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	runner := NewFakeRunner()
+	runner.LookPaths["copilot"] = "/usr/local/bin/copilot"
+	adapter := NewCopilotAdapter(runner)
+
+	_, err := adapter.FindPluginDir("nonexistent", ScopeUser)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestClaudeAdapter_FindPluginDir_DynamicScan(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Create plugin directory under a non-standard marketplace with version subdirectory
+	versionDir := filepath.Join(home, ".claude", "plugins", "cache", "custom-marketplace", "my-plugin", "0.2.0")
+	require.NoError(t, os.MkdirAll(versionDir, 0o755))
+
+	runner := NewFakeRunner()
+	runner.LookPaths["claude"] = "/usr/local/bin/claude"
+	adapter := NewClaudeAdapter(runner)
+
+	dir, err := adapter.FindPluginDir("my-plugin", ScopeUser)
+	require.NoError(t, err)
+	assert.Equal(t, versionDir, dir)
 }
