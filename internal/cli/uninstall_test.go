@@ -54,8 +54,6 @@ func TestUninstall_WithDependents(t *testing.T) {
 
 	fetcher := newFakeFetcher()
 	fetcher.manifests["/fake/plugins/my-plugin"] = &manifest.Manifest{
-		Name:        "my-plugin",
-		Description: "Main plugin",
 		Dependencies: []string{"gh:owner/dep-a"},
 	}
 
@@ -116,8 +114,6 @@ func TestUninstall_YesSkipsConfirmation(t *testing.T) {
 
 	fetcher := newFakeFetcher()
 	fetcher.manifests["/fake/plugins/my-plugin"] = &manifest.Manifest{
-		Name:        "my-plugin",
-		Description: "Main plugin",
 		Dependencies: []string{"gh:owner/dep-a"},
 	}
 
@@ -308,7 +304,6 @@ func TestUninstall_DeduplicatesReverseDeps(t *testing.T) {
 
 	fetcher := newFakeFetcher()
 	fetcher.manifests["/fake/parent"] = &manifest.Manifest{
-		Name:         "parent",
 		Dependencies: []string{"child"},
 	}
 

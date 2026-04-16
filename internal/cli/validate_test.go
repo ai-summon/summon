@@ -12,9 +12,7 @@ import (
 
 func TestValidate_ValidManifest(t *testing.T) {
 	dir := t.TempDir()
-	manifestData := `name: my-plugin
-description: A test plugin
-dependencies:
+	manifestData := `dependencies:
   - other-plugin
   - gh:owner/dep
 system_requirements:
@@ -57,8 +55,9 @@ func TestValidate_MissingFile(t *testing.T) {
 
 func TestValidate_InvalidManifest(t *testing.T) {
 	dir := t.TempDir()
-	manifestData := `name: my-plugin
-# missing description
+	manifestData := `system_requirements:
+  - name: docker
+    optional: true
 `
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "summon.yaml"), []byte(manifestData), 0644))
 
@@ -77,9 +76,7 @@ func TestValidate_InvalidManifest(t *testing.T) {
 
 func TestValidate_MissingRequiredSysReq(t *testing.T) {
 	dir := t.TempDir()
-	manifestData := `name: my-plugin
-description: A test plugin
-system_requirements:
+	manifestData := `system_requirements:
   - nonexistent-binary-xyz-test
 `
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "summon.yaml"), []byte(manifestData), 0644))

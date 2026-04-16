@@ -26,8 +26,6 @@ func TestList_WithPlugins(t *testing.T) {
 
 	fetcher := newFakeFetcher()
 	fetcher.manifests["/fake/plugins/my-plugin"] = &manifest.Manifest{
-		Name:        "my-plugin",
-		Description: "Plugin",
 		Dependencies: []string{"gh:owner/other-plugin"},
 	}
 

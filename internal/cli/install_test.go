@@ -178,8 +178,6 @@ func TestInstall_WithDependencies(t *testing.T) {
 
 	// Register manifests keyed by the dir path that FindPluginDir returns
 	fetcher.manifests["/fake/plugins/my-plugin"] = &manifest.Manifest{
-		Name:         "my-plugin",
-		Description:  "Main plugin",
 		Dependencies: []string{"gh:owner/dep-a"},
 	}
 
@@ -224,13 +222,9 @@ func TestInstall_CycleDetection(t *testing.T) {
 	}
 
 	fetcher.manifests["/fake/plugins/a"] = &manifest.Manifest{
-		Name:         "a",
-		Description:  "Plugin A",
 		Dependencies: []string{"gh:owner/b"},
 	}
 	fetcher.manifests["/fake/plugins/b"] = &manifest.Manifest{
-		Name:         "b",
-		Description:  "Plugin B",
 		Dependencies: []string{"gh:owner/a"},
 	}
 
@@ -257,8 +251,6 @@ func TestInstall_SystemRequirements_PostInstallWarning(t *testing.T) {
 	}
 
 	fetcher.manifests["/fake/plugins/my-plugin"] = &manifest.Manifest{
-		Name:        "my-plugin",
-		Description: "Plugin with sys reqs",
 		SystemRequirements: []manifest.SystemRequirement{
 			{Name: "nonexistent-binary-xyz"},
 		},
@@ -290,8 +282,6 @@ func TestInstall_SystemRequirements_ForceMode(t *testing.T) {
 	}
 
 	fetcher.manifests["/fake/plugins/my-plugin"] = &manifest.Manifest{
-		Name:        "my-plugin",
-		Description: "Plugin with sys reqs",
 		SystemRequirements: []manifest.SystemRequirement{
 			{Name: "nonexistent-binary-xyz"},
 		},
@@ -354,8 +344,6 @@ func TestInstall_BareName_WithDependencies_NativeDelegation(t *testing.T) {
 	}
 
 	fetcher.manifests["/fake/plugins/superpowers"] = &manifest.Manifest{
-		Name:         "superpowers",
-		Description:  "Main plugin",
 		Dependencies: []string{"helper-tools"},
 	}
 
@@ -502,7 +490,6 @@ func TestInstall_ProgressMessages_DependencyInstall(t *testing.T) {
 		return "/fake/plugins/" + name, nil
 	}
 	fetcher.manifests["/fake/plugins/main-pkg"] = &manifest.Manifest{
-		Name:         "main-pkg",
 		Dependencies: []string{"dep-a"},
 	}
 
@@ -560,8 +547,6 @@ func TestInstall_PlatformFirstOutput_MultiAdapter(t *testing.T) {
 	}
 
 	fetcher.manifests["/fake/plugins/wingman"] = &manifest.Manifest{
-		Name:         "wingman",
-		Description:  "Main plugin",
 		Dependencies: []string{"speckit"},
 	}
 
@@ -616,8 +601,6 @@ func TestInstall_PlatformFirst_MainFailSkipsDeps(t *testing.T) {
 	}
 
 	fetcher.manifests["/fake/plugins/wingman"] = &manifest.Manifest{
-		Name:         "wingman",
-		Description:  "Main plugin",
 		Dependencies: []string{"speckit"},
 	}
 
@@ -669,8 +652,6 @@ func TestInstall_PlatformFirst_DepErrorDoesNotAbortNextAdapter(t *testing.T) {
 	}
 
 	fetcher.manifests["/fake/plugins/wingman"] = &manifest.Manifest{
-		Name:         "wingman",
-		Description:  "Main plugin",
 		Dependencies: []string{"speckit"},
 	}
 

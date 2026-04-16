@@ -24,8 +24,6 @@ func TestCheck_AllDepsSatisfied(t *testing.T) {
 
 	fetcher := newFakeFetcher()
 	fetcher.manifests["/fake/plugins/my-plugin"] = &manifest.Manifest{
-		Name:        "my-plugin",
-		Description: "Plugin",
 		Dependencies: []string{"gh:owner/dep-a"},
 	}
 
@@ -58,8 +56,6 @@ func TestCheck_RequiredMissing(t *testing.T) {
 
 	fetcher := newFakeFetcher()
 	fetcher.manifests["/fake/plugins/my-plugin"] = &manifest.Manifest{
-		Name:        "my-plugin",
-		Description: "Plugin",
 		Dependencies: []string{"gh:owner/missing-plugin"},
 	}
 
@@ -164,8 +160,6 @@ func TestCheck_RecommendedMissing_StillOK(t *testing.T) {
 
 	fetcher := newFakeFetcher()
 	fetcher.manifests["/fake/plugins/my-plugin"] = &manifest.Manifest{
-		Name:        "my-plugin",
-		Description: "Plugin",
 		SystemRequirements: []manifest.SystemRequirement{
 			{Name: "nonexistent-binary-test-xyz", Optional: true, Reason: "Only for testing"},
 		},
@@ -191,13 +185,9 @@ func TestCheck_RecommendedMissing_StillOK(t *testing.T) {
 func TestCheck_CrossPlatform_DepMissingOnOne(t *testing.T) {
 	fetcher := newFakeFetcher()
 	fetcher.manifests["/fake/copilot/my-plugin"] = &manifest.Manifest{
-		Name:         "my-plugin",
-		Description:  "Plugin",
 		Dependencies: []string{"gh:owner/dep-a"},
 	}
 	fetcher.manifests["/fake/claude/my-plugin"] = &manifest.Manifest{
-		Name:         "my-plugin",
-		Description:  "Plugin",
 		Dependencies: []string{"gh:owner/dep-a"},
 	}
 
@@ -250,13 +240,9 @@ func TestCheck_CrossPlatform_DepMissingOnOne(t *testing.T) {
 func TestCheck_SinglePlugin_MultiPlatform(t *testing.T) {
 	fetcher := newFakeFetcher()
 	fetcher.manifests["/fake/copilot/my-plugin"] = &manifest.Manifest{
-		Name:         "my-plugin",
-		Description:  "Plugin",
 		Dependencies: []string{"gh:owner/dep-a"},
 	}
 	fetcher.manifests["/fake/claude/my-plugin"] = &manifest.Manifest{
-		Name:         "my-plugin",
-		Description:  "Plugin",
 		Dependencies: []string{"gh:owner/dep-a"},
 	}
 
@@ -309,13 +295,9 @@ func TestCheck_SinglePlugin_MultiPlatform(t *testing.T) {
 func TestCheck_CrossPlatform_JSON(t *testing.T) {
 	fetcher := newFakeFetcher()
 	fetcher.manifests["/fake/copilot/my-plugin"] = &manifest.Manifest{
-		Name:         "my-plugin",
-		Description:  "Plugin",
 		Dependencies: []string{"gh:owner/dep-a"},
 	}
 	fetcher.manifests["/fake/claude/my-plugin"] = &manifest.Manifest{
-		Name:         "my-plugin",
-		Description:  "Plugin",
 		Dependencies: []string{"gh:owner/dep-a"},
 	}
 

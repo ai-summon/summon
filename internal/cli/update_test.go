@@ -60,8 +60,6 @@ func TestUpdate_WithNewDeps(t *testing.T) {
 
 	fetcher := newFakeFetcher()
 	fetcher.manifests["my-plugin@marketplace"] = &manifest.Manifest{
-		Name:        "my-plugin",
-		Description: "Plugin",
 		Dependencies: []string{"gh:owner/new-dep"},
 	}
 

@@ -63,8 +63,6 @@ func (f *fakeGitRunner) Run(name string, args ...string) ([]byte, error) {
 func TestFetchManifest_GitHubURL(t *testing.T) {
 	httpClient := newFakeHTTPClient()
 	manifestYAML := `
-name: my-plugin
-description: A test plugin
 dependencies:
   - other-plugin
 `
@@ -78,7 +76,6 @@ dependencies:
 	m, err := fetcher.FetchManifest("gh:owner/my-plugin")
 	require.NoError(t, err)
 	require.NotNil(t, m)
-	assert.Equal(t, "my-plugin", m.Name)
 	assert.Contains(t, m.Dependencies, "other-plugin")
 }
 
@@ -94,8 +91,8 @@ func TestFetchManifest_GitHubURL_NoManifest(t *testing.T) {
 
 func TestFetchManifest_NonGitHub_FallbackToGitArchive(t *testing.T) {
 	httpClient := newFakeHTTPClient()
-	manifestYAML := `name: internal-tool
-description: Internal tool
+	manifestYAML := `dependencies:
+  - some-dep
 `
 	gitRunner := &fakeGitRunner{
 		runFunc: func(name string, args ...string) ([]byte, error) {
@@ -107,13 +104,13 @@ description: Internal tool
 	m, err := fetcher.FetchManifest("https://intranet.example.com/org/plugin.git")
 	require.NoError(t, err)
 	require.NotNil(t, m)
-	assert.Equal(t, "internal-tool", m.Name)
+	assert.Contains(t, m.Dependencies, "some-dep")
 }
 
 func TestFetchManifest_CacheHit(t *testing.T) {
 	httpClient := newFakeHTTPClient()
-	manifestYAML := `name: cached-plugin
-description: Cached
+	manifestYAML := `dependencies:
+  - cached-dep
 `
 	httpClient.setResponse(
 		"https://raw.githubusercontent.com/owner/cached-plugin/HEAD/summon.yaml",
@@ -136,7 +133,7 @@ description: Cached
 	)
 	m2, err := fetcher.FetchManifest("gh:owner/cached-plugin")
 	require.NoError(t, err)
-	assert.Equal(t, m1.Name, m2.Name)
+	assert.Equal(t, m1.Dependencies, m2.Dependencies)
 }
 
 func TestParseGitHubURL_Shorthand(t *testing.T) {

@@ -9,8 +9,6 @@ import (
 
 func TestParse_ValidManifest(t *testing.T) {
 	data := []byte(`
-name: my-plugin
-description: A useful plugin
 marketplaces:
   some-marketplace: gh:owner/marketplace-repo
 dependencies:
@@ -25,8 +23,6 @@ system_requirements:
 `)
 	m, err := ParseAndValidate(data)
 	require.NoError(t, err)
-	assert.Equal(t, "my-plugin", m.Name)
-	assert.Equal(t, "A useful plugin", m.Description)
 	assert.Equal(t, "gh:owner/marketplace-repo", m.Marketplaces["some-marketplace"])
 	assert.Len(t, m.Dependencies, 3)
 	assert.Equal(t, "other-plugin", m.Dependencies[0])
@@ -40,28 +36,8 @@ system_requirements:
 	assert.Equal(t, "Only needed for containerized execution", m.SystemRequirements[1].Reason)
 }
 
-func TestParse_MissingName(t *testing.T) {
-	data := []byte(`
-description: A plugin
-`)
-	_, err := ParseAndValidate(data)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "'name' is required")
-}
-
-func TestParse_MissingDescription(t *testing.T) {
-	data := []byte(`
-name: my-plugin
-`)
-	_, err := ParseAndValidate(data)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "'description' is required")
-}
-
 func TestParse_OptionalWithoutReason(t *testing.T) {
 	data := []byte(`
-name: my-plugin
-description: A plugin
 system_requirements:
   - name: docker
     optional: true
@@ -73,8 +49,6 @@ system_requirements:
 
 func TestParse_StringSystemRequirement(t *testing.T) {
 	data := []byte(`
-name: my-plugin
-description: A plugin
 system_requirements:
   - python3
   - git
@@ -88,35 +62,21 @@ system_requirements:
 	assert.False(t, m.SystemRequirements[1].Optional)
 }
 
-func TestParse_InvalidNameFormat(t *testing.T) {
-	data := []byte(`
-name: My_Plugin
-description: A plugin
-`)
-	_, err := ParseAndValidate(data)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "kebab-case")
-}
-
-func TestParse_NameTooLong(t *testing.T) {
-	longName := "a"
-	for i := 0; i < 50; i++ {
-		longName += "b"
-	}
-	data := []byte("name: " + longName + "\ndescription: A plugin\n")
-	_, err := ParseAndValidate(data)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "50 characters")
-}
-
 func TestParse_MinimalValid(t *testing.T) {
 	data := []byte(`
-name: simple
-description: Minimal valid manifest
+dependencies:
+  - some-plugin
 `)
 	m, err := ParseAndValidate(data)
 	require.NoError(t, err)
-	assert.Equal(t, "simple", m.Name)
+	assert.Len(t, m.Dependencies, 1)
+	assert.Empty(t, m.SystemRequirements)
+}
+
+func TestParse_EmptyManifest(t *testing.T) {
+	data := []byte(`{}`)
+	m, err := ParseAndValidate(data)
+	require.NoError(t, err)
 	assert.Empty(t, m.Dependencies)
 	assert.Empty(t, m.SystemRequirements)
 }

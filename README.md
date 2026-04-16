@@ -62,12 +62,9 @@ summon update
 
 ## The `summon.yaml` Manifest
 
-Every plugin has a `summon.yaml` that declares what it needs. Here's an example:
+Plugins can include an optional `summon.yaml` to declare dependencies and system requirements:
 
 ```yaml
-name: my-plugin
-description: Analyses code quality and suggests improvements
-
 marketplaces:
   acme-marketplace: gh:acme-org/acme-marketplace
 
@@ -86,8 +83,6 @@ That's it. When someone runs `summon install my-plugin`, Summon resolves the ful
 
 | Field | Required | Description |
 |---|---|---|
-| `name` | ✓ | Kebab-case plugin name |
-| `description` | ✓ | Short description of the plugin |
 | `dependencies` | | Plugins this plugin depends on |
 | `system_requirements` | | System binaries that must be present |
 | `marketplaces` | | Named marketplace aliases for dependencies |

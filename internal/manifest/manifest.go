@@ -3,7 +3,6 @@ package manifest
 import (
 	"fmt"
 	"os"
-	"regexp"
 
 	"gopkg.in/yaml.v3"
 )
@@ -39,31 +38,17 @@ func (s *SystemRequirement) UnmarshalYAML(value *yaml.Node) error {
 }
 
 // Manifest represents a summon.yaml file.
+// It declares dependencies, system requirements, and marketplace overrides.
+// name and description are not included — they are metadata concerns
+// handled by the marketplace index, not the dependency manifest.
 type Manifest struct {
-	Name               string            `yaml:"name"`
-	Description        string            `yaml:"description"`
-	Marketplaces       map[string]string `yaml:"marketplaces,omitempty"`
-	Dependencies       []string          `yaml:"dependencies,omitempty"`
+	Marketplaces       map[string]string   `yaml:"marketplaces,omitempty"`
+	Dependencies       []string            `yaml:"dependencies,omitempty"`
 	SystemRequirements []SystemRequirement `yaml:"system_requirements,omitempty"`
 }
 
-var namePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
-
-// Validate checks that the manifest has all required fields and valid values.
+// Validate checks that the manifest has valid values.
 func (m *Manifest) Validate() error {
-	if m.Name == "" {
-		return fmt.Errorf("manifest validation: 'name' is required")
-	}
-	if len(m.Name) > 50 {
-		return fmt.Errorf("manifest validation: 'name' must be 50 characters or fewer")
-	}
-	if !namePattern.MatchString(m.Name) {
-		return fmt.Errorf("manifest validation: 'name' must be kebab-case (lowercase alphanumeric and hyphens)")
-	}
-	if m.Description == "" {
-		return fmt.Errorf("manifest validation: 'description' is required")
-	}
-
 	for i, sr := range m.SystemRequirements {
 		if sr.Name == "" {
 			return fmt.Errorf("manifest validation: system_requirements[%d] must have a 'name'", i)
