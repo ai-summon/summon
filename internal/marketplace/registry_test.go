@@ -83,6 +83,174 @@ func TestFetchIndex_NativeFormat(t *testing.T) {
 	assert.Equal(t, "gh:owner/my-plugin", entry.Source)
 }
 
+func TestFetchIndex_URLSourceType(t *testing.T) {
+	data := `{
+		"name": "test-marketplace",
+		"owner": {"name": "Test"},
+		"plugins": [
+			{
+				"name": "ghe-plugin",
+				"source": {"source": "url", "url": "https://ghe.example.com/org/plugin.git"},
+				"description": "A GHE-hosted plugin"
+			}
+		]
+	}`
+	idx, err := FetchIndex([]byte(data))
+	require.NoError(t, err)
+	assert.Len(t, idx, 1)
+
+	entry, found := idx.Lookup("ghe-plugin")
+	assert.True(t, found)
+	assert.Equal(t, "https://ghe.example.com/org/plugin.git", entry.Source)
+}
+
+func TestFetchIndex_GitSubdirSourceType(t *testing.T) {
+	data := `{
+		"name": "test-marketplace",
+		"owner": {"name": "Test"},
+		"plugins": [
+			{
+				"name": "mono-plugin",
+				"source": {"source": "git-subdir", "url": "https://github.com/acme/monorepo.git", "path": "tools/plugin", "ref": "main"},
+				"description": "Plugin in a monorepo"
+			}
+		]
+	}`
+	idx, err := FetchIndex([]byte(data))
+	require.NoError(t, err)
+	assert.Len(t, idx, 1)
+
+	entry, found := idx.Lookup("mono-plugin")
+	assert.True(t, found)
+	assert.Equal(t, "https://github.com/acme/monorepo.git", entry.Source)
+}
+
+func TestFetchIndex_NpmSourceType(t *testing.T) {
+	data := `{
+		"name": "test-marketplace",
+		"owner": {"name": "Test"},
+		"plugins": [
+			{
+				"name": "npm-plugin",
+				"source": {"source": "npm", "package": "@acme/claude-plugin", "version": "2.1.0"},
+				"description": "An npm plugin"
+			}
+		]
+	}`
+	idx, err := FetchIndex([]byte(data))
+	require.NoError(t, err)
+	assert.Len(t, idx, 1)
+
+	entry, found := idx.Lookup("npm-plugin")
+	assert.True(t, found)
+	assert.Equal(t, "npm:@acme/claude-plugin@2.1.0", entry.Source)
+}
+
+func TestFetchIndex_NpmSourceNoVersion(t *testing.T) {
+	data := `{
+		"name": "test-marketplace",
+		"owner": {"name": "Test"},
+		"plugins": [
+			{
+				"name": "npm-plugin",
+				"source": {"source": "npm", "package": "@acme/claude-plugin"},
+				"description": "An npm plugin without version"
+			}
+		]
+	}`
+	idx, err := FetchIndex([]byte(data))
+	require.NoError(t, err)
+
+	entry, found := idx.Lookup("npm-plugin")
+	assert.True(t, found)
+	assert.Equal(t, "npm:@acme/claude-plugin", entry.Source)
+}
+
+func TestFetchIndex_RelativePathSource(t *testing.T) {
+	data := `{
+		"name": "test-marketplace",
+		"owner": {"name": "Test"},
+		"plugins": [
+			{
+				"name": "local-plugin",
+				"source": "./plugins/my-plugin",
+				"description": "A local plugin"
+			}
+		]
+	}`
+	idx, err := FetchIndex([]byte(data))
+	require.NoError(t, err)
+	assert.Len(t, idx, 1)
+
+	entry, found := idx.Lookup("local-plugin")
+	assert.True(t, found)
+	assert.Equal(t, "./plugins/my-plugin", entry.Source)
+}
+
+func TestFetchIndex_MixedSourceTypes(t *testing.T) {
+	data := `{
+		"name": "test-marketplace",
+		"owner": {"name": "Test"},
+		"plugins": [
+			{
+				"name": "gh-plugin",
+				"source": {"source": "github", "repo": "owner/gh-plugin"},
+				"description": "GitHub plugin"
+			},
+			{
+				"name": "url-plugin",
+				"source": {"source": "url", "url": "https://ghe.example.com/org/plugin.git"},
+				"description": "URL plugin"
+			},
+			{
+				"name": "local-plugin",
+				"source": "./plugins/local",
+				"description": "Local plugin"
+			}
+		]
+	}`
+	idx, err := FetchIndex([]byte(data))
+	require.NoError(t, err)
+	assert.Len(t, idx, 3)
+
+	gh, _ := idx.Lookup("gh-plugin")
+	assert.Equal(t, "gh:owner/gh-plugin", gh.Source)
+
+	url, _ := idx.Lookup("url-plugin")
+	assert.Equal(t, "https://ghe.example.com/org/plugin.git", url.Source)
+
+	local, _ := idx.Lookup("local-plugin")
+	assert.Equal(t, "./plugins/local", local.Source)
+}
+
+func TestFetchIndex_SkipsInvalidSource(t *testing.T) {
+	data := `{
+		"name": "test-marketplace",
+		"owner": {"name": "Test"},
+		"plugins": [
+			{
+				"name": "good-plugin",
+				"source": {"source": "github", "repo": "owner/good"},
+				"description": "Good"
+			},
+			{
+				"name": "bad-plugin",
+				"source": {"source": "github"},
+				"description": "Missing repo field"
+			}
+		]
+	}`
+	idx, err := FetchIndex([]byte(data))
+	require.NoError(t, err)
+	assert.Len(t, idx, 1)
+
+	_, found := idx.Lookup("good-plugin")
+	assert.True(t, found)
+
+	_, found = idx.Lookup("bad-plugin")
+	assert.False(t, found)
+}
+
 func TestFetchIndex_FlatFormat(t *testing.T) {
 	data := `{
 		"my-plugin": {

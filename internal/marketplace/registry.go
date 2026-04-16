@@ -39,15 +39,89 @@ type MarketplaceMetadata struct {
 
 // MarketplacePlugin is a plugin entry in the marketplace JSON.
 type MarketplacePlugin struct {
-	Name        string              `json:"name"`
+	Name        string                  `json:"name"`
 	Source      MarketplacePluginSource `json:"source"`
-	Description string              `json:"description"`
+	Description string                  `json:"description"`
 }
 
 // MarketplacePluginSource describes where a plugin lives.
+// It handles all Claude Code marketplace source types:
+//   - "github":    { "source": "github", "repo": "owner/repo" }
+//   - "url":       { "source": "url", "url": "https://..." }
+//   - "git-subdir":{ "source": "git-subdir", "url": "...", "path": "..." }
+//   - "npm":       { "source": "npm", "package": "...", "version": "..." }
+//   - string:      "./relative/path"
 type MarketplacePluginSource struct {
-	Source string `json:"source"` // e.g. "github"
-	Repo   string `json:"repo"`   // e.g. "owner/repo"
+	Source   string `json:"source"`            // source type: "github", "url", "git-subdir", "npm"
+	Repo     string `json:"repo,omitempty"`    // for "github"
+	URL      string `json:"url,omitempty"`     // for "url" and "git-subdir"
+	Path     string `json:"path,omitempty"`    // for "git-subdir"
+	Package  string `json:"package,omitempty"` // for "npm"
+	Version  string `json:"version,omitempty"` // for "npm"
+	Registry string `json:"registry,omitempty"`// for "npm"
+	Ref      string `json:"ref,omitempty"`     // git ref (branch/tag)
+	SHA      string `json:"sha,omitempty"`     // git commit sha
+	Raw      string `json:"-"`                 // for plain string sources (relative paths)
+}
+
+// UnmarshalJSON handles the source field being either a string or an object.
+func (s *MarketplacePluginSource) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 {
+		return nil
+	}
+	if data[0] == '"' {
+		var raw string
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return err
+		}
+		s.Raw = raw
+		return nil
+	}
+	// Object form — use an alias to avoid recursion
+	type Alias MarketplacePluginSource
+	var a Alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*s = MarketplacePluginSource(a)
+	return nil
+}
+
+// resolvePluginSource converts a MarketplacePluginSource to a usable install source string.
+func resolvePluginSource(s MarketplacePluginSource) (string, error) {
+	if s.Raw != "" {
+		return s.Raw, nil
+	}
+	switch s.Source {
+	case "github":
+		if s.Repo == "" {
+			return "", fmt.Errorf("github source missing repo field")
+		}
+		return "gh:" + s.Repo, nil
+	case "url":
+		if s.URL == "" {
+			return "", fmt.Errorf("url source missing url field")
+		}
+		return s.URL, nil
+	case "git-subdir":
+		if s.URL == "" {
+			return "", fmt.Errorf("git-subdir source missing url field")
+		}
+		return s.URL, nil
+	case "npm":
+		if s.Package == "" {
+			return "", fmt.Errorf("npm source missing package field")
+		}
+		if s.Version != "" {
+			return "npm:" + s.Package + "@" + s.Version, nil
+		}
+		return "npm:" + s.Package, nil
+	default:
+		if s.Source == "" {
+			return "", fmt.Errorf("source type is empty")
+		}
+		return "", fmt.Errorf("unknown source type %q", s.Source)
+	}
 }
 
 // Index is the marketplace index: package name → entry.
@@ -72,9 +146,9 @@ func FetchIndex(data []byte) (Index, error) {
 	if err := json.Unmarshal(data, &mkt); err == nil && len(mkt.Plugins) > 0 {
 		idx := make(Index)
 		for _, p := range mkt.Plugins {
-			source := p.Source.Repo
-			if p.Source.Source == "github" && source != "" {
-				source = "gh:" + source
+			source, err := resolvePluginSource(p.Source)
+			if err != nil {
+				continue // skip plugins with unresolvable sources
 			}
 			idx[p.Name] = PackageEntry{
 				Source:      source,
