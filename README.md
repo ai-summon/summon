@@ -2,7 +2,7 @@
 
 # Summon
 
-**Dependency management for AI CLI plugins.**
+**Dependency management for Claude/Copilot plugins.**
 
 Plugins depend on other plugins. Plugins depend on system tools. Summon resolves it all — across **Claude Code CLI** and **GitHub Copilot CLI**.
 
@@ -14,14 +14,14 @@ Plugins depend on other plugins. Plugins depend on system tools. Summon resolves
 
 ## Why Summon?
 
-AI CLI plugins don't exist in isolation. A plugin might depend on three other plugins, which each depend on more — and they all need `git`, `node`, or `docker` on your system to actually work.
+Claude/Copilot plugins don't exist in isolation. A plugin might depend on three other plugins, which each depend on more — and they might need `git`, `node`, or `docker` on your system to actually work.
 
 Today, you manage all of that by hand. Summon handles it for you:
 
 - **Transitive dependency resolution** — install a plugin and Summon automatically installs every plugin it depends on, and every plugin *those* depend on
 - **System dependency checks** — Summon verifies that required system tools (git, node, docker, etc.) are present *before* installing, so nothing silently breaks
 - **Health monitoring** — run `summon check` at any time to verify that all plugin and system dependencies are still satisfied
-- **Cross-CLI support** — one `summon install` deploys a plugin and its full dependency tree to every AI CLI on your system
+- **Cross-CLI support** — one `summon install` deploys a plugin and its full dependency tree to Claude/Copilot on your system
 - **Custom marketplaces** — register third-party plugin registries to discover and install community plugins
 
 ## Install
@@ -47,7 +47,7 @@ summon --version
 ## Quick Start
 
 ```sh
-# Install a plugin to all detected AI CLIs
+# Install a plugin
 summon install my-plugin
 
 # See what's installed
@@ -73,7 +73,7 @@ summon update
 
 ### Target a specific CLI
 
-By default, Summon installs to every AI CLI it detects. To target just one:
+By default, Summon installs to every Claude & Copilot CLIs if detects. To target just one:
 
 ```sh
 summon install my-plugin --target claude
