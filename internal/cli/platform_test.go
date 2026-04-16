@@ -30,7 +30,7 @@ func TestPlatformList_BothDetected_NoConfig(t *testing.T) {
 	out := stdout.String()
 	assert.Contains(t, out, "claude")
 	assert.Contains(t, out, "copilot")
-	assert.Contains(t, out, "detected")
+	assert.Contains(t, out, "enabled")
 }
 
 func TestPlatformList_OneDisabledOneEnabled(t *testing.T) {

@@ -101,31 +101,28 @@ func runPlatformList(deps *platformDeps) error {
 		enabled, configured := cfg.IsEnabled(name)
 		available := detectedSet[name]
 
+		// A platform is active if explicitly enabled OR auto-detected without config
+		active := (configured && enabled) || (!configured && available)
+
 		var statusIcon, statusText, detail string
 
-		if !configured {
-			// Not configured yet — show detection state
-			if available {
-				statusIcon = checkStyle.Render("✓")
-				statusText = "detected"
-				detail = dimStyle.Render("(auto)")
-			} else {
-				statusIcon = crossStyle.Render("✗")
-				statusText = "not installed"
-				detail = ""
-			}
-		} else if enabled && available {
+		if active && available {
 			statusIcon = checkStyle.Render("✓")
 			statusText = "enabled"
 			detail = ""
-		} else if enabled && !available {
+		} else if active && !available {
+			// Enabled in config but CLI not found
 			statusIcon = crossStyle.Render("!")
 			statusText = "enabled"
 			detail = dimStyle.Render("(not installed)")
-		} else {
-			// disabled
+		} else if configured && !enabled {
 			statusIcon = dimStyle.Render("–")
 			statusText = "disabled"
+			detail = ""
+		} else {
+			// Not configured and not available
+			statusIcon = crossStyle.Render("✗")
+			statusText = "not installed"
 			detail = ""
 		}
 
