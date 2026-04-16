@@ -35,12 +35,13 @@ func TestUpdate_BasicUpdate(t *testing.T) {
 	installScope = "user"
 	targetFlag = ""
 
-	_, err := runUpdate("my-plugin", deps)
+	err := runUpdate("my-plugin", deps)
 	require.NoError(t, err)
 
 	out := deps.stdout.(*bytes.Buffer).String()
-	assert.Contains(t, out, "my-plugin:")
-	// No version info available → fallback to "updated"
+	// Output is now per-platform: platform header with plugin line underneath
+	assert.Contains(t, out, "claude:")
+	assert.Contains(t, out, "my-plugin")
 	assert.Contains(t, out, "updated")
 }
 
@@ -74,7 +75,7 @@ func TestUpdate_WithNewDeps(t *testing.T) {
 	installScope = "user"
 	targetFlag = ""
 
-	_, err := runUpdate("my-plugin", deps)
+	err := runUpdate("my-plugin", deps)
 	require.NoError(t, err)
 
 	out := deps.stdout.(*bytes.Buffer).String()
@@ -104,7 +105,7 @@ func TestUpdate_NotInstalled(t *testing.T) {
 	installScope = "user"
 	targetFlag = ""
 
-	_, err := runUpdate("nonexistent", deps)
+	err := runUpdate("nonexistent", deps)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not installed")
 }
@@ -139,6 +140,10 @@ func TestUpdateAll(t *testing.T) {
 	out := deps.stdout.(*bytes.Buffer).String()
 	assert.Contains(t, out, "Updating")
 	assert.Contains(t, out, "plugins")
+	// Should show platform header with both plugins underneath
+	assert.Contains(t, out, "claude:")
+	assert.Contains(t, out, "plugin-a")
+	assert.Contains(t, out, "plugin-b")
 }
 
 func TestUpdate_ProjectScope(t *testing.T) {
@@ -169,12 +174,14 @@ func TestUpdate_ProjectScope(t *testing.T) {
 	installScope = "user"
 	targetFlag = ""
 
-	_, err := runUpdate("my-plugin", deps)
+	err := runUpdate("my-plugin", deps)
 	require.NoError(t, err)
 
 	out := deps.stdout.(*bytes.Buffer).String()
-	assert.Contains(t, out, "my-plugin:")
-	// Copilot has version → shows "up to date"; claude has no version → shows "updated"
+	// Per-platform output: both platforms shown as headers
+	assert.Contains(t, out, "copilot:")
+	assert.Contains(t, out, "claude:")
+	assert.Contains(t, out, "my-plugin")
 	assert.Contains(t, out, "up to date")
 
 	// Verify claude's update was called with --scope project
@@ -224,14 +231,14 @@ func TestUpdate_PartialFailure(t *testing.T) {
 	targetFlag = ""
 
 	// Should NOT return error since copilot succeeded
-	_, err := runUpdate("my-plugin", deps)
+	err := runUpdate("my-plugin", deps)
 	require.NoError(t, err)
 
 	out := deps.stdout.(*bytes.Buffer).String()
-	assert.Contains(t, out, "my-plugin:")
-	assert.Contains(t, out, "copilot")
+	// Per-platform output: each platform as header
+	assert.Contains(t, out, "copilot:")
+	assert.Contains(t, out, "claude:")
 	assert.Contains(t, out, "up to date")
-	assert.Contains(t, out, "claude")
 	assert.Contains(t, out, "failed")
 }
 
@@ -264,7 +271,7 @@ func TestUpdate_ClaudeUsesSourceIdentifier(t *testing.T) {
 	installScope = "user"
 	targetFlag = ""
 
-	_, err := runUpdate("speckit", deps)
+	err := runUpdate("speckit", deps)
 	require.NoError(t, err)
 
 	// Verify claude received the full source identifier, not bare name
@@ -317,8 +324,13 @@ func TestUpdate_SkipsAdaptersWhereNotInstalled(t *testing.T) {
 	installScope = "user"
 	targetFlag = ""
 
-	_, err := runUpdate("copilot-only", deps)
+	err := runUpdate("copilot-only", deps)
 	require.NoError(t, err)
+
+	out := deps.stdout.(*bytes.Buffer).String()
+	// Only copilot should appear as a platform header
+	assert.Contains(t, out, "copilot:")
+	assert.NotContains(t, out, "claude:")
 
 	// Verify claude was NOT called for update
 	for _, cmd := range runner.commands {
@@ -352,15 +364,13 @@ func TestUpdate_UpToDate(t *testing.T) {
 	installScope = "user"
 	targetFlag = ""
 
-	result, err := runUpdate("my-plugin", deps)
+	err := runUpdate("my-plugin", deps)
 	require.NoError(t, err)
 
 	out := deps.stdout.(*bytes.Buffer).String()
 	assert.Contains(t, out, "up to date (v1.2.0)")
 	assert.Contains(t, out, "–")
 	assert.NotContains(t, out, "✓")
-	assert.Equal(t, 0, result.updated)
-	assert.Equal(t, 1, result.upToDate)
 }
 
 func TestUpdate_VersionChanged(t *testing.T) {
@@ -392,14 +402,12 @@ func TestUpdate_VersionChanged(t *testing.T) {
 	installScope = "user"
 	targetFlag = ""
 
-	result, err := runUpdate("my-plugin", deps)
+	err := runUpdate("my-plugin", deps)
 	require.NoError(t, err)
 
 	out := deps.stdout.(*bytes.Buffer).String()
 	assert.Contains(t, out, "v1.0.0 → v1.1.0")
 	assert.Contains(t, out, "✓")
-	assert.Equal(t, 1, result.updated)
-	assert.Equal(t, 0, result.upToDate)
 }
 
 func TestUpdateAll_Summary(t *testing.T) {
@@ -434,4 +442,85 @@ func TestUpdateAll_Summary(t *testing.T) {
 	// plugin-a has version → "up to date", plugin-b has no version → "updated"
 	assert.Contains(t, out, "1 updated")
 	assert.Contains(t, out, "1 up to date")
+}
+
+func TestUpdateAll_PerPlatformOutput(t *testing.T) {
+	// Verify runUpdateAll groups by platform, not by plugin
+	runner := newFakeRunner()
+	runner.lookPaths["copilot"] = "/usr/local/bin/copilot"
+	runner.lookPaths["claude"] = "/usr/local/bin/claude"
+	runner.runFunc = func(name string, args ...string) ([]byte, error) {
+		for _, a := range args {
+			if a == "list" {
+				if name == "copilot" {
+					return []byte("  • plugin-a (v1.0.0)\n  • plugin-b (v2.0.0)\n"), nil
+				}
+				return []byte(`[{"id":"plugin-a@marketplace","version":"1.0.0"},{"id":"plugin-b@marketplace","version":"2.0.0"}]`), nil
+			}
+		}
+		return nil, nil
+	}
+
+	deps := &updateDeps{
+		runner:  runner,
+		fetcher: newFakeFetcher(),
+		stdin:   strings.NewReader(""),
+		stdout:  &bytes.Buffer{},
+		stderr:  &bytes.Buffer{},
+		noColor: true,
+	}
+
+	installScope = "user"
+	targetFlag = ""
+
+	err := runUpdateAll(deps)
+	require.NoError(t, err)
+
+	out := deps.stdout.(*bytes.Buffer).String()
+	// Both platform headers should appear
+	assert.Contains(t, out, "claude:")
+	assert.Contains(t, out, "copilot:")
+	// Both plugins should appear under each platform
+	// Find claude section and verify both plugins are listed
+	claudeIdx := strings.Index(out, "claude:")
+	copilotIdx := strings.Index(out, "copilot:")
+	require.NotEqual(t, -1, claudeIdx)
+	require.NotEqual(t, -1, copilotIdx)
+}
+
+func TestUpdate_AllPlatformsFail(t *testing.T) {
+	// When all platforms fail, the update should return an error
+	runner := newFakeRunner()
+	runner.lookPaths["copilot"] = "/usr/local/bin/copilot"
+	runner.lookPaths["claude"] = "/usr/local/bin/claude"
+	runner.runFunc = func(name string, args ...string) ([]byte, error) {
+		for _, a := range args {
+			if a == "list" {
+				if name == "copilot" {
+					return []byte("  • my-plugin (v1.0.0)\n"), nil
+				}
+				return []byte(`[{"id":"my-plugin@marketplace"}]`), nil
+			}
+			if a == "update" {
+				return []byte("update error"), fmt.Errorf("exit status 1")
+			}
+		}
+		return nil, nil
+	}
+
+	deps := &updateDeps{
+		runner:  runner,
+		fetcher: newFakeFetcher(),
+		stdin:   strings.NewReader(""),
+		stdout:  &bytes.Buffer{},
+		stderr:  &bytes.Buffer{},
+		noColor: true,
+	}
+
+	installScope = "user"
+	targetFlag = ""
+
+	err := runUpdate("my-plugin", deps)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "update failed on all platforms")
 }

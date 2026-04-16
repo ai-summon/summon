@@ -24,11 +24,26 @@ type updateDeps struct {
 	noColor bool
 }
 
-// updateResult tracks per-plugin update outcome across adapters.
+// pluginUpdateOutcome tracks the result of updating a single plugin on a single platform.
+type pluginUpdateOutcome struct {
+	name        string
+	preVersion  string
+	postVersion string
+	err         error
+}
+
+// platformUpdateOutput groups all plugin update outcomes for a single platform.
+type platformUpdateOutput struct {
+	cli     string
+	plugins []pluginUpdateOutcome
+	newDeps []string // new dependency names installed on this platform
+}
+
+// updateResult tracks per-plugin summary across all platforms.
 type updateResult struct {
-	updated  int // adapters where version actually changed
-	upToDate int // adapters where version stayed the same
-	failed   int // adapters that errored
+	updated  int // plugins where version changed on at least one platform
+	upToDate int // plugins where version stayed the same on all platforms
+	failed   int // plugins that failed on all platforms
 }
 
 func defaultUpdateDeps() *updateDeps {
@@ -48,8 +63,7 @@ var updateCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		deps := defaultUpdateDeps()
 		if len(args) > 0 {
-			_, err := runUpdate(args[0], deps)
-			return err
+			return runUpdate(args[0], deps)
 		}
 		return runUpdateAll(deps)
 	},
@@ -60,174 +74,347 @@ func init() {
 	rootCmd.AddCommand(updateCmd)
 }
 
-func runUpdate(name string, deps *updateDeps) (*updateResult, error) {
-	out := deps.stdout
-	result := &updateResult{}
-	scope, err := platform.ParseScope(installScope)
-	if err != nil {
-		return nil, err
+// updateTarget captures per-adapter metadata for a plugin to be updated.
+type updateTarget struct {
+	name       string
+	scope      platform.Scope
+	source     string // source identifier as reported by ListInstalled
+	updateID   string // identifier to pass to adapter.Update
+	preVersion string
+}
+
+// collectUpdateTargets discovers all plugins installed on each adapter and returns
+// a map of adapter name → sorted list of update targets.
+func collectUpdateTargets(names []string, adapters []platform.Adapter, defaultScope platform.Scope) map[string][]updateTarget {
+	nameSet := make(map[string]bool, len(names))
+	for _, n := range names {
+		nameSet[n] = true
 	}
 
-	adapters := platform.DetectAdapters(deps.runner)
-	if len(adapters) == 0 {
-		return nil, fmt.Errorf("no supported CLIs detected")
-	}
-	adapters, err = platform.FilterByTarget(adapters, targetFlag)
-	if err != nil {
-		return nil, err
-	}
-
-	// Find the plugin and capture per-adapter scopes, sources, and pre-update versions
-	var source string
-	pluginScopes := make(map[string]platform.Scope)
-	pluginSources := make(map[string]string)
-	preVersions := make(map[string]string)
+	targets := make(map[string][]updateTarget)
 	for _, a := range adapters {
-		plugins, _ := a.ListInstalled(scope)
+		plugins, _ := a.ListInstalled(defaultScope)
 		for _, p := range plugins {
-			if p.Name == name {
-				if source == "" {
-					source = p.Source
-				}
-				actualScope := scope
-				if p.Scope != "" {
-					if parsed, err := platform.ParseScope(p.Scope); err == nil {
-						actualScope = parsed
-					}
-				}
-				pluginScopes[a.Name()] = actualScope
-				pluginSources[a.Name()] = p.Source
-				preVersions[a.Name()] = p.Version
+			if !nameSet[p.Name] {
+				continue
 			}
+			actualScope := defaultScope
+			if p.Scope != "" {
+				if parsed, err := platform.ParseScope(p.Scope); err == nil {
+					actualScope = parsed
+				}
+			}
+			updateID := p.Name
+			if p.Source != "" {
+				updateID = p.Source
+			}
+			targets[a.Name()] = append(targets[a.Name()], updateTarget{
+				name:       p.Name,
+				scope:      actualScope,
+				source:     p.Source,
+				updateID:   updateID,
+				preVersion: p.Version,
+			})
 		}
-	}
-	if source == "" {
-		return nil, fmt.Errorf("package %q is not installed", name)
 	}
 
 	// Fill in missing pre-update versions from plugin.json on disk
 	for _, a := range adapters {
-		adapterScope, ok := pluginScopes[a.Name()]
-		if !ok {
-			continue
-		}
-		if preVersions[a.Name()] == "" {
-			if dir, err := a.FindPluginDir(name, adapterScope); err == nil {
-				preVersions[a.Name()] = readPluginVersion(dir)
+		for i, t := range targets[a.Name()] {
+			if t.preVersion == "" {
+				if dir, err := a.FindPluginDir(t.name, t.scope); err == nil {
+					targets[a.Name()][i].preVersion = readPluginVersion(dir)
+				}
 			}
 		}
 	}
 
+	return targets
+}
+
+// executeUpdates runs the actual update operations and collects results per platform.
+func executeUpdates(adapters []platform.Adapter, targets map[string][]updateTarget) []platformUpdateOutput {
+	var outputs []platformUpdateOutput
+	for _, a := range adapters {
+		adapterTargets := targets[a.Name()]
+		if len(adapterTargets) == 0 {
+			continue
+		}
+
+		output := platformUpdateOutput{cli: a.Name()}
+		for _, t := range adapterTargets {
+			outcome := pluginUpdateOutcome{name: t.name, preVersion: t.preVersion}
+			if err := a.Update(t.updateID, t.scope); err != nil {
+				outcome.err = err
+			} else {
+				outcome.postVersion = getPluginVersion(a, t.name, t.scope)
+			}
+			output.plugins = append(output.plugins, outcome)
+		}
+		outputs = append(outputs, output)
+	}
+	return outputs
+}
+
+// installNewDeps checks for new dependencies introduced by updated plugins and installs them.
+func installNewDeps(adapters []platform.Adapter, targets map[string][]updateTarget, defaultScope platform.Scope, fetcher manifest.ManifestFetcher, outputs []platformUpdateOutput, stderr io.Writer) []platformUpdateOutput {
+	if fetcher == nil {
+		return outputs
+	}
+
+	// Collect all sources from successfully updated plugins
+	sourcesByPlugin := make(map[string]string)
+	for _, a := range adapters {
+		for _, t := range targets[a.Name()] {
+			if t.source != "" {
+				if _, exists := sourcesByPlugin[t.name]; !exists {
+					sourcesByPlugin[t.name] = t.source
+				}
+			}
+		}
+	}
+
+	// For each source, fetch manifest and find new deps
+	type newDep struct {
+		specifier string
+		name      string
+	}
+	allNewDeps := make(map[string]newDep) // deduped by dep name
+	for _, source := range sourcesByPlugin {
+		m, _ := fetcher.FetchManifest(source)
+		if m == nil || len(m.Dependencies) == 0 {
+			continue
+		}
+		for _, dep := range m.Dependencies {
+			depName, _ := resolveDepName(dep)
+			if depName != "" {
+				allNewDeps[depName] = newDep{specifier: dep, name: depName}
+			}
+		}
+	}
+
+	if len(allNewDeps) == 0 {
+		return outputs
+	}
+
+	// Build per-platform installed sets
+	installedPerPlatform := make(map[string]map[string]bool)
+	for _, a := range adapters {
+		installed := make(map[string]bool)
+		plugins, _ := a.ListInstalled(defaultScope)
+		for _, p := range plugins {
+			installed[p.Name] = true
+		}
+		installedPerPlatform[a.Name()] = installed
+	}
+
+	// Install missing deps per platform
+	outputMap := make(map[string]*platformUpdateOutput)
+	for i := range outputs {
+		outputMap[outputs[i].cli] = &outputs[i]
+	}
+
+	// Sort dep names for deterministic output
+	depNames := make([]string, 0, len(allNewDeps))
+	for name := range allNewDeps {
+		depNames = append(depNames, name)
+	}
+	sort.Strings(depNames)
+
+	for _, a := range adapters {
+		installed := installedPerPlatform[a.Name()]
+		for _, depName := range depNames {
+			if installed[depName] {
+				continue
+			}
+			dep := allNewDeps[depName]
+			if err := a.Install(dep.specifier, defaultScope); err != nil {
+				fmt.Fprintf(stderr, "Warning: %s: failed to install new dependency %s: %v\n", a.Name(), dep.name, err)
+				continue
+			}
+			out, ok := outputMap[a.Name()]
+			if !ok {
+				// Platform had no direct updates but needs new deps
+				newOut := platformUpdateOutput{cli: a.Name()}
+				outputs = append(outputs, newOut)
+				outputMap[a.Name()] = &outputs[len(outputs)-1]
+				out = outputMap[a.Name()]
+			}
+			out.newDeps = append(out.newDeps, dep.name)
+		}
+	}
+
+	return outputs
+}
+
+// computePluginSummary derives per-plugin summary counters from per-platform outcomes.
+func computePluginSummary(pluginNames []string, outputs []platformUpdateOutput) *updateResult {
+	type pluginStatus struct {
+		anyUpdated  bool
+		anyUpToDate bool
+		allFailed   bool
+		seenAny     bool
+	}
+
+	statusMap := make(map[string]*pluginStatus)
+	for _, name := range pluginNames {
+		statusMap[name] = &pluginStatus{allFailed: true}
+	}
+
+	for _, out := range outputs {
+		for _, p := range out.plugins {
+			s := statusMap[p.name]
+			if s == nil {
+				continue
+			}
+			s.seenAny = true
+			if p.err != nil {
+				continue
+			}
+			s.allFailed = false
+			if p.preVersion != "" && p.postVersion != "" && p.preVersion != p.postVersion {
+				s.anyUpdated = true
+			} else if p.preVersion != "" && p.postVersion != "" && p.preVersion == p.postVersion {
+				s.anyUpToDate = true
+			} else {
+				// No version info → treat as updated
+				s.anyUpdated = true
+			}
+		}
+	}
+
+	result := &updateResult{}
+	for _, s := range statusMap {
+		if !s.seenAny || s.allFailed {
+			result.failed++
+		} else if s.anyUpdated {
+			result.updated++
+		} else if s.anyUpToDate {
+			result.upToDate++
+		}
+	}
+	return result
+}
+
+// renderUpdateOutputs prints platform-first update results.
+func renderUpdateOutputs(outputs []platformUpdateOutput, noColor bool, out io.Writer) {
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
 	checkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 	errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 	dimStyle := lipgloss.NewStyle().Faint(true)
-	if deps.noColor {
+	if noColor {
 		headerStyle = lipgloss.NewStyle()
 		checkStyle = lipgloss.NewStyle()
 		errorStyle = lipgloss.NewStyle()
 		dimStyle = lipgloss.NewStyle()
 	}
 
-	fmt.Fprintf(out, "\n%s\n", headerStyle.Render(name+":"))
+	// Sort platforms for deterministic output
+	sort.Slice(outputs, func(i, j int) bool {
+		return outputs[i].cli < outputs[j].cli
+	})
 
-	// Compute max platform name length for column alignment
-	maxPlatformLen := 0
-	for _, a := range adapters {
-		if _, ok := pluginScopes[a.Name()]; ok {
-			if len(a.Name()) > maxPlatformLen {
-				maxPlatformLen = len(a.Name())
+	// Find max plugin name length across all platforms for alignment
+	maxNameLen := 0
+	for _, o := range outputs {
+		for _, p := range o.plugins {
+			if len(p.name) > maxNameLen {
+				maxNameLen = len(p.name)
+			}
+		}
+		for _, d := range o.newDeps {
+			if len(d) > maxNameLen {
+				maxNameLen = len(d)
 			}
 		}
 	}
 
-	// Update via each adapter
-	var updatedOn []string
-	var updateErrors []string
-	for _, a := range adapters {
-		adapterScope, ok := pluginScopes[a.Name()]
-		if !ok {
-			continue
-		}
-		updateID := name
-		if src := pluginSources[a.Name()]; src != "" {
-			updateID = src
-		}
-		padding := strings.Repeat(" ", maxPlatformLen-len(a.Name())+2)
-		if err := a.Update(updateID, adapterScope); err != nil {
-			fmt.Fprintf(out, "  %s %s%s%s\n", errorStyle.Render("✗"), a.Name(), padding, dimStyle.Render("failed: "+err.Error()))
-			updateErrors = append(updateErrors, fmt.Sprintf("%s: %v", a.Name(), err))
-			result.failed++
-		} else {
-			preVersion := preVersions[a.Name()]
-			postVersion := getPluginVersion(a, name, adapterScope)
+	for _, o := range outputs {
+		fmt.Fprintf(out, "\n%s\n", headerStyle.Render(o.cli+":"))
 
-			if preVersion != "" && postVersion != "" && preVersion == postVersion {
-				fmt.Fprintf(out, "  %s %s%s%s\n", dimStyle.Render("–"), a.Name(), padding, dimStyle.Render("up to date (v"+postVersion+")"))
-				result.upToDate++
-			} else if preVersion != "" && postVersion != "" && preVersion != postVersion {
-				fmt.Fprintf(out, "  %s %s%s%s\n", checkStyle.Render("✓"), a.Name(), padding, dimStyle.Render("v"+preVersion+" → v"+postVersion))
-				result.updated++
+		for _, p := range o.plugins {
+			padding := strings.Repeat(" ", maxNameLen-len(p.name)+2)
+			if p.err != nil {
+				fmt.Fprintf(out, "  %s %s%s%s\n", errorStyle.Render("✗"), p.name, padding, dimStyle.Render("failed: "+p.err.Error()))
+			} else if p.preVersion != "" && p.postVersion != "" && p.preVersion == p.postVersion {
+				fmt.Fprintf(out, "  %s %s%s%s\n", dimStyle.Render("–"), p.name, padding, dimStyle.Render("up to date (v"+p.postVersion+")"))
+			} else if p.preVersion != "" && p.postVersion != "" && p.preVersion != p.postVersion {
+				fmt.Fprintf(out, "  %s %s%s%s\n", checkStyle.Render("✓"), p.name, padding, dimStyle.Render("v"+p.preVersion+" → v"+p.postVersion))
 			} else {
-				fmt.Fprintf(out, "  %s %s%s%s\n", checkStyle.Render("✓"), a.Name(), padding, dimStyle.Render("updated"))
-				result.updated++
-			}
-			updatedOn = append(updatedOn, a.Name())
-		}
-	}
-
-	if len(updateErrors) > 0 && len(updatedOn) == 0 {
-		return result, fmt.Errorf("update failed on all platforms: %s", strings.Join(updateErrors, "; "))
-	}
-
-	// Check for new dependencies
-	if source != "" && deps.fetcher != nil {
-		m, _ := deps.fetcher.FetchManifest(source)
-		if m != nil && len(m.Dependencies) > 0 {
-			installed := make(map[string]bool)
-			for _, a := range adapters {
-				plugins, _ := a.ListInstalled(scope)
-				for _, p := range plugins {
-					installed[p.Name] = true
-				}
-			}
-
-			var newDeps []string
-			for _, dep := range m.Dependencies {
-				depName, _ := resolveDepName(dep)
-				if depName != "" && !installed[depName] {
-					newDeps = append(newDeps, dep)
-				}
-			}
-
-			if len(newDeps) > 0 {
-				maxDepLen := 0
-				for _, dep := range newDeps {
-					depName, _ := resolveDepName(dep)
-					if len(depName) > maxDepLen {
-						maxDepLen = len(depName)
-					}
-				}
-
-				for i, dep := range newDeps {
-					depName, _ := resolveDepName(dep)
-					connector := "├──"
-					if i == len(newDeps)-1 {
-						connector = "└──"
-					}
-					for _, a := range adapters {
-						if err := a.Install(dep, scope); err != nil {
-							return nil, fmt.Errorf("failed to install new dependency %s: %w", dep, err)
-						}
-					}
-					depPadding := strings.Repeat(" ", maxDepLen-len(depName)+2)
-					fmt.Fprintf(out, "  %s %s%s%s\n", dimStyle.Render(connector), depName, depPadding, dimStyle.Render("installed (new dependency)"))
-				}
+				fmt.Fprintf(out, "  %s %s%s%s\n", checkStyle.Render("✓"), p.name, padding, dimStyle.Render("updated"))
 			}
 		}
+
+		for i, dep := range o.newDeps {
+			connector := "├──"
+			if i == len(o.newDeps)-1 {
+				connector = "└──"
+			}
+			depPadding := strings.Repeat(" ", maxNameLen-len(dep)+2)
+			fmt.Fprintf(out, "  %s %s%s%s\n", dimStyle.Render(connector), dep, depPadding, dimStyle.Render("installed (new dependency)"))
+		}
+	}
+}
+
+func runUpdate(name string, deps *updateDeps) error {
+	scope, err := platform.ParseScope(installScope)
+	if err != nil {
+		return err
 	}
 
-	return result, nil
+	adapters := platform.DetectAdapters(deps.runner)
+	if len(adapters) == 0 {
+		return fmt.Errorf("no supported CLIs detected")
+	}
+	adapters, err = platform.FilterByTarget(adapters, targetFlag)
+	if err != nil {
+		return err
+	}
+
+	targets := collectUpdateTargets([]string{name}, adapters, scope)
+
+	// Check if the plugin is installed on any platform
+	found := false
+	for _, ts := range targets {
+		if len(ts) > 0 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("package %q is not installed", name)
+	}
+
+	outputs := executeUpdates(adapters, targets)
+	outputs = installNewDeps(adapters, targets, scope, deps.fetcher, outputs, deps.stderr)
+	renderUpdateOutputs(outputs, deps.noColor, deps.stdout)
+
+	// Check if all platforms failed
+	allFailed := true
+	for _, o := range outputs {
+		for _, p := range o.plugins {
+			if p.err == nil {
+				allFailed = false
+				break
+			}
+		}
+		if !allFailed {
+			break
+		}
+	}
+	if allFailed {
+		var errParts []string
+		for _, o := range outputs {
+			for _, p := range o.plugins {
+				if p.err != nil {
+					errParts = append(errParts, fmt.Sprintf("%s: %v", o.cli, p.err))
+				}
+			}
+		}
+		return fmt.Errorf("update failed on all platforms: %s", strings.Join(errParts, "; "))
+	}
+
+	return nil
 }
 
 // getPluginVersion retrieves the current version of a plugin from the adapter.
@@ -264,14 +451,12 @@ func runUpdateAll(deps *updateDeps) error {
 		return err
 	}
 
-	// Get all installed plugins
-	pluginMap := make(map[string]string)
+	// Get all installed plugin names
+	pluginMap := make(map[string]bool)
 	for _, a := range adapters {
 		plugins, _ := a.ListInstalled(scope)
 		for _, p := range plugins {
-			if _, exists := pluginMap[p.Name]; !exists {
-				pluginMap[p.Name] = p.Source
-			}
+			pluginMap[p.Name] = true
 		}
 	}
 
@@ -280,7 +465,6 @@ func runUpdateAll(deps *updateDeps) error {
 		return nil
 	}
 
-	// Sort plugin names for deterministic output
 	names := make([]string, 0, len(pluginMap))
 	for name := range pluginMap {
 		names = append(names, name)
@@ -294,33 +478,23 @@ func runUpdateAll(deps *updateDeps) error {
 
 	fmt.Fprintf(out, "\n%s\n", dimStyle.Render(fmt.Sprintf("Updating %d plugins...", len(pluginMap))))
 
-	totalUpdated := 0
-	totalUpToDate := 0
-	totalFailed := 0
-	for _, name := range names {
-		result, err := runUpdate(name, deps)
-		if err != nil {
-			fmt.Fprintf(deps.stderr, "Warning: failed to update %s: %v\n", name, err)
-			totalFailed++
-		} else if result != nil {
-			if result.updated > 0 {
-				totalUpdated++
-			} else if result.upToDate > 0 {
-				totalUpToDate++
-			}
-		}
-	}
+	targets := collectUpdateTargets(names, adapters, scope)
+	outputs := executeUpdates(adapters, targets)
+	outputs = installNewDeps(adapters, targets, scope, deps.fetcher, outputs, deps.stderr)
+	renderUpdateOutputs(outputs, deps.noColor, out)
 
-	// Print summary
+	// Compute per-plugin summary
+	result := computePluginSummary(names, outputs)
+
 	var parts []string
-	if totalUpdated > 0 {
-		parts = append(parts, fmt.Sprintf("%d updated", totalUpdated))
+	if result.updated > 0 {
+		parts = append(parts, fmt.Sprintf("%d updated", result.updated))
 	}
-	if totalUpToDate > 0 {
-		parts = append(parts, fmt.Sprintf("%d up to date", totalUpToDate))
+	if result.upToDate > 0 {
+		parts = append(parts, fmt.Sprintf("%d up to date", result.upToDate))
 	}
-	if totalFailed > 0 {
-		parts = append(parts, fmt.Sprintf("%d failed", totalFailed))
+	if result.failed > 0 {
+		parts = append(parts, fmt.Sprintf("%d failed", result.failed))
 	}
 	if len(parts) > 0 {
 		fmt.Fprintf(out, "\n%s\n", dimStyle.Render(strings.Join(parts, ", ")))
