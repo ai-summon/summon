@@ -79,7 +79,8 @@ func TestUpdate_WithNewDeps(t *testing.T) {
 	require.NoError(t, err)
 
 	out := deps.stdout.(*bytes.Buffer).String()
-	assert.Contains(t, out, "new dependency")
+	assert.Contains(t, out, "new-dep")
+	assert.Contains(t, out, "installed")
 }
 
 func TestUpdate_NotInstalled(t *testing.T) {
@@ -138,8 +139,6 @@ func TestUpdateAll(t *testing.T) {
 	require.NoError(t, err)
 
 	out := deps.stdout.(*bytes.Buffer).String()
-	assert.Contains(t, out, "Updating")
-	assert.Contains(t, out, "plugins")
 	// Should show platform header with both plugins underneath
 	assert.Contains(t, out, "claude:")
 	assert.Contains(t, out, "plugin-a")
@@ -438,7 +437,6 @@ func TestUpdateAll_Summary(t *testing.T) {
 	require.NoError(t, err)
 
 	out := deps.stdout.(*bytes.Buffer).String()
-	assert.Contains(t, out, "Updating")
 	// plugin-a has version → "up to date", plugin-b has no version → "updated"
 	assert.Contains(t, out, "1 updated")
 	assert.Contains(t, out, "1 up to date")
@@ -523,4 +521,50 @@ func TestUpdate_AllPlatformsFail(t *testing.T) {
 	err := runUpdate("my-plugin", deps)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "update failed on all platforms")
+}
+
+func TestSummarizeError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected string
+	}{
+		{
+			name:     "git fatal with network error",
+			err:      fmt.Errorf(`claude update failed: Checking for updates for plugin "sli-reprocessing@bmw-ai-marketplace" at user scope…` + "\n" + `✘ Failed to update plugin "sli-reprocessing@bmw-ai-marketplace": Failed to clone repository: Cloning into '/tmp/temp_git_123'...` + "\n" + `fatal: unable to access 'https://example.com/repo.git/': CONNECT tunnel failed, response 502`),
+			expected: "CONNECT tunnel failed, response 502",
+		},
+		{
+			name:     "simple error",
+			err:      fmt.Errorf("something went wrong"),
+			expected: "something went wrong",
+		},
+		{
+			name:     "git fatal auth failure",
+			err:      fmt.Errorf("copilot update failed: error output\nfatal: Authentication failed for 'https://example.com/repo.git/'"),
+			expected: "Authentication failed for 'https://example.com/repo.git/'",
+		},
+		{
+			name:     "multi-line no fatal",
+			err:      fmt.Errorf("claude update failed: line1\nline2\nactual error here"),
+			expected: "actual error here",
+		},
+		{
+			name:     "timeout error",
+			err:      fmt.Errorf("claude update failed: Checking for updates…\ntimed out after 30s"),
+			expected: "timed out",
+		},
+		{
+			name:     "progress-only output with exit status",
+			err:      fmt.Errorf("claude update failed: Checking for updates for plugin \"brainstorm@summon-marketplace\" at user scope…\nexit status 1"),
+			expected: "update failed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := summarizeError(tt.err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
 }

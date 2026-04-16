@@ -2,11 +2,13 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/ai-summon/summon/internal/manifest"
 	"github.com/ai-summon/summon/internal/platform"
@@ -408,10 +410,19 @@ func confirmPromptDefault(reader io.Reader, defaultYes bool) bool {
 
 // --- Command runners for production ---
 
+// defaultRunTimeout is the maximum time a single CLI command is allowed to run.
+const defaultRunTimeout = 30 * time.Second
+
 type execRunner struct{}
 
 func (r *execRunner) Run(name string, args ...string) ([]byte, error) {
-	return exec.Command(name, args...).CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), defaultRunTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return out, fmt.Errorf("timed out after %s", defaultRunTimeout)
+	}
+	return out, err
 }
 
 func (r *execRunner) LookPath(name string) (string, error) {

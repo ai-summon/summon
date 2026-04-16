@@ -118,9 +118,15 @@ func adapterNames(adapters []Adapter) []string {
 }
 
 // cliError builds an error that includes the CLI's output when available.
+// When the underlying error carries useful info (not just "exit status N"),
+// it is appended so summarizeError can find it.
 func cliError(action string, output []byte, err error) error {
 	msg := strings.TrimSpace(string(output))
 	if msg != "" {
+		errMsg := err.Error()
+		if !strings.HasPrefix(errMsg, "exit status") {
+			return fmt.Errorf("%s failed: %s\n%s", action, msg, errMsg)
+		}
 		return fmt.Errorf("%s failed: %s", action, msg)
 	}
 	return fmt.Errorf("%s failed: %w", action, err)
