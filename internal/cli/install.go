@@ -256,7 +256,7 @@ func resolveTransitiveDeps(adapter platform.Adapter, scope platform.Scope, m *ma
 				marketplaceSource = resolved.MarketplaceName
 			}
 			if ensureErr := adapter.EnsureMarketplace(marketplaceName, marketplaceSource); ensureErr != nil {
-				fmt.Fprintf(stderr, "%s %s: failed to ensure marketplace %q: %v\n", s.StatusIcon("warn"), adapter.Name(), marketplaceName, ensureErr)
+				_, _ = fmt.Fprintf(stderr, "%s %s: failed to ensure marketplace %q: %v\n", s.StatusIcon("warn"), adapter.Name(), marketplaceName, ensureErr)
 			}
 		}
 

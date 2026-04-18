@@ -291,7 +291,7 @@ func printCheckOutputs(deps *checkDeps, outputs []checkOutput) {
 			return o.Results[i].Name < o.Results[j].Name
 		})
 
-		fmt.Fprintf(w, "%s\n", s.PlatformHeader(o.CLI))
+		_, _ = fmt.Fprintf(w, "%s\n", s.PlatformHeader(o.CLI))
 		if len(o.Results) == 0 {
 			_, _ = fmt.Fprintln(w, "  (none)")
 			_, _ = fmt.Fprintln(w)
