@@ -7,7 +7,6 @@ import (
 	"os"
 
 	"github.com/ai-summon/summon/internal/selfmgmt"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )
 
@@ -48,16 +47,10 @@ func init() {
 
 func runSelfUpdate(deps *selfUpdateDeps) error {
 	out := deps.stdout
+	s := NewStyles(deps.noColor)
 
-	infoStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))   // cyan
-	successStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2")) // green
-	if deps.noColor {
-		infoStyle = lipgloss.NewStyle()
-		successStyle = lipgloss.NewStyle()
-	}
-
-	infoPrefix := infoStyle.Render("info:")
-	successPrefix := successStyle.Render("success:")
+	infoPrefix := s.Header.Render("info:")
+	successPrefix := s.Success.Render("success:")
 
 	// Get compiled-in version
 	currentVersion := rootCmd.Version

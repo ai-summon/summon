@@ -11,7 +11,6 @@ import (
 	"github.com/ai-summon/summon/internal/manifest"
 	"github.com/ai-summon/summon/internal/platform"
 	"github.com/ai-summon/summon/internal/syscheck"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )
 
@@ -283,18 +282,7 @@ func printCheckOutputs(deps *checkDeps, outputs []checkOutput) {
 		return outputs[i].CLI < outputs[j].CLI
 	})
 
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
-	checkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	dimStyle := lipgloss.NewStyle().Faint(true)
-	if deps.noColor {
-		headerStyle = lipgloss.NewStyle()
-		checkStyle = lipgloss.NewStyle()
-		errorStyle = lipgloss.NewStyle()
-		warnStyle = lipgloss.NewStyle()
-		dimStyle = lipgloss.NewStyle()
-	}
+	s := NewStyles(deps.noColor)
 
 	fmt.Fprintln(w)
 	for _, o := range outputs {
@@ -303,7 +291,7 @@ func printCheckOutputs(deps *checkDeps, outputs []checkOutput) {
 			return o.Results[i].Name < o.Results[j].Name
 		})
 
-		fmt.Fprintf(w, "%s\n", headerStyle.Render(o.CLI+":"))
+		fmt.Fprintf(w, "%s\n", s.PlatformHeader(o.CLI))
 		if len(o.Results) == 0 {
 			fmt.Fprintln(w, "  (none)")
 			fmt.Fprintln(w)
@@ -319,16 +307,16 @@ func printCheckOutputs(deps *checkDeps, outputs []checkOutput) {
 		}
 
 		for _, r := range o.Results {
-			printCheckResult(w, r, maxNameLen, checkStyle, errorStyle, warnStyle, dimStyle)
+			printCheckResult(w, r, maxNameLen, s)
 		}
 		fmt.Fprintln(w)
 	}
 }
 
 // pluginSummary returns the status icon, summary text, and style for a plugin.
-func pluginSummary(r checkResult, checkStyle, errorStyle, warnStyle lipgloss.Style) (string, string, lipgloss.Style) {
+func pluginSummary(r checkResult, s Styles) (string, string) {
 	if len(r.PluginDeps) == 0 && len(r.SystemDeps) == 0 {
-		return checkStyle.Render("✓"), "no dependencies", checkStyle
+		return s.Success.Render("✓"), "no dependencies"
 	}
 
 	hasRequiredMissing := false
@@ -339,9 +327,9 @@ func pluginSummary(r checkResult, checkStyle, errorStyle, warnStyle lipgloss.Sty
 			hasRequiredMissing = true
 		}
 	}
-	for _, s := range r.SystemDeps {
-		if !s.Found {
-			if s.Optional {
+	for _, sd := range r.SystemDeps {
+		if !sd.Found {
+			if sd.Optional {
 				hasWarnings = true
 			} else {
 				hasRequiredMissing = true
@@ -350,18 +338,18 @@ func pluginSummary(r checkResult, checkStyle, errorStyle, warnStyle lipgloss.Sty
 	}
 
 	if hasRequiredMissing {
-		return errorStyle.Render("✗"), "issues found", errorStyle
+		return s.Error.Render("✗"), "issues found"
 	}
 	if hasWarnings {
-		return warnStyle.Render("⚠"), "warnings", warnStyle
+		return s.Warn.Render("⚠"), "warnings"
 	}
-	return checkStyle.Render("✓"), "healthy", checkStyle
+	return s.Success.Render("✓"), "healthy"
 }
 
-func printCheckResult(w io.Writer, r checkResult, maxNameLen int, checkStyle, errorStyle, warnStyle, dimStyle lipgloss.Style) {
-	icon, summary, _ := pluginSummary(r, checkStyle, errorStyle, warnStyle)
+func printCheckResult(w io.Writer, r checkResult, maxNameLen int, s Styles) {
+	icon, summary := pluginSummary(r, s)
 	padding := strings.Repeat(" ", maxNameLen-len(r.Name)+2)
-	fmt.Fprintf(w, "  %s %s%s%s\n", icon, r.Name, padding, dimStyle.Render(summary))
+	fmt.Fprintf(w, "  %s %s%s%s\n", icon, r.Name, padding, s.Dim.Render(summary))
 
 	if len(r.PluginDeps) == 0 && len(r.SystemDeps) == 0 {
 		return
@@ -372,7 +360,6 @@ func printCheckResult(w io.Writer, r checkResult, maxNameLen int, checkStyle, er
 		name   string
 		status string
 		icon   string
-		style  lipgloss.Style
 	}
 
 	var rows []depRow
@@ -380,46 +367,39 @@ func printCheckResult(w io.Writer, r checkResult, maxNameLen int, checkStyle, er
 	for _, d := range r.PluginDeps {
 		if d.Installed {
 			rows = append(rows, depRow{
-				name:   d.Name,
-				status: "",
-				icon:   checkStyle.Render("✓"),
-				style:  dimStyle,
+				name: d.Name,
+				icon: s.Success.Render("✓"),
 			})
 		} else {
 			rows = append(rows, depRow{
 				name:   d.Name,
 				status: "required",
-				icon:   errorStyle.Render("✗"),
-				style:  errorStyle,
+				icon:   s.Error.Render("✗"),
 			})
 		}
 	}
 
-	for _, s := range r.SystemDeps {
-		if s.Found {
+	for _, sd := range r.SystemDeps {
+		if sd.Found {
 			rows = append(rows, depRow{
-				name:   s.Name,
-				status: "",
-				icon:   checkStyle.Render("✓"),
-				style:  dimStyle,
+				name: sd.Name,
+				icon: s.Success.Render("✓"),
 			})
-		} else if s.Optional {
+		} else if sd.Optional {
 			reason := "recommended"
-			if s.Reason != "" {
-				reason = "recommended: " + s.Reason
+			if sd.Reason != "" {
+				reason = "recommended: " + sd.Reason
 			}
 			rows = append(rows, depRow{
-				name:   s.Name,
+				name:   sd.Name,
 				status: reason,
-				icon:   warnStyle.Render("⚠"),
-				style:  warnStyle,
+				icon:   s.Warn.Render("⚠"),
 			})
 		} else {
 			rows = append(rows, depRow{
-				name:   s.Name,
+				name:   sd.Name,
 				status: "required",
-				icon:   errorStyle.Render("✗"),
-				style:  errorStyle,
+				icon:   s.Error.Render("✗"),
 			})
 		}
 	}
@@ -438,10 +418,10 @@ func printCheckResult(w io.Writer, r checkResult, maxNameLen int, checkStyle, er
 			connector = "└──"
 		}
 		if row.status == "" {
-			fmt.Fprintf(w, "      %s %s %s\n", dimStyle.Render(connector), row.icon, row.name)
+			fmt.Fprintf(w, "      %s %s %s\n", s.Dim.Render(connector), row.icon, row.name)
 		} else {
 			depPadding := strings.Repeat(" ", maxDepLen-len(row.name)+2)
-			fmt.Fprintf(w, "      %s %s %s%s%s\n", dimStyle.Render(connector), row.icon, row.name, depPadding, dimStyle.Render(row.status))
+			fmt.Fprintf(w, "      %s %s %s%s%s\n", s.Dim.Render(connector), row.icon, row.name, depPadding, s.Dim.Render(row.status))
 		}
 	}
 }

@@ -7,7 +7,6 @@ import (
 
 	"github.com/ai-summon/summon/internal/config"
 	"github.com/ai-summon/summon/internal/platform"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )
 
@@ -83,18 +82,9 @@ func runPlatformList(deps *platformDeps) error {
 	}
 
 	// Styles
-	headerStyle := lipgloss.NewStyle().Bold(true)
-	checkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	crossStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	dimStyle := lipgloss.NewStyle().Faint(true)
-	if deps.noColor {
-		headerStyle = lipgloss.NewStyle()
-		checkStyle = lipgloss.NewStyle()
-		crossStyle = lipgloss.NewStyle()
-		dimStyle = lipgloss.NewStyle()
-	}
+	s := NewStyles(deps.noColor)
 
-	fmt.Fprintln(deps.stdout, headerStyle.Render("Platforms:"))
+	fmt.Fprintln(deps.stdout, s.Header.Render("Platforms:"))
 	fmt.Fprintln(deps.stdout)
 
 	for _, name := range config.KnownPlatforms() {
@@ -104,23 +94,23 @@ func runPlatformList(deps *platformDeps) error {
 		var statusIcon, statusText, detail string
 
 		if configured && enabled && available {
-			statusIcon = checkStyle.Render("✓")
+			statusIcon = s.Success.Render("✓")
 			statusText = "enabled"
 			detail = ""
 		} else if configured && enabled && !available {
-			statusIcon = crossStyle.Render("!")
+			statusIcon = s.Error.Render("!")
 			statusText = "enabled"
-			detail = dimStyle.Render("(not installed)")
+			detail = s.Dim.Render("(not installed)")
 		} else if configured && !enabled {
-			statusIcon = dimStyle.Render("–")
+			statusIcon = s.Dim.Render("–")
 			statusText = "disabled"
 			detail = ""
 		} else if !configured && available {
-			statusIcon = dimStyle.Render("○")
+			statusIcon = s.Dim.Render("○")
 			statusText = "detected"
-			detail = dimStyle.Render("(not enabled)")
+			detail = s.Dim.Render("(not enabled)")
 		} else {
-			statusIcon = crossStyle.Render("✗")
+			statusIcon = s.Error.Render("✗")
 			statusText = "not installed"
 			detail = ""
 		}

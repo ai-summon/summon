@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/ai-summon/summon/internal/selfmgmt"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -68,12 +67,9 @@ func runVersionCheck(cmd *cobra.Command, deps *versionCheckDeps) {
 	result := selfmgmt.CheckVersionCache(configDir, currentVersion)
 
 	if result.UpdateAvailable {
-		boxStyle := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("3")).
-			Padding(1, 3)
+		s := NewStyles(false) // version check always uses color when on TTY (noColor flag handled by TTY check above)
 		content := fmt.Sprintf("Update available: v%s → v%s\nRun \"summon self update\" to upgrade", result.CurrentVersion, result.LatestVersion)
-		fmt.Fprintf(os.Stderr, "\n%s\n\n", boxStyle.Render(content))
+		fmt.Fprintf(os.Stderr, "\n%s\n\n", s.Box.Render(content))
 	}
 
 	if result.NeedsRefresh {

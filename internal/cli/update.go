@@ -126,30 +126,6 @@ func collectUpdateTargets(names []string, adapters []platform.Adapter, defaultSc
 	return targets
 }
 
-// updateStyles holds pre-computed lipgloss styles for update output.
-type updateStyles struct {
-	header lipgloss.Style
-	check  lipgloss.Style
-	error  lipgloss.Style
-	dim    lipgloss.Style
-}
-
-func newUpdateStyles(noColor bool) updateStyles {
-	s := updateStyles{
-		header: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6")),
-		check:  lipgloss.NewStyle().Foreground(lipgloss.Color("2")),
-		error:  lipgloss.NewStyle().Foreground(lipgloss.Color("1")),
-		dim:    lipgloss.NewStyle().Faint(true),
-	}
-	if noColor {
-		s.header = lipgloss.NewStyle()
-		s.check = lipgloss.NewStyle()
-		s.error = lipgloss.NewStyle()
-		s.dim = lipgloss.NewStyle()
-	}
-	return s
-}
-
 // maxTargetNameLen computes the longest plugin name across all targets for column alignment.
 func maxTargetNameLen(targets map[string][]updateTarget) int {
 	maxLen := 0
@@ -164,23 +140,23 @@ func maxTargetNameLen(targets map[string][]updateTarget) int {
 }
 
 // renderPluginLine prints a single plugin update outcome.
-func renderPluginLine(p pluginUpdateOutcome, maxNameLen int, s updateStyles, out io.Writer) {
+func renderPluginLine(p pluginUpdateOutcome, maxNameLen int, s Styles, out io.Writer) {
 	padding := strings.Repeat(" ", maxNameLen-len(p.name)+2)
 	if p.err != nil {
-		fmt.Fprintf(out, "  %s %s%s%s\n", s.error.Render("✗"), p.name, padding, s.dim.Render("failed: "+summarizeError(p.err)))
+		fmt.Fprintf(out, "  %s %s%s%s\n", s.Error.Render("✗"), p.name, padding, s.Dim.Render("failed: "+summarizeError(p.err)))
 	} else if p.preVersion != "" && p.postVersion != "" && p.preVersion == p.postVersion {
-		fmt.Fprintf(out, "  %s %s%s%s\n", s.dim.Render("–"), p.name, padding, s.dim.Render("up to date (v"+p.postVersion+")"))
+		fmt.Fprintf(out, "  %s %s%s%s\n", s.Dim.Render("–"), p.name, padding, s.Dim.Render("up to date (v"+p.postVersion+")"))
 	} else if p.preVersion != "" && p.postVersion != "" && p.preVersion != p.postVersion {
-		fmt.Fprintf(out, "  %s %s%s%s\n", s.check.Render("✓"), p.name, padding, s.dim.Render("v"+p.preVersion+" → v"+p.postVersion))
+		fmt.Fprintf(out, "  %s %s%s%s\n", s.Success.Render("✓"), p.name, padding, s.Dim.Render("v"+p.preVersion+" → v"+p.postVersion))
 	} else {
-		fmt.Fprintf(out, "  %s %s%s%s\n", s.check.Render("✓"), p.name, padding, s.dim.Render("updated"))
+		fmt.Fprintf(out, "  %s %s%s%s\n", s.Success.Render("✓"), p.name, padding, s.Dim.Render("updated"))
 	}
 }
 
 // executeAndStreamUpdates runs updates and streams each result to out as it completes.
 // Returns collected outcomes for new-dep processing.
 func executeAndStreamUpdates(adapters []platform.Adapter, targets map[string][]updateTarget, noColor bool, out io.Writer) []platformUpdateOutput {
-	styles := newUpdateStyles(noColor)
+	styles := NewStyles(noColor)
 	maxLen := maxTargetNameLen(targets)
 
 	// Sort adapters for deterministic output
@@ -197,7 +173,7 @@ func executeAndStreamUpdates(adapters []platform.Adapter, targets map[string][]u
 			continue
 		}
 
-		fmt.Fprintf(out, "\n%s\n", styles.header.Render(a.Name()+":"))
+		fmt.Fprintf(out, "\n%s\n", styles.PlatformHeader(a.Name()))
 
 		output := platformUpdateOutput{cli: a.Name()}
 		for _, t := range adapterTargets {
@@ -212,7 +188,7 @@ func executeAndStreamUpdates(adapters []platform.Adapter, targets map[string][]u
 		}
 
 		// Per-platform summary
-		renderPlatformSummary(output, styles.dim, out)
+		renderPlatformSummary(output, styles.Dim, out)
 
 		outputs = append(outputs, output)
 	}
@@ -340,12 +316,7 @@ func installNewDeps(adapters []platform.Adapter, targets map[string][]updateTarg
 
 // renderNewDeps prints new dependency lines for platforms that have them.
 func renderNewDeps(outputs []platformUpdateOutput, noColor bool, out io.Writer) {
-	dimStyle := lipgloss.NewStyle().Faint(true)
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
-	if noColor {
-		dimStyle = lipgloss.NewStyle()
-		headerStyle = lipgloss.NewStyle()
-	}
+	s := NewStyles(noColor)
 
 	// Find max name length for alignment
 	maxNameLen := 0
@@ -361,14 +332,14 @@ func renderNewDeps(outputs []platformUpdateOutput, noColor bool, out io.Writer) 
 		if len(o.newDeps) == 0 {
 			continue
 		}
-		fmt.Fprintf(out, "\n%s\n", headerStyle.Render(o.cli+" (new dependencies):"))
+		fmt.Fprintf(out, "\n%s\n", s.Header.Render(o.cli+" (new dependencies):"))
 		for i, dep := range o.newDeps {
 			connector := "├──"
 			if i == len(o.newDeps)-1 {
 				connector = "└──"
 			}
 			depPadding := strings.Repeat(" ", maxNameLen-len(dep)+2)
-			fmt.Fprintf(out, "  %s %s%s%s\n", dimStyle.Render(connector), dep, depPadding, dimStyle.Render("installed"))
+			fmt.Fprintf(out, "  %s %s%s%s\n", s.Dim.Render(connector), dep, depPadding, s.Dim.Render("installed"))
 		}
 	}
 }

@@ -1,0 +1,20 @@
+# golangci-lint configuration for summon
+# Pin to match golangci/golangci-lint-action@v6
+run:
+  timeout: 3m
+
+linters:
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - unused
+    - gosimple
+    - ineffassign
+    - typecheck
+    - gocritic
+
+issues:
+  # Show all issues (don't limit per-linter)
+  max-issues-per-linter: 0
+  max-same-issues: 0
