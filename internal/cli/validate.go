@@ -82,7 +82,7 @@ func runValidate(deps *validateDeps) error {
 		Message: "summon.yaml syntax is valid",
 	})
 	if !validateJSON {
-		fmt.Fprintf(out, "%s summon.yaml syntax is valid\n", s.StatusIcon("pass"))
+		_, _ = fmt.Fprintf(out, "%s summon.yaml syntax is valid\n", s.StatusIcon("pass"))
 	}
 
 	// 2. Check dependencies
@@ -95,7 +95,7 @@ func runValidate(deps *validateDeps) error {
 				Message: fmt.Sprintf("dependency %s — invalid format", dep),
 			})
 			if !validateJSON {
-				fmt.Fprintf(out, "%s dependency %s — invalid format\n", s.StatusIcon("fail"), dep)
+				_, _ = fmt.Fprintf(out, "%s dependency %s — invalid format\n", s.StatusIcon("fail"), dep)
 			}
 			errCount++
 			continue
@@ -106,7 +106,7 @@ func runValidate(deps *validateDeps) error {
 			Message: fmt.Sprintf("dependency %s format valid", dep),
 		})
 		if !validateJSON {
-			fmt.Fprintf(out, "%s dependency %s — format valid\n", s.StatusIcon("pass"), dep)
+			_, _ = fmt.Fprintf(out, "%s dependency %s — format valid\n", s.StatusIcon("pass"), dep)
 		}
 	}
 
@@ -128,7 +128,7 @@ func runValidate(deps *validateDeps) error {
 					Message: fmt.Sprintf("system requirement %s — found", sr.Name),
 				})
 				if !validateJSON {
-					fmt.Fprintf(out, "%s system requirement %s — found\n", s.StatusIcon("pass"), sr.Name)
+					_, _ = fmt.Fprintf(out, "%s system requirement %s — found\n", s.StatusIcon("pass"), sr.Name)
 				}
 			case sr.Optional:
 				results = append(results, validateResult{
@@ -137,7 +137,7 @@ func runValidate(deps *validateDeps) error {
 					Message: fmt.Sprintf("system requirement %s — not found on PATH", sr.Name),
 				})
 				if !validateJSON {
-					fmt.Fprintf(out, "%s system requirement %s — not found on PATH\n", s.StatusIcon("warn"), sr.Name)
+					_, _ = fmt.Fprintf(out, "%s system requirement %s — not found on PATH\n", s.StatusIcon("warn"), sr.Name)
 				}
 				warnings++
 			default:
@@ -147,7 +147,7 @@ func runValidate(deps *validateDeps) error {
 					Message: fmt.Sprintf("system requirement %s — not found on PATH", sr.Name),
 				})
 				if !validateJSON {
-					fmt.Fprintf(out, "%s system requirement %s — not found on PATH\n", s.StatusIcon("fail"), sr.Name)
+					_, _ = fmt.Fprintf(out, "%s system requirement %s — not found on PATH\n", s.StatusIcon("fail"), sr.Name)
 				}
 				errCount++
 			}
@@ -175,7 +175,7 @@ func runValidate(deps *validateDeps) error {
 		return nil
 	}
 
-	fmt.Fprintf(out, "\n%d error(s), %d warning(s)\n", errCount, warnings)
+	_, _ = fmt.Fprintf(out, "\n%d error(s), %d warning(s)\n", errCount, warnings)
 
 	if errCount > 0 {
 		return fmt.Errorf("validation failed with %d error(s)", errCount)

@@ -144,13 +144,13 @@ func renderPluginLine(p pluginUpdateOutcome, maxNameLen int, s Styles, out io.Wr
 	padding := strings.Repeat(" ", maxNameLen-len(p.name)+2)
 	switch {
 	case p.err != nil:
-		fmt.Fprintf(out, "  %s %s%s%s\n", s.Error.Render("✗"), p.name, padding, s.Dim.Render("failed: "+summarizeError(p.err)))
+		_, _ = fmt.Fprintf(out, "  %s %s%s%s\n", s.Error.Render("✗"), p.name, padding, s.Dim.Render("failed: "+summarizeError(p.err)))
 	case p.preVersion != "" && p.postVersion != "" && p.preVersion == p.postVersion:
-		fmt.Fprintf(out, "  %s %s%s%s\n", s.Dim.Render("–"), p.name, padding, s.Dim.Render("up to date (v"+p.postVersion+")"))
+		_, _ = fmt.Fprintf(out, "  %s %s%s%s\n", s.Dim.Render("–"), p.name, padding, s.Dim.Render("up to date (v"+p.postVersion+")"))
 	case p.preVersion != "" && p.postVersion != "" && p.preVersion != p.postVersion:
-		fmt.Fprintf(out, "  %s %s%s%s\n", s.Success.Render("✓"), p.name, padding, s.Dim.Render("v"+p.preVersion+" → v"+p.postVersion))
+		_, _ = fmt.Fprintf(out, "  %s %s%s%s\n", s.Success.Render("✓"), p.name, padding, s.Dim.Render("v"+p.preVersion+" → v"+p.postVersion))
 	default:
-		fmt.Fprintf(out, "  %s %s%s%s\n", s.Success.Render("✓"), p.name, padding, s.Dim.Render("updated"))
+		_, _ = fmt.Fprintf(out, "  %s %s%s%s\n", s.Success.Render("✓"), p.name, padding, s.Dim.Render("updated"))
 	}
 }
 
@@ -174,7 +174,7 @@ func executeAndStreamUpdates(adapters []platform.Adapter, targets map[string][]u
 			continue
 		}
 
-		fmt.Fprintf(out, "\n%s\n", styles.PlatformHeader(a.Name()))
+		_, _ = fmt.Fprintf(out, "\n%s\n", styles.PlatformHeader(a.Name()))
 
 		output := platformUpdateOutput{cli: a.Name()}
 		for _, t := range adapterTargets {
@@ -221,7 +221,7 @@ func renderPlatformSummary(output platformUpdateOutput, dimStyle lipgloss.Style,
 		parts = append(parts, fmt.Sprintf("%d failed", failed))
 	}
 	if len(parts) > 0 {
-		fmt.Fprintf(out, "\n  %s\n", dimStyle.Render(strings.Join(parts, ", ")))
+		_, _ = fmt.Fprintf(out, "\n  %s\n", dimStyle.Render(strings.Join(parts, ", ")))
 	}
 }
 
@@ -298,7 +298,7 @@ func installNewDeps(adapters []platform.Adapter, targets map[string][]updateTarg
 			}
 			dep := allNewDeps[depName]
 			if err := a.Install(dep.specifier, defaultScope); err != nil {
-				fmt.Fprintf(stderr, "Warning: %s: failed to install new dependency %s: %v\n", a.Name(), dep.name, err)
+				_, _ = fmt.Fprintf(stderr, "Warning: %s: failed to install new dependency %s: %v\n", a.Name(), dep.name, err)
 				continue
 			}
 			out, ok := outputMap[a.Name()]
@@ -334,14 +334,14 @@ func renderNewDeps(outputs []platformUpdateOutput, noColor bool, out io.Writer) 
 		if len(o.newDeps) == 0 {
 			continue
 		}
-		fmt.Fprintf(out, "\n%s\n", s.Header.Render(o.cli+" (new dependencies):"))
+		_, _ = fmt.Fprintf(out, "\n%s\n", s.Header.Render(o.cli+" (new dependencies):"))
 		for i, dep := range o.newDeps {
 			connector := "├──"
 			if i == len(o.newDeps)-1 {
 				connector = "└──"
 			}
 			depPadding := strings.Repeat(" ", maxNameLen-len(dep)+2)
-			fmt.Fprintf(out, "  %s %s%s%s\n", s.Dim.Render(connector), dep, depPadding, s.Dim.Render("installed"))
+			_, _ = fmt.Fprintf(out, "  %s %s%s%s\n", s.Dim.Render(connector), dep, depPadding, s.Dim.Render("installed"))
 		}
 	}
 }
@@ -506,7 +506,7 @@ func runUpdateAll(deps *updateDeps) error {
 	}
 
 	if len(pluginMap) == 0 {
-		fmt.Fprintln(out, "No plugins installed.")
+		_, _ = fmt.Fprintln(out, "No plugins installed.")
 		return nil
 	}
 
@@ -521,6 +521,6 @@ func runUpdateAll(deps *updateDeps) error {
 	outputs = installNewDeps(adapters, targets, scope, deps.fetcher, outputs, deps.stderr)
 	renderNewDeps(outputs, deps.noColor, out)
 
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out)
 	return nil
 }

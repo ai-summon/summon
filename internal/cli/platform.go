@@ -84,8 +84,8 @@ func runPlatformList(deps *platformDeps) error {
 	// Styles
 	s := NewStyles(deps.noColor)
 
-	fmt.Fprintln(deps.stdout, s.Header.Render("Platforms:"))
-	fmt.Fprintln(deps.stdout)
+	_, _ = fmt.Fprintln(deps.stdout, s.Header.Render("Platforms:"))
+	_, _ = fmt.Fprintln(deps.stdout)
 
 	for _, name := range config.KnownPlatforms() {
 		enabled, configured := cfg.IsEnabled(name)
@@ -120,7 +120,7 @@ func runPlatformList(deps *platformDeps) error {
 		if detail != "" {
 			line += " " + detail
 		}
-		fmt.Fprintln(deps.stdout, line)
+		_, _ = fmt.Fprintln(deps.stdout, line)
 	}
 
 	return nil
@@ -168,11 +168,11 @@ func runPlatformToggle(name string, enable bool, deps *platformDeps) error {
 			}
 		}
 		if !found {
-			fmt.Fprintf(deps.stderr, "⚠ %s CLI is not installed; it will be used once available\n", name)
+			_, _ = fmt.Fprintf(deps.stderr, "⚠ %s CLI is not installed; it will be used once available\n", name)
 		}
 	}
 
-	fmt.Fprintf(deps.stdout, "%s %s\n", name, action)
+	_, _ = fmt.Fprintf(deps.stdout, "%s %s\n", name, action)
 	return nil
 }
 

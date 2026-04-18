@@ -123,11 +123,11 @@ func runList(deps *listDeps) error {
 			result[o.CLI] = o.Plugins
 		}
 		data, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Fprintln(out, string(data))
+		_, _ = fmt.Fprintln(out, string(data))
 		return nil
 	}
 
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out)
 
 	// Human-readable styled output
 	s := NewStyles(deps.noColor)
@@ -143,10 +143,10 @@ func runList(deps *listDeps) error {
 	}
 
 	for _, o := range outputs {
-		fmt.Fprintf(out, "%s\n", s.PlatformHeader(o.CLI))
+		_, _ = fmt.Fprintf(out, "%s\n", s.PlatformHeader(o.CLI))
 		if len(o.Plugins) == 0 {
-			fmt.Fprintln(out, "  (none)")
-			fmt.Fprintln(out)
+			_, _ = fmt.Fprintln(out, "  (none)")
+			_, _ = fmt.Fprintln(out)
 			continue
 		}
 		for _, p := range o.Plugins {
@@ -154,15 +154,15 @@ func runList(deps *listDeps) error {
 			if p.Version != "" {
 				padding := strings.Repeat(" ", maxNameLen-len(p.Name)+2)
 				version := s.Dim.Render("v" + p.Version)
-				fmt.Fprintf(out, "  %s %s%s%s\n", check, p.Name, padding, version)
+				_, _ = fmt.Fprintf(out, "  %s %s%s%s\n", check, p.Name, padding, version)
 			} else {
-				fmt.Fprintf(out, "  %s %s\n", check, p.Name)
+				_, _ = fmt.Fprintf(out, "  %s %s\n", check, p.Name)
 			}
 			for _, dep := range p.Dependencies {
-				fmt.Fprintf(out, "      └── %s\n", s.Dim.Render(dep))
+				_, _ = fmt.Fprintf(out, "      └── %s\n", s.Dim.Render(dep))
 			}
 		}
-		fmt.Fprintln(out)
+		_, _ = fmt.Fprintln(out)
 	}
 
 	total := 0
@@ -170,7 +170,7 @@ func runList(deps *listDeps) error {
 		total += len(o.Plugins)
 	}
 	if total == 0 {
-		fmt.Fprintln(out, "No plugins installed.")
+		_, _ = fmt.Fprintln(out, "No plugins installed.")
 	}
 
 	return nil

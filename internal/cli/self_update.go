@@ -60,7 +60,7 @@ func runSelfUpdate(deps *selfUpdateDeps) error {
 	current := selfmgmt.StripVersion(currentVersion)
 
 	// Check latest version
-	fmt.Fprintf(out, "%s Checking for updates...\n", infoPrefix)
+	_, _ = fmt.Fprintf(out, "%s Checking for updates...\n", infoPrefix)
 
 	release, err := selfmgmt.FetchLatestVersion(deps.httpClient)
 	if err != nil {
@@ -68,11 +68,11 @@ func runSelfUpdate(deps *selfUpdateDeps) error {
 	}
 
 	if selfmgmt.IsUpToDate(current, release.Version) {
-		fmt.Fprintf(out, "%s You're already on version v%s of summon (the latest version).\n", successPrefix, current)
+		_, _ = fmt.Fprintf(out, "%s You're already on version v%s of summon (the latest version).\n", successPrefix, current)
 		return nil
 	}
 
-	fmt.Fprintf(out, "%s Updating summon v%s → v%s\n", infoPrefix, current, release.Version)
+	_, _ = fmt.Fprintf(out, "%s Updating summon v%s → v%s\n", infoPrefix, current, release.Version)
 
 	// Resolve paths only when an update is needed
 	var paths selfmgmt.SummonPaths
@@ -82,13 +82,13 @@ func runSelfUpdate(deps *selfUpdateDeps) error {
 		paths, err = selfmgmt.ResolvePaths()
 	}
 	if err != nil {
-		return fmt.Errorf("Error: %w", err)
+		return fmt.Errorf("error: %w", err)
 	}
 
 	if err := selfmgmt.PerformUpdate(release, paths, deps.httpClient, deps.execRunner, out); err != nil {
 		return err
 	}
 
-	fmt.Fprintf(out, "%s Updated summon to v%s!\n", successPrefix, release.Version)
+	_, _ = fmt.Fprintf(out, "%s Updated summon to v%s!\n", successPrefix, release.Version)
 	return nil
 }

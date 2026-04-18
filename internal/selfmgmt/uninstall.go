@@ -50,17 +50,17 @@ func Uninstall(paths SummonPaths, w io.Writer) error {
 func UninstallWith(paths SummonPaths, w io.Writer, fs FileSystem) error {
 	// Warn if binary is in a system-managed location
 	if isSystemWidePath(paths.BinaryPath) {
-		fmt.Fprintf(w, "warning: %s appears to be in a system-managed location\n", paths.BinaryPath)
-		fmt.Fprintln(w, "The binary may be managed by a package manager.")
+		_, _ = fmt.Fprintf(w, "warning: %s appears to be in a system-managed location\n", paths.BinaryPath)
+		_, _ = fmt.Fprintln(w, "The binary may be managed by a package manager.")
 	}
 
 	// Remove config directory first (FR-005)
 	_, err := fs.Stat(paths.ConfigDir)
 	if err == nil {
 		if err := fs.RemoveAll(paths.ConfigDir); err != nil {
-			return fmt.Errorf("permission denied removing %s\nTry running with elevated permissions or manually remove the file.", paths.ConfigDir)
+			return fmt.Errorf("permission denied removing %s\ntry running with elevated permissions or manually remove the file", paths.ConfigDir)
 		}
-		fmt.Fprintf(w, "removed %s\n", paths.ConfigDir)
+		_, _ = fmt.Fprintf(w, "removed %s\n", paths.ConfigDir)
 	}
 	// Missing config dir is silently skipped (FR-006)
 

@@ -26,7 +26,7 @@ func buildBinary(t *testing.T) string {
 	}
 	dir, err := os.MkdirTemp("", "summon-e2e-*")
 	require.NoError(t, err)
-	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	binary := filepath.Join(dir, "summon")
 	if runtime.GOOS == "windows" {
 		binary += ".exe"

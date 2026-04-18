@@ -130,9 +130,9 @@ func runCheckAll(deps *checkDeps) error {
 
 	if totalPlugins == 0 {
 		if checkJSON {
-			fmt.Fprintln(deps.stdout, "{}")
+			_, _ = fmt.Fprintln(deps.stdout, "{}")
 		} else {
-			fmt.Fprintln(deps.stdout, "No plugins installed.")
+			_, _ = fmt.Fprintln(deps.stdout, "No plugins installed.")
 		}
 		return nil
 	}
@@ -273,7 +273,7 @@ func printCheckOutputs(deps *checkDeps, outputs []checkOutput) {
 			result[o.CLI] = o.Results
 		}
 		data, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Fprintln(w, string(data))
+		_, _ = fmt.Fprintln(w, string(data))
 		return
 	}
 
@@ -284,7 +284,7 @@ func printCheckOutputs(deps *checkDeps, outputs []checkOutput) {
 
 	s := NewStyles(deps.noColor)
 
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
 	for _, o := range outputs {
 		// Sort plugins within each platform
 		sort.Slice(o.Results, func(i, j int) bool {
@@ -293,8 +293,8 @@ func printCheckOutputs(deps *checkDeps, outputs []checkOutput) {
 
 		fmt.Fprintf(w, "%s\n", s.PlatformHeader(o.CLI))
 		if len(o.Results) == 0 {
-			fmt.Fprintln(w, "  (none)")
-			fmt.Fprintln(w)
+			_, _ = fmt.Fprintln(w, "  (none)")
+			_, _ = fmt.Fprintln(w)
 			continue
 		}
 
@@ -309,7 +309,7 @@ func printCheckOutputs(deps *checkDeps, outputs []checkOutput) {
 		for _, r := range o.Results {
 			printCheckResult(w, r, maxNameLen, s)
 		}
-		fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w)
 	}
 }
 
@@ -349,7 +349,7 @@ func pluginSummary(r checkResult, s Styles) (string, string) {
 func printCheckResult(w io.Writer, r checkResult, maxNameLen int, s Styles) {
 	icon, summary := pluginSummary(r, s)
 	padding := strings.Repeat(" ", maxNameLen-len(r.Name)+2)
-	fmt.Fprintf(w, "  %s %s%s%s\n", icon, r.Name, padding, s.Dim.Render(summary))
+	_, _ = fmt.Fprintf(w, "  %s %s%s%s\n", icon, r.Name, padding, s.Dim.Render(summary))
 
 	if len(r.PluginDeps) == 0 && len(r.SystemDeps) == 0 {
 		return
@@ -419,10 +419,10 @@ func printCheckResult(w io.Writer, r checkResult, maxNameLen int, s Styles) {
 			connector = "└──"
 		}
 		if row.status == "" {
-			fmt.Fprintf(w, "      %s %s %s\n", s.Dim.Render(connector), row.icon, row.name)
+			_, _ = fmt.Fprintf(w, "      %s %s %s\n", s.Dim.Render(connector), row.icon, row.name)
 		} else {
 			depPadding := strings.Repeat(" ", maxDepLen-len(row.name)+2)
-			fmt.Fprintf(w, "      %s %s %s%s%s\n", s.Dim.Render(connector), row.icon, row.name, depPadding, s.Dim.Render(row.status))
+			_, _ = fmt.Fprintf(w, "      %s %s %s%s%s\n", s.Dim.Render(connector), row.icon, row.name, depPadding, s.Dim.Render(row.status))
 		}
 	}
 }

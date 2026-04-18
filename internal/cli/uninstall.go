@@ -133,14 +133,14 @@ func runUninstall(name string, deps *uninstallDeps) error {
 
 	reverseDeps := graph.ReverseDependencies()
 	if dependents, ok := reverseDeps[name]; ok && len(dependents) > 0 {
-		fmt.Fprintf(out, "%s The following installed packages depend on %s:\n", s.StatusIcon("warn"), name)
+		_, _ = fmt.Fprintf(out, "%s The following installed packages depend on %s:\n", s.StatusIcon("warn"), name)
 		for _, d := range dependents {
-			fmt.Fprintf(out, "  • %s\n", d)
+			_, _ = fmt.Fprintf(out, "  • %s\n", d)
 		}
-		fmt.Fprintln(out, "\nUninstalling may break these packages.")
+		_, _ = fmt.Fprintln(out, "\nUninstalling may break these packages.")
 
 		if !uninstallYes {
-			fmt.Fprintf(out, "Continue? [y/N]: ")
+			_, _ = fmt.Fprintf(out, "Continue? [y/N]: ")
 			if !confirmPrompt(deps.stdin) {
 				return fmt.Errorf("uninstall cancelled")
 			}
@@ -148,28 +148,28 @@ func runUninstall(name string, deps *uninstallDeps) error {
 	}
 
 	// Delegate uninstall (best-effort: try all platforms, collect errors)
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out)
 	var failed []string
 	var succeeded []string
 	for _, entry := range installedOn {
 		if err := entry.adapter.Uninstall(name, entry.scope); err != nil {
-			fmt.Fprintf(out, "  %s failed to uninstall %s from %s: %v\n", s.StatusIcon("fail"), name, entry.adapter.Name(), err)
+			_, _ = fmt.Fprintf(out, "  %s failed to uninstall %s from %s: %v\n", s.StatusIcon("fail"), name, entry.adapter.Name(), err)
 			failed = append(failed, fmt.Sprintf("%s: %v", entry.adapter.Name(), err))
 		} else {
-			fmt.Fprintf(out, "  %s %s uninstalled (%s)\n", s.StatusIcon("pass"), name, entry.adapter.Name())
+			_, _ = fmt.Fprintf(out, "  %s %s uninstalled (%s)\n", s.StatusIcon("pass"), name, entry.adapter.Name())
 			succeeded = append(succeeded, entry.adapter.Name())
 		}
 	}
 
 	if len(failed) > 0 {
-		fmt.Fprintln(out)
+		_, _ = fmt.Fprintln(out)
 		if len(succeeded) > 0 {
-			fmt.Fprintf(out, "Partially uninstalled %s (succeeded: %s)\n", name, strings.Join(succeeded, ", "))
+			_, _ = fmt.Fprintf(out, "Partially uninstalled %s (succeeded: %s)\n", name, strings.Join(succeeded, ", "))
 		}
 		return fmt.Errorf("uninstall failed on %d platform(s): %s", len(failed), strings.Join(failed, "; "))
 	}
 
-	fmt.Fprintf(out, "\nUninstalled %s\n", name)
+	_, _ = fmt.Fprintf(out, "\nUninstalled %s\n", name)
 	return nil
 }
 
