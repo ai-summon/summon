@@ -73,7 +73,7 @@ func (f *RemoteFetcher) fetchFromGitHub(owner, repo string) (*Manifest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch manifest from GitHub: %w", err)
 	}
-	_ = resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil // No manifest — valid scenario

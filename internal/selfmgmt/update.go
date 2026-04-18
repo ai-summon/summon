@@ -87,7 +87,7 @@ func FetchLatestVersion(httpClient HTTPClient) (ReleaseInfo, error) {
 	if err != nil {
 		return ReleaseInfo{}, fmt.Errorf("failed to check for updates: %w", err)
 	}
-	_ = resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return ReleaseInfo{}, fmt.Errorf("no releases found for ai-summon/summon")
@@ -185,7 +185,7 @@ func PerformUpdate(release ReleaseInfo, paths SummonPaths, httpClient HTTPClient
 	if err != nil {
 		return fmt.Errorf("update failed: %w\nthe current installation has not been modified", err)
 	}
-	_ = resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("update failed: could not download installer (HTTP %d)\nthe current installation has not been modified", resp.StatusCode)
