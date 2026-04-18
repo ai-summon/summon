@@ -1,6 +1,8 @@
 package manifest
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -79,4 +81,65 @@ func TestParse_EmptyManifest(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, m.Dependencies)
 	assert.Empty(t, m.SystemRequirements)
+}
+
+func TestParse_InvalidYAML(t *testing.T) {
+	data := []byte(`{{{invalid yaml`)
+	_, err := Parse(data)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "manifest parse error")
+}
+
+func TestValidate_EmptySystemRequirementName(t *testing.T) {
+	m := &Manifest{
+		SystemRequirements: []SystemRequirement{
+			{Name: ""},
+		},
+	}
+	err := m.Validate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "must have a 'name'")
+}
+
+func TestParseAndValidate_InvalidYAML(t *testing.T) {
+	data := []byte(`{{{invalid yaml`)
+	_, err := ParseAndValidate(data)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "manifest parse error")
+}
+
+func TestLoadFile_ValidFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "summon.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("dependencies:\n  - some-plugin\n"), 0644))
+
+	m, err := LoadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, m.Dependencies, "some-plugin")
+}
+
+func TestLoadFile_NonexistentFile(t *testing.T) {
+	_, err := LoadFile("/nonexistent/path/summon.yaml")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "manifest load error")
+}
+
+func TestLoadFile_InvalidContent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "summon.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`{{{invalid yaml`), 0644))
+
+	_, err := LoadFile(path)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "manifest parse error")
+}
+
+func TestLoadFile_ValidationError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "summon.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("system_requirements:\n  - name: docker\n    optional: true\n"), 0644))
+
+	_, err := LoadFile(path)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "optional but missing 'reason'")
 }

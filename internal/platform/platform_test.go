@@ -696,3 +696,487 @@ func TestClaudeAdapter_FindPluginDir_DynamicScan(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, versionDir, dir)
 }
+
+// --- RemoveMarketplace Tests ---
+
+func TestClaudeAdapter_RemoveMarketplace_Success(t *testing.T) {
+	runner := NewFakeRunner()
+	adapter := NewClaudeAdapter(runner)
+	err := adapter.RemoveMarketplace("summon-marketplace")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"claude", "plugin", "marketplace", "remove", "summon-marketplace"}, runner.Commands[0])
+}
+
+func TestClaudeAdapter_RemoveMarketplace_Error(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return []byte("marketplace not found"), fmt.Errorf("exit status 1")
+	}
+	adapter := NewClaudeAdapter(runner)
+	err := adapter.RemoveMarketplace("nonexistent")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "marketplace not found")
+}
+
+func TestCopilotAdapter_RemoveMarketplace_Success(t *testing.T) {
+	runner := NewFakeRunner()
+	adapter := NewCopilotAdapter(runner)
+	err := adapter.RemoveMarketplace("summon-marketplace")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"copilot", "plugin", "marketplace", "remove", "summon-marketplace"}, runner.Commands[0])
+}
+
+func TestCopilotAdapter_RemoveMarketplace_Error(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return []byte("marketplace not found"), fmt.Errorf("exit status 1")
+	}
+	adapter := NewCopilotAdapter(runner)
+	err := adapter.RemoveMarketplace("nonexistent")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "marketplace not found")
+}
+
+// --- Update Tests ---
+
+func TestClaudeAdapter_Update_UserScope(t *testing.T) {
+	runner := NewFakeRunner()
+	adapter := NewClaudeAdapter(runner)
+	err := adapter.Update("my-plugin", ScopeUser)
+	require.NoError(t, err)
+	// user scope should not append --scope flag
+	assert.Equal(t, []string{"claude", "plugin", "update", "my-plugin"}, runner.Commands[0])
+}
+
+func TestClaudeAdapter_Update_ProjectScope(t *testing.T) {
+	runner := NewFakeRunner()
+	adapter := NewClaudeAdapter(runner)
+	err := adapter.Update("my-plugin", ScopeProject)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"claude", "plugin", "update", "my-plugin", "--scope", "project"}, runner.Commands[0])
+}
+
+func TestClaudeAdapter_Update_LocalScope(t *testing.T) {
+	runner := NewFakeRunner()
+	adapter := NewClaudeAdapter(runner)
+	err := adapter.Update("my-plugin", ScopeLocal)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"claude", "plugin", "update", "my-plugin", "--scope", "local"}, runner.Commands[0])
+}
+
+func TestClaudeAdapter_Update_RunError(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return []byte("plugin not found"), fmt.Errorf("exit status 1")
+	}
+	adapter := NewClaudeAdapter(runner)
+	err := adapter.Update("nonexistent", ScopeUser)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "plugin not found")
+}
+
+func TestCopilotAdapter_Update_Success(t *testing.T) {
+	runner := NewFakeRunner()
+	adapter := NewCopilotAdapter(runner)
+	err := adapter.Update("my-plugin", ScopeUser)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"copilot", "plugin", "update", "my-plugin"}, runner.Commands[0])
+}
+
+func TestCopilotAdapter_Update_StripsMarketplaceSuffix(t *testing.T) {
+	runner := NewFakeRunner()
+	adapter := NewCopilotAdapter(runner)
+	err := adapter.Update("my-plugin@summon-marketplace", ScopeUser)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"copilot", "plugin", "update", "my-plugin"}, runner.Commands[0])
+}
+
+func TestCopilotAdapter_Update_UnsupportedScope(t *testing.T) {
+	runner := NewFakeRunner()
+	adapter := NewCopilotAdapter(runner)
+	err := adapter.Update("my-plugin", ScopeProject)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not support scope")
+}
+
+func TestCopilotAdapter_Update_RunError(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return []byte("update failed"), fmt.Errorf("exit status 1")
+	}
+	adapter := NewCopilotAdapter(runner)
+	err := adapter.Update("nonexistent", ScopeUser)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "update failed")
+}
+
+// --- Install Error Path Tests ---
+
+func TestClaudeAdapter_Install_RunError(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return []byte("install failed: permission denied"), fmt.Errorf("exit status 1")
+	}
+	adapter := NewClaudeAdapter(runner)
+	err := adapter.Install("gh:owner/repo", ScopeUser)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "permission denied")
+}
+
+func TestCopilotAdapter_Install_RunError(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return []byte("install failed: network error"), fmt.Errorf("exit status 1")
+	}
+	adapter := NewCopilotAdapter(runner)
+	err := adapter.Install("gh:owner/repo", ScopeUser)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "network error")
+}
+
+// --- ListInstalled Error Path Tests ---
+
+func TestClaudeAdapter_ListInstalled_UnsupportedScope(t *testing.T) {
+	runner := NewFakeRunner()
+	// ClaudeAdapter supports user/project/local; create a fake adapter with limited scopes
+	// Instead, use CopilotAdapter which only supports user scope
+	adapter := NewCopilotAdapter(runner)
+	_, err := adapter.ListInstalled(ScopeProject)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not support scope")
+}
+
+func TestClaudeAdapter_ListInstalled_RunError(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return nil, fmt.Errorf("connection refused")
+	}
+	adapter := NewClaudeAdapter(runner)
+	_, err := adapter.ListInstalled(ScopeUser)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "claude list failed")
+}
+
+func TestClaudeAdapter_ListInstalled_InvalidJSON(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return []byte("not json at all"), nil
+	}
+	adapter := NewClaudeAdapter(runner)
+	_, err := adapter.ListInstalled(ScopeUser)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to parse")
+}
+
+func TestCopilotAdapter_ListInstalled_RunError(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return nil, fmt.Errorf("connection refused")
+	}
+	adapter := NewCopilotAdapter(runner)
+	_, err := adapter.ListInstalled(ScopeUser)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "copilot list failed")
+}
+
+// --- FindPluginDir Additional Tests ---
+
+func TestClaudeAdapter_FindPluginDir_ProjectScope(t *testing.T) {
+	cwd := t.TempDir()
+	// Create plugin directory under project-scope cache
+	versionDir := filepath.Join(cwd, ".claude", "plugins", "cache", "my-marketplace", "my-plugin", "1.0.0")
+	require.NoError(t, os.MkdirAll(versionDir, 0o755))
+
+	runner := NewFakeRunner()
+	adapter := NewClaudeAdapterWithCwd(runner, cwd)
+
+	dir, err := adapter.FindPluginDir("my-plugin", ScopeProject)
+	require.NoError(t, err)
+	assert.Equal(t, versionDir, dir)
+}
+
+func TestClaudeAdapter_FindPluginDir_LocalScope(t *testing.T) {
+	cwd := t.TempDir()
+	versionDir := filepath.Join(cwd, ".claude", "plugins", "cache", "mp", "my-plugin", "2.0.0")
+	require.NoError(t, os.MkdirAll(versionDir, 0o755))
+
+	runner := NewFakeRunner()
+	adapter := NewClaudeAdapterWithCwd(runner, cwd)
+
+	dir, err := adapter.FindPluginDir("my-plugin", ScopeLocal)
+	require.NoError(t, err)
+	assert.Equal(t, versionDir, dir)
+}
+
+func TestClaudeAdapter_FindPluginDir_InstalledPluginsJSON(t *testing.T) {
+	home := t.TempDir()
+	setHome(t, home)
+
+	// No cache directory, but installed_plugins.json exists with a path
+	pluginDir := filepath.Join(home, "custom-path", "my-plugin")
+	require.NoError(t, os.MkdirAll(pluginDir, 0o755))
+
+	metaDir := filepath.Join(home, ".claude", "plugins")
+	require.NoError(t, os.MkdirAll(metaDir, 0o755))
+	meta := []map[string]string{
+		{"name": "my-plugin@my-marketplace", "path": pluginDir},
+	}
+	data, err := json.Marshal(meta)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(metaDir, "installed_plugins.json"), data, 0o644))
+
+	runner := NewFakeRunner()
+	adapter := NewClaudeAdapter(runner)
+
+	dir, err := adapter.FindPluginDir("my-plugin", ScopeUser)
+	require.NoError(t, err)
+	assert.Equal(t, pluginDir, dir)
+}
+
+func TestClaudeAdapter_FindPluginDir_NotFound(t *testing.T) {
+	home := t.TempDir()
+	setHome(t, home)
+
+	runner := NewFakeRunner()
+	adapter := NewClaudeAdapter(runner)
+
+	_, err := adapter.FindPluginDir("nonexistent", ScopeUser)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestClaudeAdapter_FindPluginDir_InvalidScope(t *testing.T) {
+	runner := NewFakeRunner()
+	adapter := NewCopilotAdapter(runner)
+	_, err := adapter.FindPluginDir("my-plugin", ScopeProject)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not support scope")
+}
+
+func TestCopilotAdapter_FindPluginDir_UnsupportedScope(t *testing.T) {
+	runner := NewFakeRunner()
+	adapter := NewCopilotAdapter(runner)
+	_, err := adapter.FindPluginDir("my-plugin", ScopeProject)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not support scope")
+}
+
+func TestCopilotAdapter_FindPluginDir_ConfigJSON_NameWithMarketplace(t *testing.T) {
+	home := t.TempDir()
+	setHome(t, home)
+
+	pluginDir := filepath.Join(home, ".copilot", "installed-plugins", "my-mp", "my-plugin")
+	require.NoError(t, os.MkdirAll(pluginDir, 0o755))
+
+	// config.json with name containing @marketplace suffix
+	config := map[string]interface{}{
+		"installedPlugins": []map[string]interface{}{
+			{
+				"name":       "my-plugin@my-mp",
+				"cache_path": pluginDir,
+			},
+		},
+	}
+	data, err := json.Marshal(config)
+	require.NoError(t, err)
+	configDir := filepath.Join(home, ".copilot")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.json"), data, 0o644))
+
+	runner := NewFakeRunner()
+	adapter := NewCopilotAdapter(runner)
+
+	dir, err := adapter.FindPluginDir("my-plugin", ScopeUser)
+	require.NoError(t, err)
+	assert.Equal(t, pluginDir, dir)
+}
+
+// --- Uninstall Scope Validation Tests ---
+
+func TestCopilotAdapter_Uninstall_UnsupportedScope(t *testing.T) {
+	runner := NewFakeRunner()
+	adapter := NewCopilotAdapter(runner)
+	err := adapter.Uninstall("my-plugin", ScopeProject)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not support scope")
+}
+
+func TestClaudeAdapter_Uninstall_UserScope(t *testing.T) {
+	runner := NewFakeRunner()
+	adapter := NewClaudeAdapter(runner)
+	err := adapter.Uninstall("my-plugin", ScopeUser)
+	require.NoError(t, err)
+	// user scope should not append --scope flag
+	assert.Equal(t, []string{"claude", "plugin", "uninstall", "my-plugin"}, runner.Commands[0])
+}
+
+// --- cliError with non-exit-status error ---
+
+func TestCliError_WithOutputAndNonExitError(t *testing.T) {
+	err := cliError("claude install", []byte("some output"), fmt.Errorf("connection timeout"))
+	assert.Contains(t, err.Error(), "some output")
+	assert.Contains(t, err.Error(), "connection timeout")
+}
+
+// --- ListMarketplaces Error Tests ---
+
+func TestClaudeAdapter_ListMarketplaces_RunError(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return nil, fmt.Errorf("exit status 1")
+	}
+	adapter := NewClaudeAdapter(runner)
+	_, err := adapter.ListMarketplaces()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "marketplace list failed")
+}
+
+func TestClaudeAdapter_ListMarketplaces_InvalidJSON(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return []byte("not json"), nil
+	}
+	adapter := NewClaudeAdapter(runner)
+	_, err := adapter.ListMarketplaces()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to parse")
+}
+
+func TestCopilotAdapter_ListMarketplaces_RunError(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return nil, fmt.Errorf("exit status 1")
+	}
+	adapter := NewCopilotAdapter(runner)
+	_, err := adapter.ListMarketplaces()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "marketplace list failed")
+}
+
+// --- EnsureMarketplace Error Tests ---
+
+func TestCopilotAdapter_EnsureMarketplace_ListError(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return nil, fmt.Errorf("exit status 1")
+	}
+	adapter := NewCopilotAdapter(runner)
+	err := adapter.EnsureMarketplace("my-mp", "owner/repo")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to list marketplaces")
+}
+
+func TestClaudeAdapter_EnsureMarketplace_ListError(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return nil, fmt.Errorf("exit status 1")
+	}
+	adapter := NewClaudeAdapter(runner)
+	err := adapter.EnsureMarketplace("my-mp", "owner/repo")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to list marketplaces")
+}
+
+func TestCopilotAdapter_EnsureMarketplace_AddError(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		for _, a := range args {
+			if a == "list" {
+				return []byte("No marketplaces registered.\n"), nil
+			}
+			if a == "add" {
+				return []byte("add failed"), fmt.Errorf("exit status 1")
+			}
+		}
+		return nil, nil
+	}
+	adapter := NewCopilotAdapter(runner)
+	err := adapter.EnsureMarketplace("my-mp", "owner/repo")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "add failed")
+}
+
+func TestClaudeAdapter_EnsureMarketplace_AddError(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		for _, a := range args {
+			if a == "list" {
+				return []byte("[]"), nil
+			}
+			if a == "add" {
+				return []byte("add failed"), fmt.Errorf("exit status 1")
+			}
+		}
+		return nil, nil
+	}
+	adapter := NewClaudeAdapter(runner)
+	err := adapter.EnsureMarketplace("my-mp", "owner/repo")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "add failed")
+}
+
+// --- ClaudeAdapter ListInstalled with name/source fields ---
+
+func TestClaudeAdapter_ListInstalled_NameAndSourceFields(t *testing.T) {
+	// Test plugins that use the "name" and "source" fields instead of "id"
+	jsonOutput := `[{"name":"my-plugin","source":"gh:owner/repo","version":"2.0.0","scope":"user","enabled":true}]`
+	runner := NewFakeRunner()
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return []byte(jsonOutput), nil
+	}
+	adapter := NewClaudeAdapter(runner)
+	result, err := adapter.ListInstalled(ScopeUser)
+	require.NoError(t, err)
+	assert.Len(t, result, 1)
+	assert.Equal(t, "my-plugin", result[0].Name)
+	assert.Equal(t, "gh:owner/repo", result[0].Source)
+}
+
+func TestClaudeAdapter_ListInstalled_EmptyOutput(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return []byte(""), nil
+	}
+	adapter := NewClaudeAdapter(runner)
+	result, err := adapter.ListInstalled(ScopeUser)
+	require.NoError(t, err)
+	assert.Nil(t, result)
+}
+
+func TestClaudeAdapter_ListInstalled_EmptyArray(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return []byte("[]"), nil
+	}
+	adapter := NewClaudeAdapter(runner)
+	result, err := adapter.ListInstalled(ScopeUser)
+	require.NoError(t, err)
+	assert.Nil(t, result)
+}
+
+// --- ClaudeAdapter ListMarketplaces edge cases ---
+
+func TestClaudeAdapter_ListMarketplaces_Empty(t *testing.T) {
+	runner := NewFakeRunner()
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return []byte("[]"), nil
+	}
+	adapter := NewClaudeAdapter(runner)
+	result, err := adapter.ListMarketplaces()
+	require.NoError(t, err)
+	assert.Nil(t, result)
+}
+
+func TestClaudeAdapter_ListMarketplaces_SourceFallback(t *testing.T) {
+	// Test fallback to "source" field when neither "repo" nor "url" are present
+	jsonOutput := `[{"name":"my-mp","source":"custom-source"}]`
+	runner := NewFakeRunner()
+	runner.RunFunc = func(name string, args ...string) ([]byte, error) {
+		return []byte(jsonOutput), nil
+	}
+	adapter := NewClaudeAdapter(runner)
+	result, err := adapter.ListMarketplaces()
+	require.NoError(t, err)
+	assert.Len(t, result, 1)
+	assert.Equal(t, "custom-source", result[0].Source)
+}

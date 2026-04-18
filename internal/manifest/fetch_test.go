@@ -161,3 +161,80 @@ func TestParseGitHubURL_NonGitHub(t *testing.T) {
 	_, _, ok := parseGitHubURL("https://intranet.example.com/org/repo")
 	assert.False(t, ok)
 }
+
+func TestParseGitHubURL_ShorthandInvalid(t *testing.T) {
+	_, _, ok := parseGitHubURL("gh:noslash")
+	assert.False(t, ok)
+}
+
+func TestFetchManifest_GitHubURL_HTTPClientError(t *testing.T) {
+	httpClient := newFakeHTTPClient()
+	httpClient.errors["https://raw.githubusercontent.com/owner/err-plugin/HEAD/summon.yaml"] = fmt.Errorf("connection refused")
+
+	fetcher := NewRemoteFetcher(httpClient, &fakeGitRunner{})
+	_, err := fetcher.FetchManifest("gh:owner/err-plugin")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to fetch manifest from GitHub")
+}
+
+func TestFetchManifest_GitHubURL_ServerError(t *testing.T) {
+	httpClient := newFakeHTTPClient()
+	httpClient.setResponse(
+		"https://raw.githubusercontent.com/owner/server-err/HEAD/summon.yaml",
+		http.StatusInternalServerError,
+		"internal server error",
+	)
+
+	fetcher := NewRemoteFetcher(httpClient, &fakeGitRunner{})
+	_, err := fetcher.FetchManifest("gh:owner/server-err")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "GitHub raw content returned status 500")
+}
+
+// errReader always returns an error on Read.
+type errReader struct{}
+
+func (e *errReader) Read(p []byte) (int, error) {
+	return 0, fmt.Errorf("read error")
+}
+
+func TestFetchManifest_GitHubURL_ReadBodyError(t *testing.T) {
+	httpClient := newFakeHTTPClient()
+	httpClient.responses["https://raw.githubusercontent.com/owner/read-err/HEAD/summon.yaml"] = &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(&errReader{}),
+	}
+
+	fetcher := NewRemoteFetcher(httpClient, &fakeGitRunner{})
+	_, err := fetcher.FetchManifest("gh:owner/read-err")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to read manifest body")
+}
+
+func TestFetchManifest_GitHubURL_InvalidManifestYAML(t *testing.T) {
+	httpClient := newFakeHTTPClient()
+	httpClient.setResponse(
+		"https://raw.githubusercontent.com/owner/bad-yaml/HEAD/summon.yaml",
+		http.StatusOK,
+		`{{{invalid yaml`,
+	)
+
+	fetcher := NewRemoteFetcher(httpClient, &fakeGitRunner{})
+	_, err := fetcher.FetchManifest("gh:owner/bad-yaml")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "manifest parse error")
+}
+
+func TestFetchManifest_GitArchive_InvalidManifestYAML(t *testing.T) {
+	httpClient := newFakeHTTPClient()
+	gitRunner := &fakeGitRunner{
+		runFunc: func(name string, args ...string) ([]byte, error) {
+			return []byte(`{{{invalid yaml`), nil
+		},
+	}
+
+	fetcher := NewRemoteFetcher(httpClient, gitRunner)
+	_, err := fetcher.FetchManifest("https://intranet.example.com/org/bad-plugin.git")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "manifest parse error")
+}

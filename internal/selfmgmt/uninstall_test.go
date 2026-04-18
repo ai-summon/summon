@@ -164,6 +164,17 @@ func (f *orderTrackingFS) Remove(path string) error {
 	return nil
 }
 
+func TestRemoveBinary_NonPermissionError(t *testing.T) {
+	fs := newFakeFileSystem()
+	fs.removeErr["/home/user/.local/bin/summon"] = fmt.Errorf("device not ready")
+	var buf bytes.Buffer
+
+	err := removeBinary("/home/user/.local/bin/summon", fs, &buf)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to remove")
+	assert.Contains(t, err.Error(), "device not ready")
+}
+
 func TestIsSystemWidePath(t *testing.T) {
 	tests := []struct {
 		path     string

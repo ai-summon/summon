@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -16,15 +18,20 @@ import (
 
 type fakeRegistryHTTPClient struct {
 	responses map[string]*http.Response
+	errors    map[string]error
 }
 
 func newFakeRegistryHTTPClient() *fakeRegistryHTTPClient {
 	return &fakeRegistryHTTPClient{
 		responses: make(map[string]*http.Response),
+		errors:    make(map[string]error),
 	}
 }
 
 func (f *fakeRegistryHTTPClient) Get(url string) (*http.Response, error) {
+	if err, ok := f.errors[url]; ok {
+		return nil, err
+	}
 	if resp, ok := f.responses[url]; ok {
 		return resp, nil
 	}
@@ -39,6 +46,10 @@ func (f *fakeRegistryHTTPClient) setResponse(url string, status int, body string
 		StatusCode: status,
 		Body:       io.NopCloser(strings.NewReader(body)),
 	}
+}
+
+func (f *fakeRegistryHTTPClient) setError(url string, err error) {
+	f.errors[url] = err
 }
 
 // --- Fake Git Runner ---
@@ -514,4 +525,269 @@ func TestParseGitHubURL_FullURLWithGit(t *testing.T) {
 func TestParseGitHubURL_NonGitHub(t *testing.T) {
 	_, _, ok := parseGitHubURL("https://intranet.example.com/org/repo")
 	assert.False(t, ok)
+}
+
+func TestParseGitHubURL_ShorthandNoSlash(t *testing.T) {
+	_, _, ok := parseGitHubURL("gh:noslash")
+	assert.False(t, ok)
+}
+
+// --- NewRegistry tests ---
+
+func TestNewRegistry(t *testing.T) {
+	reg := NewRegistry(nil)
+	require.NotNil(t, reg)
+	assert.Nil(t, reg.gitClient)
+}
+
+// --- resolvePluginSource error path tests ---
+
+func TestResolvePluginSource_EmptySourceType(t *testing.T) {
+	s := MarketplacePluginSource{Source: ""}
+	_, err := resolvePluginSource(s)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "source type is empty")
+}
+
+func TestResolvePluginSource_UnknownSourceType(t *testing.T) {
+	s := MarketplacePluginSource{Source: "ftp"}
+	_, err := resolvePluginSource(s)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), `unknown source type "ftp"`)
+}
+
+func TestResolvePluginSource_URLMissingURL(t *testing.T) {
+	s := MarketplacePluginSource{Source: "url"}
+	_, err := resolvePluginSource(s)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "url source missing url field")
+}
+
+func TestResolvePluginSource_GitSubdirMissingURL(t *testing.T) {
+	s := MarketplacePluginSource{Source: "git-subdir"}
+	_, err := resolvePluginSource(s)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "git-subdir source missing url field")
+}
+
+func TestResolvePluginSource_NpmMissingPackage(t *testing.T) {
+	s := MarketplacePluginSource{Source: "npm"}
+	_, err := resolvePluginSource(s)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "npm source missing package field")
+}
+
+// --- UnmarshalJSON edge cases ---
+
+func TestUnmarshalJSON_EmptyData(t *testing.T) {
+	var s MarketplacePluginSource
+	err := s.UnmarshalJSON([]byte{})
+	assert.NoError(t, err)
+	assert.Equal(t, MarketplacePluginSource{}, s)
+}
+
+func TestUnmarshalJSON_InvalidString(t *testing.T) {
+	var s MarketplacePluginSource
+	err := s.UnmarshalJSON([]byte(`"unterminated`))
+	assert.Error(t, err)
+}
+
+func TestUnmarshalJSON_InvalidObject(t *testing.T) {
+	var s MarketplacePluginSource
+	err := s.UnmarshalJSON([]byte(`{"source": 123}`))
+	assert.Error(t, err)
+}
+
+// --- fetchFromGitHub error path tests ---
+
+func TestDefaultIndexFetcher_FetchFromGitHub_HTTPError(t *testing.T) {
+	httpClient := newFakeRegistryHTTPClient()
+	// Both paths return HTTP errors
+	httpClient.setError(
+		"https://raw.githubusercontent.com/ai-summon/summon-marketplace/HEAD/.claude-plugin/marketplace.json",
+		fmt.Errorf("connection refused"),
+	)
+	httpClient.setError(
+		"https://raw.githubusercontent.com/ai-summon/summon-marketplace/HEAD/marketplace.json",
+		fmt.Errorf("connection refused"),
+	)
+
+	fetcher := NewDefaultIndexFetcher(httpClient, &fakeRegistryGitRunner{})
+	_, err := fetcher.FetchMarketplaceIndex(OfficialMarketplaceURL)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "marketplace index not found")
+}
+
+func TestDefaultIndexFetcher_FetchFromGitHub_NonOKNon404Status(t *testing.T) {
+	httpClient := newFakeRegistryHTTPClient()
+	httpClient.setResponse(
+		"https://raw.githubusercontent.com/ai-summon/summon-marketplace/HEAD/.claude-plugin/marketplace.json",
+		http.StatusInternalServerError,
+		"server error",
+	)
+	httpClient.setResponse(
+		"https://raw.githubusercontent.com/ai-summon/summon-marketplace/HEAD/marketplace.json",
+		http.StatusInternalServerError,
+		"server error",
+	)
+
+	fetcher := NewDefaultIndexFetcher(httpClient, &fakeRegistryGitRunner{})
+	_, err := fetcher.FetchMarketplaceIndex(OfficialMarketplaceURL)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "marketplace index not found")
+}
+
+func TestDefaultIndexFetcher_FetchFromGitHub_ReadBodyError(t *testing.T) {
+	httpClient := newFakeRegistryHTTPClient()
+	httpClient.responses["https://raw.githubusercontent.com/ai-summon/summon-marketplace/HEAD/.claude-plugin/marketplace.json"] = &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(&errReader{}),
+	}
+
+	fetcher := NewDefaultIndexFetcher(httpClient, &fakeRegistryGitRunner{})
+	_, err := fetcher.FetchMarketplaceIndex(OfficialMarketplaceURL)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to read marketplace index body")
+}
+
+// errReader is an io.Reader that always returns an error.
+type errReader struct{}
+
+func (e *errReader) Read(p []byte) (int, error) {
+	return 0, fmt.Errorf("read error")
+}
+
+// --- fetchViaGitArchive tests ---
+
+func TestDefaultIndexFetcher_GitArchive_FirstFailsSecondSucceeds(t *testing.T) {
+	httpClient := newFakeRegistryHTTPClient()
+	indexJSON := `{"tool": {"source": "https://example.com/tool", "description": "A tool"}}`
+	callCount := 0
+	gitRunner := &fakeRegistryGitRunner{
+		runFunc: func(name string, args ...string) ([]byte, error) {
+			callCount++
+			// First call (for .claude-plugin/marketplace.json) fails
+			if callCount == 1 {
+				return nil, fmt.Errorf("file not found")
+			}
+			// Second call (for marketplace.json) succeeds
+			return []byte(indexJSON), nil
+		},
+	}
+
+	fetcher := NewDefaultIndexFetcher(httpClient, gitRunner)
+	idx, err := fetcher.FetchMarketplaceIndex("https://intranet.example.com/org/marketplace")
+	require.NoError(t, err)
+
+	entry, found := idx.Lookup("tool")
+	assert.True(t, found)
+	assert.Equal(t, "https://example.com/tool", entry.Source)
+}
+
+func TestDefaultIndexFetcher_GitArchive_BothFail(t *testing.T) {
+	httpClient := newFakeRegistryHTTPClient()
+	gitRunner := &fakeRegistryGitRunner{
+		runFunc: func(name string, args ...string) ([]byte, error) {
+			return nil, fmt.Errorf("git archive failed")
+		},
+	}
+
+	fetcher := NewDefaultIndexFetcher(httpClient, gitRunner)
+	_, err := fetcher.FetchMarketplaceIndex("https://intranet.example.com/org/marketplace")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to fetch marketplace index via git archive")
+}
+
+// --- LookupPackage error path ---
+
+func TestDefaultIndexFetcher_LookupPackage_FetchError(t *testing.T) {
+	httpClient := newFakeRegistryHTTPClient()
+	httpClient.setError(
+		"https://raw.githubusercontent.com/ai-summon/summon-marketplace/HEAD/.claude-plugin/marketplace.json",
+		fmt.Errorf("network error"),
+	)
+	httpClient.setError(
+		"https://raw.githubusercontent.com/ai-summon/summon-marketplace/HEAD/marketplace.json",
+		fmt.Errorf("network error"),
+	)
+
+	fetcher := NewDefaultIndexFetcher(httpClient, &fakeRegistryGitRunner{})
+	_, err := fetcher.LookupPackage("any-package", OfficialMarketplaceURL)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to fetch marketplace index")
+}
+
+// --- ReadLocalIndexWithHome tests ---
+
+func TestReadLocalIndexWithHome_ValidIndex(t *testing.T) {
+	homeDir := t.TempDir()
+	dir := filepath.Join(homeDir, ".claude", "plugins", "marketplaces", "test-market", ".claude-plugin")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+
+	indexJSON := `{
+		"name": "test-marketplace",
+		"owner": {"name": "Test"},
+		"metadata": {"description": "Test", "version": "0.1.0"},
+		"plugins": [
+			{
+				"name": "local-plugin",
+				"source": {"source": "github", "repo": "owner/local-plugin"},
+				"description": "A local plugin"
+			}
+		]
+	}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "marketplace.json"), []byte(indexJSON), 0o644))
+
+	idx, err := ReadLocalIndexWithHome("test-market", homeDir)
+	require.NoError(t, err)
+	assert.Len(t, idx, 1)
+
+	entry, found := idx.Lookup("local-plugin")
+	assert.True(t, found)
+	assert.Equal(t, "gh:owner/local-plugin", entry.Source)
+}
+
+func TestReadLocalIndexWithHome_NoCache(t *testing.T) {
+	homeDir := t.TempDir()
+
+	_, err := ReadLocalIndexWithHome("nonexistent-market", homeDir)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no local cache found")
+}
+
+func TestReadLocalIndexWithHome_InvalidJSON(t *testing.T) {
+	homeDir := t.TempDir()
+	dir := filepath.Join(homeDir, ".claude", "plugins", "marketplaces", "bad-market", ".claude-plugin")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "marketplace.json"), []byte("{invalid json"), 0o644))
+
+	_, err := ReadLocalIndexWithHome("bad-market", homeDir)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no local cache found")
+}
+
+func TestReadLocalIndexWithHome_FlatFormat(t *testing.T) {
+	homeDir := t.TempDir()
+	dir := filepath.Join(homeDir, ".claude", "plugins", "marketplaces", "flat-market", ".claude-plugin")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+
+	indexJSON := `{"my-tool": {"source": "https://github.com/org/tool", "description": "A tool"}}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "marketplace.json"), []byte(indexJSON), 0o644))
+
+	idx, err := ReadLocalIndexWithHome("flat-market", homeDir)
+	require.NoError(t, err)
+
+	entry, found := idx.Lookup("my-tool")
+	assert.True(t, found)
+	assert.Equal(t, "https://github.com/org/tool", entry.Source)
+}
+
+func TestReadLocalIndex_UsesUserHomeDir(t *testing.T) {
+	// ReadLocalIndex delegates to readLocalIndexWithHome with empty homeDir.
+	// This will use os.UserHomeDir(). We just verify it doesn't panic and
+	// returns a reasonable error for a nonexistent marketplace name.
+	_, err := ReadLocalIndex("nonexistent-marketplace-for-test-12345")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no local cache found")
 }
