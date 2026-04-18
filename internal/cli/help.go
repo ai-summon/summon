@@ -40,9 +40,9 @@ func helpFunc(cmd *cobra.Command, _ []string) {
 	}
 	desc = strings.TrimRight(desc, " \t\n")
 	if desc != "" {
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, desc)
-		fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w, desc)
+		_, _ = fmt.Fprintln(w)
 	}
 
 	if cmd.Runnable() || cmd.HasSubCommands() {
@@ -62,54 +62,54 @@ func usageFuncWriter(w io.Writer, c *cobra.Command, s Styles) error {
 	cmdStyle := func(text string) string { return s.HelpCommand.Render(text) }
 
 	// Usage
-	fmt.Fprint(w, heading("Usage:"))
+	_, _ = fmt.Fprint(w, heading("Usage:"))
 	if c.Runnable() {
-		fmt.Fprintf(w, "\n  %s", c.UseLine())
+		_, _ = fmt.Fprintf(w, "\n  %s", c.UseLine())
 	}
 	if c.HasAvailableSubCommands() {
-		fmt.Fprintf(w, "\n  %s [command]", c.CommandPath())
+		_, _ = fmt.Fprintf(w, "\n  %s [command]", c.CommandPath())
 	}
 
 	// Aliases
 	if len(c.Aliases) > 0 {
-		fmt.Fprintf(w, "\n\n%s\n", heading("Aliases:"))
-		fmt.Fprintf(w, "  %s", c.NameAndAliases())
+		_, _ = fmt.Fprintf(w, "\n\n%s\n", heading("Aliases:"))
+		_, _ = fmt.Fprintf(w, "  %s", c.NameAndAliases())
 	}
 
 	// Examples
 	if c.HasExample() {
-		fmt.Fprintf(w, "\n\n%s\n", heading("Examples:"))
-		fmt.Fprint(w, c.Example)
+		_, _ = fmt.Fprintf(w, "\n\n%s\n", heading("Examples:"))
+		_, _ = fmt.Fprint(w, c.Example)
 	}
 
 	// Commands (grouped or flat)
 	if c.HasAvailableSubCommands() {
 		cmds := c.Commands()
 		if len(c.Groups()) == 0 {
-			fmt.Fprintf(w, "\n\n%s", heading("Available Commands:"))
+			_, _ = fmt.Fprintf(w, "\n\n%s", heading("Available Commands:"))
 			for _, sub := range cmds {
 				if sub.IsAvailableCommand() || sub.Name() == "help" {
-					fmt.Fprintf(w, "\n  %s %s",
+					_, _ = fmt.Fprintf(w, "\n  %s %s",
 						cmdStyle(rpad(sub.Name(), sub.NamePadding())),
 						sub.Short)
 				}
 			}
 		} else {
 			for _, group := range c.Groups() {
-				fmt.Fprintf(w, "\n\n%s", heading(group.Title))
+				_, _ = fmt.Fprintf(w, "\n\n%s", heading(group.Title))
 				for _, sub := range cmds {
 					if sub.GroupID == group.ID && (sub.IsAvailableCommand() || sub.Name() == "help") {
-						fmt.Fprintf(w, "\n  %s %s",
+						_, _ = fmt.Fprintf(w, "\n  %s %s",
 							cmdStyle(rpad(sub.Name(), sub.NamePadding())),
 							sub.Short)
 					}
 				}
 			}
 			if !c.AllChildCommandsHaveGroup() {
-				fmt.Fprintf(w, "\n\n%s", heading("Additional Commands:"))
+				_, _ = fmt.Fprintf(w, "\n\n%s", heading("Additional Commands:"))
 				for _, sub := range cmds {
 					if sub.GroupID == "" && (sub.IsAvailableCommand() || sub.Name() == "help") {
-						fmt.Fprintf(w, "\n  %s %s",
+						_, _ = fmt.Fprintf(w, "\n  %s %s",
 							cmdStyle(rpad(sub.Name(), sub.NamePadding())),
 							sub.Short)
 					}
@@ -120,20 +120,20 @@ func usageFuncWriter(w io.Writer, c *cobra.Command, s Styles) error {
 
 	// Flags
 	if c.HasAvailableLocalFlags() {
-		fmt.Fprintf(w, "\n\n%s\n", heading("Flags:"))
-		fmt.Fprint(w, styleFlagUsages(c.LocalFlags().FlagUsages(), cmdStyle))
+		_, _ = fmt.Fprintf(w, "\n\n%s\n", heading("Flags:"))
+		_, _ = fmt.Fprint(w, styleFlagUsages(c.LocalFlags().FlagUsages(), cmdStyle))
 	}
 	if c.HasAvailableInheritedFlags() {
-		fmt.Fprintf(w, "\n\n%s\n", heading("Global Flags:"))
-		fmt.Fprint(w, styleFlagUsages(c.InheritedFlags().FlagUsages(), cmdStyle))
+		_, _ = fmt.Fprintf(w, "\n\n%s\n", heading("Global Flags:"))
+		_, _ = fmt.Fprint(w, styleFlagUsages(c.InheritedFlags().FlagUsages(), cmdStyle))
 	}
 
 	// Additional help topics
 	if c.HasHelpSubCommands() {
-		fmt.Fprintf(w, "\n\n%s", heading("Additional help topics:"))
+		_, _ = fmt.Fprintf(w, "\n\n%s", heading("Additional help topics:"))
 		for _, sub := range c.Commands() {
 			if sub.IsAdditionalHelpTopicCommand() {
-				fmt.Fprintf(w, "\n  %s %s",
+				_, _ = fmt.Fprintf(w, "\n  %s %s",
 					cmdStyle(rpad(sub.CommandPath(), sub.CommandPathPadding())),
 					sub.Short)
 			}
@@ -142,9 +142,9 @@ func usageFuncWriter(w io.Writer, c *cobra.Command, s Styles) error {
 
 	// Footer
 	if c.HasAvailableSubCommands() {
-		fmt.Fprintf(w, "\n\nUse \"%s [command] --help\" for more information about a command.", c.CommandPath())
+		_, _ = fmt.Fprintf(w, "\n\nUse \"%s [command] --help\" for more information about a command.", c.CommandPath())
 	}
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
 	return nil
 }
 
