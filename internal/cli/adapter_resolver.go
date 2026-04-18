@@ -108,10 +108,8 @@ func bootstrapFromDetection(detected []platform.Adapter, cfgPath string, saveFn 
 
 	// Build and save config (non-fatal on save failure)
 	var cfg config.Config
-	names := make([]string, 0, len(detected))
 	for _, a := range detected {
 		_ = cfg.SetPlatform(a.Name(), true)
-		names = append(names, a.Name())
 	}
 	if err := saveFn(cfgPath, cfg); err != nil {
 		fmt.Fprintf(stderr, "⚠ could not save config: %v\n", err)

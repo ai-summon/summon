@@ -120,7 +120,8 @@ func runValidate(deps *validateDeps) error {
 		checkResult := syscheck.Check([]syscheck.RequirementInput{req}, nil)
 		if len(checkResult.Requirements) > 0 {
 			r := checkResult.Requirements[0]
-			if r.Found {
+			switch {
+			case r.Found:
 				results = append(results, validateResult{
 					Check:   "system_requirement",
 					Status:  "pass",
@@ -129,7 +130,7 @@ func runValidate(deps *validateDeps) error {
 				if !validateJSON {
 					fmt.Fprintf(out, "%s system requirement %s — found\n", s.StatusIcon("pass"), sr.Name)
 				}
-			} else if sr.Optional {
+			case sr.Optional:
 				results = append(results, validateResult{
 					Check:   "system_requirement",
 					Status:  "warn",
@@ -139,7 +140,7 @@ func runValidate(deps *validateDeps) error {
 					fmt.Fprintf(out, "%s system requirement %s — not found on PATH\n", s.StatusIcon("warn"), sr.Name)
 				}
 				warnings++
-			} else {
+			default:
 				results = append(results, validateResult{
 					Check:   "system_requirement",
 					Status:  "fail",

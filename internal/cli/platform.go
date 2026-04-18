@@ -93,23 +93,24 @@ func runPlatformList(deps *platformDeps) error {
 
 		var statusIcon, statusText, detail string
 
-		if configured && enabled && available {
+		switch {
+		case configured && enabled && available:
 			statusIcon = s.Success.Render("✓")
 			statusText = "enabled"
 			detail = ""
-		} else if configured && enabled && !available {
+		case configured && enabled && !available:
 			statusIcon = s.Error.Render("!")
 			statusText = "enabled"
 			detail = s.Dim.Render("(not installed)")
-		} else if configured && !enabled {
+		case configured && !enabled:
 			statusIcon = s.Dim.Render("–")
 			statusText = "disabled"
 			detail = ""
-		} else if !configured && available {
+		case !configured && available:
 			statusIcon = s.Dim.Render("○")
 			statusText = "detected"
 			detail = s.Dim.Render("(not enabled)")
-		} else {
+		default:
 			statusIcon = s.Error.Render("✗")
 			statusText = "not installed"
 			detail = ""

@@ -127,5 +127,5 @@ func writeCache(configDir string, cache VersionCache) {
 	if err := os.WriteFile(tmp, data, 0600); err != nil {
 		return
 	}
-	os.Rename(tmp, cacheFilePath(configDir))
+	_ = os.Rename(tmp, cacheFilePath(configDir))
 }

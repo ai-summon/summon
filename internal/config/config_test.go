@@ -238,7 +238,7 @@ func TestSave_CreateTempError(t *testing.T) {
 	configDir := filepath.Join(dir, "readonly")
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
 	require.NoError(t, os.Chmod(configDir, 0o555))
-	t.Cleanup(func() { os.Chmod(configDir, 0o755) })
+	t.Cleanup(func() { _ = os.Chmod(configDir, 0o755) })
 
 	path := filepath.Join(configDir, "config.yaml")
 	err := Save(path, Config{})

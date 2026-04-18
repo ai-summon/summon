@@ -23,7 +23,7 @@ system_requirements:
 
 	origDir, _ := os.Getwd()
 	require.NoError(t, os.Chdir(dir))
-	defer os.Chdir(origDir)
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
 
 	deps := &validateDeps{
 noColor: true,
@@ -43,7 +43,7 @@ func TestValidate_MissingFile(t *testing.T) {
 	dir := t.TempDir()
 	origDir, _ := os.Getwd()
 	require.NoError(t, os.Chdir(dir))
-	defer os.Chdir(origDir)
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
 
 	deps := &validateDeps{
 noColor: true,
@@ -66,7 +66,7 @@ func TestValidate_InvalidManifest(t *testing.T) {
 
 	origDir, _ := os.Getwd()
 	require.NoError(t, os.Chdir(dir))
-	defer os.Chdir(origDir)
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
 
 	deps := &validateDeps{
 noColor: true,
@@ -87,7 +87,7 @@ func TestValidate_MissingRequiredSysReq(t *testing.T) {
 
 	origDir, _ := os.Getwd()
 	require.NoError(t, os.Chdir(dir))
-	defer os.Chdir(origDir)
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
 
 	deps := &validateDeps{
 noColor: true,
@@ -115,7 +115,7 @@ system_requirements:
 
 	origDir, _ := os.Getwd()
 	require.NoError(t, os.Chdir(dir))
-	defer os.Chdir(origDir)
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
 
 	validateJSON = true
 	defer func() { validateJSON = false }()
@@ -150,7 +150,7 @@ func TestValidate_JSON_WithErrors(t *testing.T) {
 
 	origDir, _ := os.Getwd()
 	require.NoError(t, os.Chdir(dir))
-	defer os.Chdir(origDir)
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
 
 	validateJSON = true
 	defer func() { validateJSON = false }()
@@ -189,7 +189,7 @@ func TestValidate_JSON_NoHumanOutput(t *testing.T) {
 
 	origDir, _ := os.Getwd()
 	require.NoError(t, os.Chdir(dir))
-	defer os.Chdir(origDir)
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
 
 	validateJSON = true
 	defer func() { validateJSON = false }()
@@ -221,7 +221,7 @@ func TestValidate_WithoutJSON_StillHumanReadable(t *testing.T) {
 
 	origDir, _ := os.Getwd()
 	require.NoError(t, os.Chdir(dir))
-	defer os.Chdir(origDir)
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
 
 	validateJSON = false
 

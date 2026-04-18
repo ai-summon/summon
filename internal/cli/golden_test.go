@@ -177,7 +177,7 @@ func TestGolden_Validate_PassAll(t *testing.T) {
 
 	origDir, _ := os.Getwd()
 	require.NoError(t, os.Chdir(dir))
-	defer os.Chdir(origDir)
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
 
 	deps := &validateDeps{
 		runner: &execRunner{},
@@ -201,7 +201,7 @@ func TestGolden_Validate_Errors(t *testing.T) {
 
 	origDir, _ := os.Getwd()
 	require.NoError(t, os.Chdir(dir))
-	defer os.Chdir(origDir)
+	t.Cleanup(func() { _ = os.Chdir(origDir) })
 
 	deps := &validateDeps{
 		runner: &execRunner{},

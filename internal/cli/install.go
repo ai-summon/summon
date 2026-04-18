@@ -360,14 +360,15 @@ func renderSummary(summary *InstallSummary, out io.Writer, s Styles) {
 			}
 		}
 
-		if len(failedParts) == 0 {
+		switch {
+		case len(failedParts) == 0:
 			fmt.Fprintf(out, "  %s %-20s (%s)\n", s.StatusIcon("pass"), r.PackageName, strings.Join(successCLIs, ", "))
-		} else if len(successCLIs) > 0 {
+		case len(successCLIs) > 0:
 			fmt.Fprintf(out, "  %s %-20s (%s)\n", s.StatusIcon("pass"), r.PackageName, strings.Join(successCLIs, ", "))
 			for _, fp := range failedParts {
 				fmt.Fprintf(out, "  %s %-20s (%s)\n", s.StatusIcon("fail"), r.PackageName, fp)
 			}
-		} else {
+		default:
 			for _, fp := range failedParts {
 				fmt.Fprintf(out, "  %s %-20s (%s)\n", s.StatusIcon("fail"), r.PackageName, fp)
 			}

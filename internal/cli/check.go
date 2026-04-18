@@ -380,12 +380,13 @@ func printCheckResult(w io.Writer, r checkResult, maxNameLen int, s Styles) {
 	}
 
 	for _, sd := range r.SystemDeps {
-		if sd.Found {
+		switch {
+		case sd.Found:
 			rows = append(rows, depRow{
 				name: sd.Name,
 				icon: s.Success.Render("✓"),
 			})
-		} else if sd.Optional {
+		case sd.Optional:
 			reason := "recommended"
 			if sd.Reason != "" {
 				reason = "recommended: " + sd.Reason
@@ -395,7 +396,7 @@ func printCheckResult(w io.Writer, r checkResult, maxNameLen int, s Styles) {
 				status: reason,
 				icon:   s.Warn.Render("⚠"),
 			})
-		} else {
+		default:
 			rows = append(rows, depRow{
 				name:   sd.Name,
 				status: "required",

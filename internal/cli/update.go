@@ -142,13 +142,14 @@ func maxTargetNameLen(targets map[string][]updateTarget) int {
 // renderPluginLine prints a single plugin update outcome.
 func renderPluginLine(p pluginUpdateOutcome, maxNameLen int, s Styles, out io.Writer) {
 	padding := strings.Repeat(" ", maxNameLen-len(p.name)+2)
-	if p.err != nil {
+	switch {
+	case p.err != nil:
 		fmt.Fprintf(out, "  %s %s%s%s\n", s.Error.Render("✗"), p.name, padding, s.Dim.Render("failed: "+summarizeError(p.err)))
-	} else if p.preVersion != "" && p.postVersion != "" && p.preVersion == p.postVersion {
+	case p.preVersion != "" && p.postVersion != "" && p.preVersion == p.postVersion:
 		fmt.Fprintf(out, "  %s %s%s%s\n", s.Dim.Render("–"), p.name, padding, s.Dim.Render("up to date (v"+p.postVersion+")"))
-	} else if p.preVersion != "" && p.postVersion != "" && p.preVersion != p.postVersion {
+	case p.preVersion != "" && p.postVersion != "" && p.preVersion != p.postVersion:
 		fmt.Fprintf(out, "  %s %s%s%s\n", s.Success.Render("✓"), p.name, padding, s.Dim.Render("v"+p.preVersion+" → v"+p.postVersion))
-	} else {
+	default:
 		fmt.Fprintf(out, "  %s %s%s%s\n", s.Success.Render("✓"), p.name, padding, s.Dim.Render("updated"))
 	}
 }
@@ -199,11 +200,12 @@ func executeAndStreamUpdates(adapters []platform.Adapter, targets map[string][]u
 func renderPlatformSummary(output platformUpdateOutput, dimStyle lipgloss.Style, out io.Writer) {
 	var updated, upToDate, failed int
 	for _, p := range output.plugins {
-		if p.err != nil {
+		switch {
+		case p.err != nil:
 			failed++
-		} else if p.preVersion != "" && p.postVersion != "" && p.preVersion == p.postVersion {
+		case p.preVersion != "" && p.postVersion != "" && p.preVersion == p.postVersion:
 			upToDate++
-		} else {
+		default:
 			updated++
 		}
 	}
@@ -469,9 +471,7 @@ func summarizeError(err error) string {
 		}
 		// Strip common prefixes
 		for _, prefix := range []string{"claude update failed: ", "copilot update failed: "} {
-			if strings.HasPrefix(line, prefix) {
-				line = line[len(prefix):]
-			}
+			line = strings.TrimPrefix(line, prefix)
 		}
 		return line
 	}
