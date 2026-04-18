@@ -21,6 +21,7 @@ func TestUninstall_NoDependents(t *testing.T) {
 	}
 
 	deps := &uninstallDeps{
+noColor:  true,
 		runner:   newFakeRunner(),
 		fetcher:  newFakeFetcher(),
 		adapters: []platform.Adapter{adapter},
@@ -58,6 +59,7 @@ func TestUninstall_WithDependents(t *testing.T) {
 	}
 
 	deps := &uninstallDeps{
+noColor:  true,
 		runner:   newFakeRunner(),
 		fetcher:  fetcher,
 		adapters: []platform.Adapter{adapter},
@@ -74,7 +76,7 @@ func TestUninstall_WithDependents(t *testing.T) {
 	require.NoError(t, err)
 
 	out := deps.stdout.(*bytes.Buffer).String()
-	assert.Contains(t, out, "⚠️")
+	assert.Contains(t, out, "⚠")
 	assert.Contains(t, out, "my-plugin")
 	assert.Contains(t, out, "dep-a uninstalled")
 }
@@ -83,6 +85,7 @@ func TestUninstall_NotInstalled(t *testing.T) {
 	adapter := newFakeAdapter("claude")
 
 	deps := &uninstallDeps{
+noColor:  true,
 		runner:   newFakeRunner(),
 		fetcher:  newFakeFetcher(),
 		adapters: []platform.Adapter{adapter},
@@ -118,6 +121,7 @@ func TestUninstall_YesSkipsConfirmation(t *testing.T) {
 	}
 
 	deps := &uninstallDeps{
+noColor:  true,
 		runner:   newFakeRunner(),
 		fetcher:  fetcher,
 		adapters: []platform.Adapter{adapter},
@@ -139,6 +143,7 @@ func TestUninstall_YesSkipsConfirmation(t *testing.T) {
 
 func TestUninstall_NoCLIs(t *testing.T) {
 	deps := &uninstallDeps{
+noColor:  true,
 		runner:   newFakeRunner(),
 		fetcher:  newFakeFetcher(),
 		adapters: []platform.Adapter{}, // empty = no CLIs
@@ -173,6 +178,7 @@ func TestUninstall_PartialFailure(t *testing.T) {
 	}
 
 	deps := &uninstallDeps{
+noColor:  true,
 		runner:   newFakeRunner(),
 		fetcher:  newFakeFetcher(),
 		adapters: []platform.Adapter{copilot, claude},
@@ -215,6 +221,7 @@ func TestUninstall_AllPlatformsFail(t *testing.T) {
 	claude.uninstallFunc = failUninstall
 
 	deps := &uninstallDeps{
+noColor:  true,
 		runner:   newFakeRunner(),
 		fetcher:  newFakeFetcher(),
 		adapters: []platform.Adapter{copilot, claude},
@@ -256,6 +263,7 @@ func TestUninstall_ProjectScope(t *testing.T) {
 	}
 
 	deps := &uninstallDeps{
+noColor:  true,
 		runner:   newFakeRunner(),
 		fetcher:  newFakeFetcher(),
 		adapters: []platform.Adapter{claude},
@@ -308,6 +316,7 @@ func TestUninstall_DeduplicatesReverseDeps(t *testing.T) {
 	}
 
 	deps := &uninstallDeps{
+noColor:  true,
 		runner:   newFakeRunner(),
 		fetcher:  fetcher,
 		adapters: []platform.Adapter{copilot, claude},

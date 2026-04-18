@@ -1,0 +1,5 @@
+This will remove:
+    /home/user/.summon
+    /usr/local/bin/summon
+
+Remove summon and all configuration data? [y/N] 

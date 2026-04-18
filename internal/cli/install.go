@@ -60,6 +60,7 @@ type installDeps struct {
 	runner   platform.CommandRunner
 	fetcher  manifest.ManifestFetcher
 	adapters []platform.Adapter // if non-nil, use instead of auto-detecting
+	noColor  bool
 	stdin    io.Reader
 	stdout   io.Writer
 	stderr   io.Writer
@@ -85,6 +86,7 @@ across all detected CLIs (or a specific target with --target).`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		deps := defaultInstallDeps()
+		deps.noColor = noColorFlag
 		return runInstall(args[0], deps)
 	},
 }
@@ -98,6 +100,7 @@ func init() {
 
 func runInstall(specifier string, deps *installDeps) error {
 	out := deps.stdout
+	s := NewStyles(deps.noColor)
 
 	// 1. Parse the scope
 	scope, err := platform.ParseScope(installScope)
@@ -144,7 +147,7 @@ func runInstall(specifier string, deps *installDeps) error {
 		}
 		for _, a := range adapters {
 			if ensureErr := a.EnsureMarketplace(marketplaceName, marketplaceSource); ensureErr != nil {
-				fmt.Fprintf(deps.stderr, "⚠ %s: failed to ensure marketplace %q: %v\n", a.Name(), marketplaceName, ensureErr)
+				fmt.Fprintf(deps.stderr, "%s %s: failed to ensure marketplace %q: %v\n", s.StatusIcon("warn"), a.Name(), marketplaceName, ensureErr)
 			}
 		}
 	}
@@ -160,19 +163,19 @@ func runInstall(specifier string, deps *installDeps) error {
 
 	// 6. Platform-first install loop
 	for _, a := range adapters {
-		fmt.Fprintf(out, "%s:\n", a.Name())
+		fmt.Fprintln(out, s.PlatformHeader(a.Name()))
 
 		// Install main package
 		fmt.Fprintf(out, "  Installing %s...", resolved.Name)
 		if installErr := a.Install(installSource, scope); installErr != nil {
 			ensureResult(resultMap, &resultOrder, resolved.Name)
 			resultMap[resolved.Name].CLIResults[a.Name()] = fmt.Errorf("%s install %s failed: %w", a.Name(), installSource, installErr)
-			fmt.Fprintf(out, " ✗ %s failed\n", resolved.Name)
+			fmt.Fprintf(out, " %s %s failed\n", s.StatusIcon("fail"), resolved.Name)
 			continue
 		}
 		ensureResult(resultMap, &resultOrder, resolved.Name)
 		resultMap[resolved.Name].CLIResults[a.Name()] = nil
-		fmt.Fprintf(out, " ✓ %s installed\n", resolved.Name)
+		fmt.Fprintf(out, " %s %s installed\n", s.StatusIcon("pass"), resolved.Name)
 
 		// Read manifest (use cache or read from disk)
 		m := getOrCacheManifest(resolved.Name, manifestCache, a, scope, deps.fetcher, deps.stderr)
@@ -180,7 +183,7 @@ func runInstall(specifier string, deps *installDeps) error {
 		// Resolve transitive deps for this single adapter
 		if m != nil && len(m.Dependencies) > 0 {
 			visited := map[string]bool{resolved.Name: true}
-			if depErr := resolveTransitiveDeps(a, scope, m, deps.fetcher, visited, resultMap, &resultOrder, manifestCache, "    ", out, deps.stderr); depErr != nil {
+			if depErr := resolveTransitiveDeps(a, scope, m, deps.fetcher, visited, resultMap, &resultOrder, manifestCache, "    ", out, deps.stderr, s); depErr != nil {
 				fmt.Fprintf(deps.stderr, "Warning: %s: transitive dependency resolution incomplete: %v\n", a.Name(), depErr)
 			}
 		}
@@ -217,16 +220,16 @@ func runInstall(specifier string, deps *installDeps) error {
 		}
 
 		if checkResult.HasRequired {
-			fmt.Fprintf(deps.stderr, "\n⚠️  Required system dependencies are missing.\n")
+			fmt.Fprintf(deps.stderr, "\n%s Required system dependencies are missing.\n", s.StatusIcon("warn"))
 		}
 	}
 
 	// 9. Display post-install summary
-	renderSummary(summary, out)
+	renderSummary(summary, out, s)
 	return nil
 }
 
-func resolveTransitiveDeps(adapter platform.Adapter, scope platform.Scope, m *manifest.Manifest, fetcher manifest.ManifestFetcher, visited map[string]bool, resultMap map[string]*InstallResult, resultOrder *[]string, manifestCache map[string]*manifest.Manifest, indent string, out io.Writer, stderr io.Writer) error {
+func resolveTransitiveDeps(adapter platform.Adapter, scope platform.Scope, m *manifest.Manifest, fetcher manifest.ManifestFetcher, visited map[string]bool, resultMap map[string]*InstallResult, resultOrder *[]string, manifestCache map[string]*manifest.Manifest, indent string, out io.Writer, stderr io.Writer, s Styles) error {
 	for _, dep := range m.Dependencies {
 		resolved, err := resolver.Resolve(dep)
 		if err != nil {
@@ -253,7 +256,7 @@ func resolveTransitiveDeps(adapter platform.Adapter, scope platform.Scope, m *ma
 				marketplaceSource = resolved.MarketplaceName
 			}
 			if ensureErr := adapter.EnsureMarketplace(marketplaceName, marketplaceSource); ensureErr != nil {
-				fmt.Fprintf(stderr, "⚠ %s: failed to ensure marketplace %q: %v\n", adapter.Name(), marketplaceName, ensureErr)
+				fmt.Fprintf(stderr, "%s %s: failed to ensure marketplace %q: %v\n", s.StatusIcon("warn"), adapter.Name(), marketplaceName, ensureErr)
 			}
 		}
 
@@ -262,11 +265,11 @@ func resolveTransitiveDeps(adapter platform.Adapter, scope platform.Scope, m *ma
 		fmt.Fprintf(out, "%sInstalling dependency %s...", indent, resolved.Name)
 		if installErr := adapter.Install(depSource, scope); installErr != nil {
 			resultMap[resolved.Name].CLIResults[adapter.Name()] = fmt.Errorf("%s install %s failed: %w", adapter.Name(), depSource, installErr)
-			fmt.Fprintf(out, " ✗ %s failed\n", resolved.Name)
+			fmt.Fprintf(out, " %s %s failed\n", s.StatusIcon("fail"), resolved.Name)
 			continue
 		}
 		resultMap[resolved.Name].CLIResults[adapter.Name()] = nil
-		fmt.Fprintf(out, " ✓ %s installed\n", resolved.Name)
+		fmt.Fprintf(out, " %s %s installed\n", s.StatusIcon("pass"), resolved.Name)
 
 		// Read manifest for further transitive deps
 		depManifest := getOrCacheManifest(resolved.Name, manifestCache, adapter, scope, fetcher, stderr)
@@ -276,7 +279,7 @@ func resolveTransitiveDeps(adapter platform.Adapter, scope platform.Scope, m *ma
 
 		// Recurse for transitive deps
 		if depManifest != nil && len(depManifest.Dependencies) > 0 {
-			if err := resolveTransitiveDeps(adapter, scope, depManifest, fetcher, visited, resultMap, resultOrder, manifestCache, indent+"  ", out, stderr); err != nil {
+			if err := resolveTransitiveDeps(adapter, scope, depManifest, fetcher, visited, resultMap, resultOrder, manifestCache, indent+"  ", out, stderr, s); err != nil {
 				return err
 			}
 		}
@@ -332,7 +335,7 @@ func resolveInstallSource(resolved *resolver.ResolvedSource) (string, error) {
 }
 
 // renderSummary prints a post-install summary.
-func renderSummary(summary *InstallSummary, out io.Writer) {
+func renderSummary(summary *InstallSummary, out io.Writer, s Styles) {
 	total := summary.TotalInstalled + summary.TotalFailed
 	if total == 0 {
 		return
@@ -358,15 +361,15 @@ func renderSummary(summary *InstallSummary, out io.Writer) {
 		}
 
 		if len(failedParts) == 0 {
-			fmt.Fprintf(out, "  ✓ %-20s (%s)\n", r.PackageName, strings.Join(successCLIs, ", "))
+			fmt.Fprintf(out, "  %s %-20s (%s)\n", s.StatusIcon("pass"), r.PackageName, strings.Join(successCLIs, ", "))
 		} else if len(successCLIs) > 0 {
-			fmt.Fprintf(out, "  ✓ %-20s (%s)\n", r.PackageName, strings.Join(successCLIs, ", "))
+			fmt.Fprintf(out, "  %s %-20s (%s)\n", s.StatusIcon("pass"), r.PackageName, strings.Join(successCLIs, ", "))
 			for _, fp := range failedParts {
-				fmt.Fprintf(out, "  ✗ %-20s (%s)\n", r.PackageName, fp)
+				fmt.Fprintf(out, "  %s %-20s (%s)\n", s.StatusIcon("fail"), r.PackageName, fp)
 			}
 		} else {
 			for _, fp := range failedParts {
-				fmt.Fprintf(out, "  ✗ %-20s (%s)\n", r.PackageName, fp)
+				fmt.Fprintf(out, "  %s %-20s (%s)\n", s.StatusIcon("fail"), r.PackageName, fp)
 			}
 		}
 	}

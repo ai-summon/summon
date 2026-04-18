@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ var validateJSON bool
 
 type validateDeps struct {
 	runner  platform.CommandRunner
+	noColor bool
 	stdout  io.Writer
 }
 
@@ -24,8 +26,9 @@ var validateCmd = &cobra.Command{
 	Short: "Validate the summon.yaml in the current directory",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		deps := &validateDeps{
-			runner: &execRunner{},
-			stdout: os.Stdout,
+			runner:  &execRunner{},
+			noColor: noColorFlag,
+			stdout:  os.Stdout,
 		}
 		return runValidate(deps)
 	},
@@ -42,8 +45,22 @@ type validateResult struct {
 	Message string `json:"message"`
 }
 
+type validateSummary struct {
+	Total    int `json:"total"`
+	Passed   int `json:"passed"`
+	Failed   int `json:"failed"`
+	Warnings int `json:"warnings"`
+}
+
+// ValidateOutput is the top-level JSON output for validate --json.
+type ValidateOutput struct {
+	Results []validateResult `json:"results"`
+	Summary validateSummary  `json:"summary"`
+}
+
 func runValidate(deps *validateDeps) error {
 	out := deps.stdout
+	s := NewStyles(deps.noColor)
 
 	// 1. Parse summon.yaml
 	m, err := manifest.LoadFile("summon.yaml")
@@ -55,7 +72,7 @@ func runValidate(deps *validateDeps) error {
 	}
 
 	var results []validateResult
-	errors := 0
+	errCount := 0
 	warnings := 0
 
 	// Syntax check passed
@@ -64,7 +81,9 @@ func runValidate(deps *validateDeps) error {
 		Status:  "pass",
 		Message: "summon.yaml syntax is valid",
 	})
-	fmt.Fprintln(out, "✓ summon.yaml syntax is valid")
+	if !validateJSON {
+		fmt.Fprintf(out, "%s summon.yaml syntax is valid\n", s.StatusIcon("pass"))
+	}
 
 	// 2. Check dependencies
 	for _, dep := range m.Dependencies {
@@ -75,18 +94,20 @@ func runValidate(deps *validateDeps) error {
 				Status:  "fail",
 				Message: fmt.Sprintf("dependency %s — invalid format", dep),
 			})
-			fmt.Fprintf(out, "✗ dependency %s — invalid format\n", dep)
-			errors++
+			if !validateJSON {
+				fmt.Fprintf(out, "%s dependency %s — invalid format\n", s.StatusIcon("fail"), dep)
+			}
+			errCount++
 			continue
 		}
-		// For bare names, we'd check the marketplace; for URLs, check reachability
-		// For now, validate the format is parseable
 		results = append(results, validateResult{
 			Check:   "dependency",
 			Status:  "pass",
 			Message: fmt.Sprintf("dependency %s format valid", dep),
 		})
-		fmt.Fprintf(out, "✓ dependency %s — format valid\n", dep)
+		if !validateJSON {
+			fmt.Fprintf(out, "%s dependency %s — format valid\n", s.StatusIcon("pass"), dep)
+		}
 	}
 
 	// 3. Check system requirements
@@ -105,14 +126,18 @@ func runValidate(deps *validateDeps) error {
 					Status:  "pass",
 					Message: fmt.Sprintf("system requirement %s — found", sr.Name),
 				})
-				fmt.Fprintf(out, "✓ system requirement %s — found\n", sr.Name)
+				if !validateJSON {
+					fmt.Fprintf(out, "%s system requirement %s — found\n", s.StatusIcon("pass"), sr.Name)
+				}
 			} else if sr.Optional {
 				results = append(results, validateResult{
 					Check:   "system_requirement",
 					Status:  "warn",
 					Message: fmt.Sprintf("system requirement %s — not found on PATH", sr.Name),
 				})
-				fmt.Fprintf(out, "⚠ system requirement %s — not found on PATH\n", sr.Name)
+				if !validateJSON {
+					fmt.Fprintf(out, "%s system requirement %s — not found on PATH\n", s.StatusIcon("warn"), sr.Name)
+				}
 				warnings++
 			} else {
 				results = append(results, validateResult{
@@ -120,16 +145,39 @@ func runValidate(deps *validateDeps) error {
 					Status:  "fail",
 					Message: fmt.Sprintf("system requirement %s — not found on PATH", sr.Name),
 				})
-				fmt.Fprintf(out, "✗ system requirement %s — not found on PATH\n", sr.Name)
-				errors++
+				if !validateJSON {
+					fmt.Fprintf(out, "%s system requirement %s — not found on PATH\n", s.StatusIcon("fail"), sr.Name)
+				}
+				errCount++
 			}
 		}
 	}
 
-	fmt.Fprintf(out, "\n%d error(s), %d warning(s)\n", errors, warnings)
+	// JSON output mode
+	if validateJSON {
+		passed := len(results) - errCount - warnings
+		output := ValidateOutput{
+			Results: results,
+			Summary: validateSummary{
+				Total:    len(results),
+				Passed:   passed,
+				Failed:   errCount,
+				Warnings: warnings,
+			},
+		}
+		if err := json.NewEncoder(out).Encode(output); err != nil {
+			return fmt.Errorf("failed to encode JSON: %w", err)
+		}
+		if errCount > 0 {
+			return fmt.Errorf("validation failed with %d error(s)", errCount)
+		}
+		return nil
+	}
 
-	if errors > 0 {
-		return fmt.Errorf("validation failed with %d error(s)", errors)
+	fmt.Fprintf(out, "\n%d error(s), %d warning(s)\n", errCount, warnings)
+
+	if errCount > 0 {
+		return fmt.Errorf("validation failed with %d error(s)", errCount)
 	}
 	return nil
 }

@@ -17,6 +17,7 @@ var selfUninstallConfirm bool
 type selfUninstallDeps struct {
 	pathResolver selfmgmt.PathResolver
 	fileSystem   selfmgmt.FileSystem
+	noColor      bool
 	stdin        io.Reader
 	stdout       io.Writer
 	stderr       io.Writer
@@ -37,6 +38,7 @@ var selfUninstallCmd = &cobra.Command{
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		deps := defaultSelfUninstallDeps()
+		deps.noColor = noColorFlag
 		return runSelfUninstall(deps)
 	},
 }

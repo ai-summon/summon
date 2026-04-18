@@ -1,0 +1,12 @@
+This will remove:
+    /home/user/.summon
+    /usr/local/bin/summon
+
+warning: /usr/local/bin/summon appears to be in a system-managed location
+The binary may be managed by a package manager.
+removed /home/user/.summon
+removed /usr/local/bin/summon
+summon is now uninstalled
+
+Note: plugins installed in native CLI platforms (copilot, claude) are not
+removed. Use each platform's tools to manage those plugins.

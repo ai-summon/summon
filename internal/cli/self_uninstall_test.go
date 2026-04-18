@@ -58,6 +58,7 @@ func TestSelfUninstall_ConfirmedRuns(t *testing.T) {
 	var stdout bytes.Buffer
 
 	deps := &selfUninstallDeps{
+noColor:      true,
 		pathResolver: &fakePathResolver{
 			executablePath: "/home/user/.local/bin/summon",
 			homeDir:        "/home/user",
@@ -82,6 +83,7 @@ func TestSelfUninstall_DeclinedExitsCleanly(t *testing.T) {
 	var stdout bytes.Buffer
 
 	deps := &selfUninstallDeps{
+noColor:      true,
 		pathResolver: &fakePathResolver{
 			executablePath: "/home/user/.local/bin/summon",
 			homeDir:        "/home/user",
@@ -107,6 +109,7 @@ func TestSelfUninstall_PathsDisplayedBeforePrompt(t *testing.T) {
 	var stdout bytes.Buffer
 
 	deps := &selfUninstallDeps{
+noColor:      true,
 		pathResolver: &fakePathResolver{
 			executablePath: "/home/user/.local/bin/summon",
 			homeDir:        "/home/user",
@@ -134,6 +137,7 @@ func TestSelfUninstall_ConfirmFlagSkipsPrompt(t *testing.T) {
 	var stdout bytes.Buffer
 
 	deps := &selfUninstallDeps{
+noColor:      true,
 		pathResolver: &fakePathResolver{
 			executablePath: "/home/user/.local/bin/summon",
 			homeDir:        "/home/user",
@@ -159,6 +163,7 @@ func TestSelfUninstall_ConfigDirMissingNotDisplayed(t *testing.T) {
 	var stdout bytes.Buffer
 
 	deps := &selfUninstallDeps{
+noColor:      true,
 		pathResolver: &fakePathResolver{
 			executablePath: "/home/user/.local/bin/summon",
 			homeDir:        "/home/user",
@@ -193,6 +198,7 @@ func TestSelfUninstall_PluginNoteDisplayed(t *testing.T) {
 	var stdout bytes.Buffer
 
 	deps := &selfUninstallDeps{
+noColor:      true,
 		pathResolver: &fakePathResolver{
 			executablePath: "/home/user/.local/bin/summon",
 			homeDir:        "/home/user",
@@ -245,6 +251,7 @@ func TestSelfUninstall_PathResolveError(t *testing.T) {
 	var stdout bytes.Buffer
 
 	deps := &selfUninstallDeps{
+noColor:      true,
 		pathResolver: &fakePathResolver{
 			executableErr: fmt.Errorf("cannot determine binary"),
 		},

@@ -139,6 +139,7 @@ func newTestDeps(runner *fakeRunner, fetcher *fakeFetcher, adapters []platform.A
 		runner:   runner,
 		fetcher:  fetcher,
 		adapters: adapters,
+		noColor:  true,
 		stdin:    strings.NewReader(stdin),
 		stdout:   &bytes.Buffer{},
 		stderr:   &bytes.Buffer{},
@@ -419,7 +420,7 @@ func TestRenderSummary_AllSuccess(t *testing.T) {
 			{PackageName: "pkg-b", CLIResults: map[string]error{"claude": nil}},
 		},
 	}
-	renderSummary(summary, &buf)
+	renderSummary(summary, &buf, NewStyles(true))
 	out := buf.String()
 	assert.Contains(t, out, "Installed 2 packages")
 	assert.Contains(t, out, "✓")
@@ -444,7 +445,7 @@ func TestRenderSummary_Mixed(t *testing.T) {
 			},
 		},
 	}
-	renderSummary(summary, &buf)
+	renderSummary(summary, &buf, NewStyles(true))
 	out := buf.String()
 	assert.Contains(t, out, "0 of 1")
 	assert.Contains(t, out, "✓")
@@ -454,7 +455,7 @@ func TestRenderSummary_Mixed(t *testing.T) {
 func TestRenderSummary_Empty(t *testing.T) {
 	var buf bytes.Buffer
 	summary := &InstallSummary{CLIs: []string{"claude"}}
-	renderSummary(summary, &buf)
+	renderSummary(summary, &buf, NewStyles(true))
 	assert.Empty(t, buf.String())
 }
 

@@ -19,6 +19,7 @@ type uninstallDeps struct {
 	runner   platform.CommandRunner
 	fetcher  manifest.ManifestFetcher
 	adapters []platform.Adapter // if non-nil, use instead of auto-detecting
+	noColor  bool
 	stdin    io.Reader
 	stdout   io.Writer
 	stderr   io.Writer
@@ -40,6 +41,7 @@ var uninstallCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		deps := defaultUninstallDeps()
+		deps.noColor = noColorFlag
 		return runUninstall(args[0], deps)
 	},
 }
@@ -51,6 +53,7 @@ func init() {
 
 func runUninstall(name string, deps *uninstallDeps) error {
 	out := deps.stdout
+	s := NewStyles(deps.noColor)
 
 	scope, err := platform.ParseScope(installScope)
 	if err != nil {
@@ -130,7 +133,7 @@ func runUninstall(name string, deps *uninstallDeps) error {
 
 	reverseDeps := graph.ReverseDependencies()
 	if dependents, ok := reverseDeps[name]; ok && len(dependents) > 0 {
-		fmt.Fprintf(out, "⚠️  The following installed packages depend on %s:\n", name)
+		fmt.Fprintf(out, "%s The following installed packages depend on %s:\n", s.StatusIcon("warn"), name)
 		for _, d := range dependents {
 			fmt.Fprintf(out, "  • %s\n", d)
 		}
@@ -150,10 +153,10 @@ func runUninstall(name string, deps *uninstallDeps) error {
 	var succeeded []string
 	for _, entry := range installedOn {
 		if err := entry.adapter.Uninstall(name, entry.scope); err != nil {
-			fmt.Fprintf(out, "  ✗ failed to uninstall %s from %s: %v\n", name, entry.adapter.Name(), err)
+			fmt.Fprintf(out, "  %s failed to uninstall %s from %s: %v\n", s.StatusIcon("fail"), name, entry.adapter.Name(), err)
 			failed = append(failed, fmt.Sprintf("%s: %v", entry.adapter.Name(), err))
 		} else {
-			fmt.Fprintf(out, "  ✓ %s uninstalled (%s)\n", name, entry.adapter.Name())
+			fmt.Fprintf(out, "  %s %s uninstalled (%s)\n", s.StatusIcon("pass"), name, entry.adapter.Name())
 			succeeded = append(succeeded, entry.adapter.Name())
 		}
 	}
