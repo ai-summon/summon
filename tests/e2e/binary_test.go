@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -27,6 +28,9 @@ func buildBinary(t *testing.T) string {
 	require.NoError(t, err)
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	binary := filepath.Join(dir, "summon")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
 	modRoot, absErr := filepath.Abs(filepath.Join("..", ".."))
 	require.NoError(t, absErr)
 	cmd := exec.Command("go", "build", "-o", binary, "./cmd/summon")

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -165,6 +166,9 @@ func (f *orderTrackingFS) Remove(path string) error {
 }
 
 func TestRemoveBinary_NonPermissionError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix-specific removeBinary error path not applicable on Windows")
+	}
 	fs := newFakeFileSystem()
 	fs.removeErr["/home/user/.local/bin/summon"] = fmt.Errorf("device not ready")
 	var buf bytes.Buffer

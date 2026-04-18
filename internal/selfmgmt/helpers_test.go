@@ -2,6 +2,7 @@ package selfmgmt
 
 import (
 	"os"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -9,6 +10,9 @@ import (
 )
 
 func TestCreateTempScript_Success(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix file permissions not applicable on Windows")
+	}
 	path, err := createTempScript([]byte("#!/bin/sh\necho hello"), "test.sh")
 	require.NoError(t, err)
 	defer removeTempFile(path)
@@ -23,6 +27,9 @@ func TestCreateTempScript_Success(t *testing.T) {
 }
 
 func TestCreateTempScript_MkdirTempError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("TMPDIR env var not used on Windows")
+	}
 	t.Setenv("TMPDIR", "/nonexistent/path/for/testing")
 
 	_, err := createTempScript([]byte("test"), "test.sh")

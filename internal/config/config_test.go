@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -230,6 +231,9 @@ func TestSave_MkdirAllError(t *testing.T) {
 }
 
 func TestSave_CreateTempError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod-based test not applicable on Windows")
+	}
 	dir := t.TempDir()
 	configDir := filepath.Join(dir, "readonly")
 	require.NoError(t, os.MkdirAll(configDir, 0o755))

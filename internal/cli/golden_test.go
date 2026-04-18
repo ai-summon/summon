@@ -48,9 +48,21 @@ func assertGoldenString(t *testing.T, got, filename string) {
 	}
 	require.NoError(t, err)
 
-	if got != string(expected) {
+	// Normalize for cross-platform comparison:
+	// - CRLF → LF (git autocrlf on Windows)
+	// - Backslash → forward slash (Windows path separators)
+	normalizeGolden := func(s string) string {
+		s = strings.ReplaceAll(s, "\r\n", "\n")
+		s = strings.ReplaceAll(s, "\\", "/")
+		return s
+	}
+
+	normalizedExpected := normalizeGolden(string(expected))
+	normalizedGot := normalizeGolden(got)
+
+	if normalizedGot != normalizedExpected {
 		t.Errorf("golden mismatch for %s:\n--- expected ---\n%s\n--- got ---\n%s",
-			filename, string(expected), got)
+			filename, normalizedExpected, normalizedGot)
 	}
 }
 
