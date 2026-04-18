@@ -49,7 +49,7 @@ func TestBinary_Help(t *testing.T) {
 
 	stdout := string(out)
 	assert.Contains(t, stdout, "summon")
-	assert.Contains(t, stdout, "plugin dependency manager")
+	assert.Contains(t, stdout, "dependency manager for AI plugins")
 	assert.Contains(t, stdout, "install")
 	assert.Contains(t, stdout, "validate")
 }

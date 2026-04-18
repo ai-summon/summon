@@ -13,10 +13,8 @@ var (
 
 var rootCmd = &cobra.Command{
 	Use:   "summon",
-	Short: "Unified plugin dependency manager for AI CLIs",
-	Long: `Summon is a unified plugin dependency manager for AI CLIs (Copilot CLI and Claude Code CLI).
-It resolves transitive dependencies, checks system prerequisites, and provides a unified
-install/uninstall experience while delegating actual plugin operations to the native CLIs.`,
+	Short: "The dependency manager for AI plugins",
+	Long:  `The dependency manager for AI plugins.`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }
@@ -25,6 +23,17 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&targetFlag, "target", "", "Target a specific CLI: copilot or claude")
 	rootCmd.PersistentFlags().BoolVar(&noColorFlag, "no-color", false, "Disable colored output")
 	rootCmd.CompletionOptions.HiddenDefaultCmd = true
+
+	// Command groups for organized help output
+	rootCmd.AddGroup(
+		&cobra.Group{ID: "packages", Title: "Plugin Management:"},
+		&cobra.Group{ID: "inspect", Title: "Inspection:"},
+		&cobra.Group{ID: "config", Title: "Configuration:"},
+		&cobra.Group{ID: "maintain", Title: "Maintenance:"},
+	)
+
+	// Custom styled help and usage rendering
+	configureHelp(rootCmd)
 }
 
 // SetVersion configures the version string displayed by --version.

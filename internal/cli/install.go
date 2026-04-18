@@ -78,11 +78,16 @@ func defaultInstallDeps() *installDeps {
 }
 
 var installCmd = &cobra.Command{
-	Use:   "install <package>",
-	Short: "Install a package with full dependency resolution",
+	Use:     "install <package>",
+	Short:   "Install a package with full dependency resolution",
+	GroupID: "packages",
 	Long: `Install a package with full dependency resolution.
 Resolves transitive dependencies, checks system prerequisites, and installs
 across all detected CLIs (or a specific target with --target).`,
+	Example: `  summon install my-plugin
+  summon install gh:owner/my-plugin
+  summon install my-plugin@custom-marketplace
+  summon install https://github.com/owner/my-plugin`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		deps := defaultInstallDeps()

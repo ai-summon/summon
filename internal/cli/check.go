@@ -35,9 +35,10 @@ func defaultCheckDeps() *checkDeps {
 }
 
 var checkCmd = &cobra.Command{
-	Use:   "check [package]",
-	Short: "Check installed plugin health",
-	Long:  "Verify system and plugin dependencies for installed plugins.",
+	Use:     "check [package]",
+	Short:   "Check installed plugin health",
+	GroupID: "inspect",
+	Long:    "Verify system and plugin dependencies for installed plugins.",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		deps := defaultCheckDeps()

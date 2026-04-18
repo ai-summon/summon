@@ -36,9 +36,12 @@ func defaultUninstallDeps() *uninstallDeps {
 }
 
 var uninstallCmd = &cobra.Command{
-	Use:   "uninstall <package>",
-	Short: "Uninstall a package with reverse dependency warnings",
-	Args:  cobra.ExactArgs(1),
+	Use:     "uninstall <package>",
+	Short:   "Uninstall a package with reverse dependency warnings",
+	GroupID: "packages",
+	Long: `Remove a package and warn about any reverse dependencies that
+still depend on it. Operates across all detected CLIs.`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		deps := defaultUninstallDeps()
 		deps.noColor = noColorFlag

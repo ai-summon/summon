@@ -1,0 +1,30 @@
+
+The dependency manager for AI plugins.
+
+Usage:
+  summon [command]
+
+Plugin Management:
+  install     Install a package with full dependency resolution
+  uninstall   Uninstall a package with reverse dependency warnings
+  update      Update a plugin and resolve new dependencies
+
+Inspection:
+  check       Check installed plugin health
+  list        List installed plugins with dependency tree
+  validate    Validate the summon.yaml in the current directory
+
+Configuration:
+  marketplace Manage marketplace registrations
+  platform    Manage platform connections
+
+Maintenance:
+  help        Help about any command
+  self        Manage the summon installation
+
+Flags:
+  -h, --help            help for summon
+      --no-color        Disable colored output
+      --target string   Target a specific CLI: copilot or claude
+
+Use "summon [command] --help" for more information about a command.

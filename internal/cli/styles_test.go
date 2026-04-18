@@ -13,15 +13,17 @@ func TestNewStyles_NoColor_ProducesUnstyledOutput(t *testing.T) {
 
 	// All text styles should render plain text (no ANSI codes)
 	styles := map[string]lipgloss.Style{
-		"Header":  s.Header,
-		"Success": s.Success,
-		"Error":   s.Error,
-		"Warn":    s.Warn,
-		"Dim":     s.Dim,
-		"Name":    s.Name,
-		"URL":     s.URL,
-		"Star":    s.Star,
-		"Bullet":  s.Bullet,
+		"Header":      s.Header,
+		"Success":     s.Success,
+		"Error":       s.Error,
+		"Warn":        s.Warn,
+		"Dim":         s.Dim,
+		"Name":        s.Name,
+		"URL":         s.URL,
+		"Star":        s.Star,
+		"Bullet":      s.Bullet,
+		"HelpHeading": s.HelpHeading,
+		"HelpCommand": s.HelpCommand,
 	}
 	for name, style := range styles {
 		result := style.Render("test")
@@ -43,6 +45,8 @@ func TestNewStyles_Color_StylesAreConfigured(t *testing.T) {
 	assert.NotEqual(t, sNoColor.URL, s.URL, "URL should differ from noColor")
 	assert.NotEqual(t, sNoColor.Star, s.Star, "Star should differ from noColor")
 	assert.NotEqual(t, sNoColor.Bullet, s.Bullet, "Bullet should differ from noColor")
+	assert.NotEqual(t, sNoColor.HelpHeading, s.HelpHeading, "HelpHeading should differ from noColor")
+	assert.NotEqual(t, sNoColor.HelpCommand, s.HelpCommand, "HelpCommand should differ from noColor")
 }
 
 func TestStatusIcon_AllMappings(t *testing.T) {

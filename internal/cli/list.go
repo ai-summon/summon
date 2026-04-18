@@ -35,8 +35,10 @@ func defaultListDeps() *listDeps {
 }
 
 var listCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List installed plugins with dependency tree",
+	Use:     "list",
+	Short:   "List installed plugins with dependency tree",
+	GroupID: "inspect",
+	Long:    `Display all installed plugins and their dependency trees across detected CLIs.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		deps := defaultListDeps()
 		return runList(deps)

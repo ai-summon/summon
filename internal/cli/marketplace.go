@@ -13,8 +13,10 @@ import (
 )
 
 var marketplaceCmd = &cobra.Command{
-	Use:   "marketplace",
-	Short: "Manage marketplace registrations",
+	Use:     "marketplace",
+	Short:   "Manage marketplace registrations",
+	GroupID: "config",
+	Long:    `Add, list, browse, and remove plugin marketplace sources.`,
 }
 
 func init() {

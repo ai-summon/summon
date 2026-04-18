@@ -51,9 +51,12 @@ func defaultUpdateDeps() *updateDeps {
 }
 
 var updateCmd = &cobra.Command{
-	Use:   "update [package]",
-	Short: "Update a plugin and resolve new dependencies",
-	Args:  cobra.MaximumNArgs(1),
+	Use:     "update [package]",
+	Short:   "Update a plugin and resolve new dependencies",
+	GroupID: "packages",
+	Long: `Update a specific plugin or all installed plugins. Re-resolves
+transitive dependencies and installs any new requirements.`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		deps := defaultUpdateDeps()
 		if len(args) > 0 {

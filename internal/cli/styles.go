@@ -15,6 +15,10 @@ type Styles struct {
 	Star    lipgloss.Style // Yellow — official marketplace badge (★)
 	Bullet  lipgloss.Style // Green — non-official marketplace badge (●)
 	Box     lipgloss.Style // Rounded border — notification boxes
+
+	// Help-specific styles (used by custom help/usage templates)
+	HelpHeading lipgloss.Style // Bold green — help section headers ("Usage:", "Commands:")
+	HelpCommand lipgloss.Style // Bold cyan — command/flag names in help output
 }
 
 // NewStyles creates the style set for CLI output rendering.
@@ -42,6 +46,8 @@ func NewStyles(noColor bool) Styles {
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("3")).
 			Padding(1, 3),
+		HelpHeading: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2")),
+		HelpCommand: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6")),
 	}
 }
 

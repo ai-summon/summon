@@ -110,7 +110,7 @@ func TestRootCommand_Help(t *testing.T) {
 	err := root.Execute()
 	require.NoError(t, err)
 	assert.Contains(t, buf.String(), "summon")
-	assert.Contains(t, buf.String(), "plugin dependency manager")
+	assert.Contains(t, buf.String(), "dependency manager for AI plugins")
 }
 
 // Test install command help.

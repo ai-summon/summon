@@ -1,0 +1,18 @@
+
+Manage the summon installation, including self-update and uninstall.
+
+Usage:
+  summon self [command]
+
+Available Commands:
+  uninstall   Remove summon from your system
+  update      Update summon to the latest version
+
+Flags:
+  -h, --help   help for self
+
+Global Flags:
+      --no-color        Disable colored output
+      --target string   Target a specific CLI: copilot or claude
+
+Use "summon self [command] --help" for more information about a command.

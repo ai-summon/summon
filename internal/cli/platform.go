@@ -28,9 +28,10 @@ func defaultPlatformDeps() *platformDeps {
 }
 
 var platformCmd = &cobra.Command{
-	Use:   "platform",
-	Short: "Manage platform connections",
-	Long:  `View and manage which AI CLI platforms (copilot, claude) summon operates on.`,
+	Use:     "platform",
+	Short:   "Manage platform connections",
+	GroupID: "config",
+	Long:    `View and manage which AI CLI platforms (copilot, claude) summon operates on.`,
 }
 
 var platformListCmd = &cobra.Command{

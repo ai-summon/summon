@@ -1,0 +1,23 @@
+
+Install a package with full dependency resolution.
+Resolves transitive dependencies, checks system prerequisites, and installs
+across all detected CLIs (or a specific target with --target).
+
+Usage:
+  summon install <package> [flags]
+
+Examples:
+  summon install my-plugin
+  summon install gh:owner/my-plugin
+  summon install my-plugin@custom-marketplace
+  summon install https://github.com/owner/my-plugin
+
+Flags:
+      --force          Bypass all system dependency checks
+  -h, --help           help for install
+      --scope string   Installation scope: user, project, local (default "user")
+      --yes            Skip preview confirmation (CI/CD mode)
+
+Global Flags:
+      --no-color        Disable colored output
+      --target string   Target a specific CLI: copilot or claude

@@ -1,0 +1,20 @@
+
+Add, list, browse, and remove plugin marketplace sources.
+
+Usage:
+  summon marketplace [command]
+
+Available Commands:
+  add         Register a custom marketplace
+  browse      Browse packages available in a marketplace
+  list        List all registered marketplaces
+  remove      Remove a user-registered marketplace
+
+Flags:
+  -h, --help   help for marketplace
+
+Global Flags:
+      --no-color        Disable colored output
+      --target string   Target a specific CLI: copilot or claude
+
+Use "summon marketplace [command] --help" for more information about a command.
