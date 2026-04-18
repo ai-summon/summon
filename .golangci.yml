@@ -1,0 +1,20 @@
+# golangci-lint v2 configuration for summon
+version: "2"
+
+run:
+  timeout: 3m
+
+linters:
+  default: none
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - unused
+    - ineffassign
+    - gocritic
+
+issues:
+  # Show all issues (don't limit per-linter)
+  max-issues-per-linter: 0
+  max-same-issues: 0

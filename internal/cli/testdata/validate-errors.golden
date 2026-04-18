@@ -1,0 +1,4 @@
+✓ summon.yaml syntax is valid
+✗ system requirement nonexistent-binary-xyz-golden-test — not found on PATH
+
+1 error(s), 0 warning(s)

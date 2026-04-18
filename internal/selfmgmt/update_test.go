@@ -230,6 +230,65 @@ func TestRunUpdate_NetworkError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to check for updates")
 }
 
+func TestFetchLatestVersion_ServerError(t *testing.T) {
+	clearURLEnvVars(t)
+	client := newFakeHTTPClient()
+	client.setJSON(defaultReleasesAPI, 500, `Internal Server Error`)
+
+	_, err := FetchLatestVersion(client)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "GitHub API returned status 500")
+}
+
+func TestPerformUpdate_DownloadNetworkError(t *testing.T) {
+	clearURLEnvVars(t)
+	client := newFakeHTTPClient()
+
+	installerURL := fmt.Sprintf("%s/v0.2.0/%s", defaultRawGitHub, installerScriptName())
+	client.errors[installerURL] = fmt.Errorf("connection refused")
+
+	runner := &fakeExecRunner{}
+	paths := tempSummonPaths(t)
+	var buf bytes.Buffer
+
+	release := ReleaseInfo{TagName: "v0.2.0", Version: "0.2.0"}
+	err := PerformUpdate(release, paths, client, runner, &buf)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "update failed")
+	assert.Contains(t, err.Error(), "not been modified")
+	assert.Empty(t, runner.commands)
+}
+
+func TestPerformUpdate_InstallerReadError(t *testing.T) {
+	clearURLEnvVars(t)
+	client := newFakeHTTPClient()
+
+	installerURL := fmt.Sprintf("%s/v0.2.0/%s", defaultRawGitHub, installerScriptName())
+	client.responses[installerURL] = &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(&errReader{err: fmt.Errorf("read interrupted")}),
+	}
+
+	runner := &fakeExecRunner{}
+	paths := tempSummonPaths(t)
+	var buf bytes.Buffer
+
+	release := ReleaseInfo{TagName: "v0.2.0", Version: "0.2.0"}
+	err := PerformUpdate(release, paths, client, runner, &buf)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "could not read installer script")
+	assert.Empty(t, runner.commands)
+}
+
+// errReader is an io.Reader that always returns an error.
+type errReader struct {
+	err error
+}
+
+func (e *errReader) Read(p []byte) (int, error) {
+	return 0, e.err
+}
+
 func TestStripVersion(t *testing.T) {
 	assert.Equal(t, "0.1.0", StripVersion("v0.1.0"))
 	assert.Equal(t, "0.1.0", StripVersion("0.1.0"))

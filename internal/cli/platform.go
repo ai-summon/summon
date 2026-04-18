@@ -7,7 +7,6 @@ import (
 
 	"github.com/ai-summon/summon/internal/config"
 	"github.com/ai-summon/summon/internal/platform"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )
 
@@ -83,19 +82,10 @@ func runPlatformList(deps *platformDeps) error {
 	}
 
 	// Styles
-	headerStyle := lipgloss.NewStyle().Bold(true)
-	checkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	crossStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	dimStyle := lipgloss.NewStyle().Faint(true)
-	if deps.noColor {
-		headerStyle = lipgloss.NewStyle()
-		checkStyle = lipgloss.NewStyle()
-		crossStyle = lipgloss.NewStyle()
-		dimStyle = lipgloss.NewStyle()
-	}
+	s := NewStyles(deps.noColor)
 
-	fmt.Fprintln(deps.stdout, headerStyle.Render("Platforms:"))
-	fmt.Fprintln(deps.stdout)
+	_, _ = fmt.Fprintln(deps.stdout, s.Header.Render("Platforms:"))
+	_, _ = fmt.Fprintln(deps.stdout)
 
 	for _, name := range config.KnownPlatforms() {
 		enabled, configured := cfg.IsEnabled(name)
@@ -103,24 +93,25 @@ func runPlatformList(deps *platformDeps) error {
 
 		var statusIcon, statusText, detail string
 
-		if configured && enabled && available {
-			statusIcon = checkStyle.Render("✓")
+		switch {
+		case configured && enabled && available:
+			statusIcon = s.Success.Render("✓")
 			statusText = "enabled"
 			detail = ""
-		} else if configured && enabled && !available {
-			statusIcon = crossStyle.Render("!")
+		case configured && enabled && !available:
+			statusIcon = s.Error.Render("!")
 			statusText = "enabled"
-			detail = dimStyle.Render("(not installed)")
-		} else if configured && !enabled {
-			statusIcon = dimStyle.Render("–")
+			detail = s.Dim.Render("(not installed)")
+		case configured && !enabled:
+			statusIcon = s.Dim.Render("–")
 			statusText = "disabled"
 			detail = ""
-		} else if !configured && available {
-			statusIcon = dimStyle.Render("○")
+		case !configured && available:
+			statusIcon = s.Dim.Render("○")
 			statusText = "detected"
-			detail = dimStyle.Render("(not enabled)")
-		} else {
-			statusIcon = crossStyle.Render("✗")
+			detail = s.Dim.Render("(not enabled)")
+		default:
+			statusIcon = s.Error.Render("✗")
 			statusText = "not installed"
 			detail = ""
 		}
@@ -129,7 +120,7 @@ func runPlatformList(deps *platformDeps) error {
 		if detail != "" {
 			line += " " + detail
 		}
-		fmt.Fprintln(deps.stdout, line)
+		_, _ = fmt.Fprintln(deps.stdout, line)
 	}
 
 	return nil
@@ -177,11 +168,11 @@ func runPlatformToggle(name string, enable bool, deps *platformDeps) error {
 			}
 		}
 		if !found {
-			fmt.Fprintf(deps.stderr, "⚠ %s CLI is not installed; it will be used once available\n", name)
+			_, _ = fmt.Fprintf(deps.stderr, "⚠ %s CLI is not installed; it will be used once available\n", name)
 		}
 	}
 
-	fmt.Fprintf(deps.stdout, "%s %s\n", name, action)
+	_, _ = fmt.Fprintf(deps.stdout, "%s %s\n", name, action)
 	return nil
 }
 

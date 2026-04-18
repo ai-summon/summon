@@ -26,12 +26,12 @@ func TestUpdate_BasicUpdate(t *testing.T) {
 	fetcher := newFakeFetcher()
 	deps := &updateDeps{
 		configPath: filepath.Join(t.TempDir(), "config.yaml"),
-		runner:  runner,
-		fetcher: fetcher,
-		stdin:   strings.NewReader(""),
-		stdout:  &bytes.Buffer{},
-		stderr:  &bytes.Buffer{},
-		noColor: true,
+		runner:     runner,
+		fetcher:    fetcher,
+		stdin:      strings.NewReader(""),
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+		noColor:    true,
 	}
 
 	installScope = "user"
@@ -65,12 +65,12 @@ func TestUpdate_WithNewDeps(t *testing.T) {
 
 	deps := &updateDeps{
 		configPath: filepath.Join(t.TempDir(), "config.yaml"),
-		runner:  runner,
-		fetcher: fetcher,
-		stdin:   strings.NewReader(""),
-		stdout:  &bytes.Buffer{},
-		stderr:  &bytes.Buffer{},
-		noColor: true,
+		runner:     runner,
+		fetcher:    fetcher,
+		stdin:      strings.NewReader(""),
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+		noColor:    true,
 	}
 
 	installScope = "user"
@@ -97,12 +97,12 @@ func TestUpdate_NotInstalled(t *testing.T) {
 
 	deps := &updateDeps{
 		configPath: filepath.Join(t.TempDir(), "config.yaml"),
-		runner:  runner,
-		fetcher: newFakeFetcher(),
-		stdin:   strings.NewReader(""),
-		stdout:  &bytes.Buffer{},
-		stderr:  &bytes.Buffer{},
-		noColor: true,
+		runner:     runner,
+		fetcher:    newFakeFetcher(),
+		stdin:      strings.NewReader(""),
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+		noColor:    true,
 	}
 
 	installScope = "user"
@@ -127,12 +127,12 @@ func TestUpdateAll(t *testing.T) {
 	fetcher := newFakeFetcher()
 	deps := &updateDeps{
 		configPath: filepath.Join(t.TempDir(), "config.yaml"),
-		runner:  runner,
-		fetcher: fetcher,
-		stdin:   strings.NewReader(""),
-		stdout:  &bytes.Buffer{},
-		stderr:  &bytes.Buffer{},
-		noColor: true,
+		runner:     runner,
+		fetcher:    fetcher,
+		stdin:      strings.NewReader(""),
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+		noColor:    true,
 	}
 
 	installScope = "user"
@@ -166,12 +166,12 @@ func TestUpdate_ProjectScope(t *testing.T) {
 
 	deps := &updateDeps{
 		configPath: filepath.Join(t.TempDir(), "config.yaml"),
-		runner:  runner,
-		fetcher: newFakeFetcher(),
-		stdin:   strings.NewReader(""),
-		stdout:  &bytes.Buffer{},
-		stderr:  &bytes.Buffer{},
-		noColor: true,
+		runner:     runner,
+		fetcher:    newFakeFetcher(),
+		stdin:      strings.NewReader(""),
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+		noColor:    true,
 	}
 
 	installScope = "user"
@@ -223,12 +223,12 @@ func TestUpdate_PartialFailure(t *testing.T) {
 
 	deps := &updateDeps{
 		configPath: filepath.Join(t.TempDir(), "config.yaml"),
-		runner:  runner,
-		fetcher: newFakeFetcher(),
-		stdin:   strings.NewReader(""),
-		stdout:  &bytes.Buffer{},
-		stderr:  &bytes.Buffer{},
-		noColor: true,
+		runner:     runner,
+		fetcher:    newFakeFetcher(),
+		stdin:      strings.NewReader(""),
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+		noColor:    true,
 	}
 
 	installScope = "user"
@@ -265,12 +265,12 @@ func TestUpdate_ClaudeUsesSourceIdentifier(t *testing.T) {
 
 	deps := &updateDeps{
 		configPath: filepath.Join(t.TempDir(), "config.yaml"),
-		runner:  runner,
-		fetcher: newFakeFetcher(),
-		stdin:   strings.NewReader(""),
-		stdout:  &bytes.Buffer{},
-		stderr:  &bytes.Buffer{},
-		noColor: true,
+		runner:     runner,
+		fetcher:    newFakeFetcher(),
+		stdin:      strings.NewReader(""),
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+		noColor:    true,
 	}
 
 	installScope = "user"
@@ -284,9 +284,10 @@ func TestUpdate_ClaudeUsesSourceIdentifier(t *testing.T) {
 	var copilotUpdateArgs []string
 	for _, cmd := range runner.commands {
 		if len(cmd) >= 4 && cmd[2] == "update" {
-			if cmd[0] == "claude" {
+			switch cmd[0] {
+			case "claude":
 				claudeUpdateArgs = cmd
-			} else if cmd[0] == "copilot" {
+			case "copilot":
 				copilotUpdateArgs = cmd
 			}
 		}
@@ -319,12 +320,12 @@ func TestUpdate_SkipsAdaptersWhereNotInstalled(t *testing.T) {
 
 	deps := &updateDeps{
 		configPath: filepath.Join(t.TempDir(), "config.yaml"),
-		runner:  runner,
-		fetcher: newFakeFetcher(),
-		stdin:   strings.NewReader(""),
-		stdout:  &bytes.Buffer{},
-		stderr:  &bytes.Buffer{},
-		noColor: true,
+		runner:     runner,
+		fetcher:    newFakeFetcher(),
+		stdin:      strings.NewReader(""),
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+		noColor:    true,
 	}
 
 	installScope = "user"
@@ -360,12 +361,12 @@ func TestUpdate_UpToDate(t *testing.T) {
 
 	deps := &updateDeps{
 		configPath: filepath.Join(t.TempDir(), "config.yaml"),
-		runner:  runner,
-		fetcher: newFakeFetcher(),
-		stdin:   strings.NewReader(""),
-		stdout:  &bytes.Buffer{},
-		stderr:  &bytes.Buffer{},
-		noColor: true,
+		runner:     runner,
+		fetcher:    newFakeFetcher(),
+		stdin:      strings.NewReader(""),
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+		noColor:    true,
 	}
 
 	installScope = "user"
@@ -399,12 +400,12 @@ func TestUpdate_VersionChanged(t *testing.T) {
 
 	deps := &updateDeps{
 		configPath: filepath.Join(t.TempDir(), "config.yaml"),
-		runner:  runner,
-		fetcher: newFakeFetcher(),
-		stdin:   strings.NewReader(""),
-		stdout:  &bytes.Buffer{},
-		stderr:  &bytes.Buffer{},
-		noColor: true,
+		runner:     runner,
+		fetcher:    newFakeFetcher(),
+		stdin:      strings.NewReader(""),
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+		noColor:    true,
 	}
 
 	installScope = "user"
@@ -432,12 +433,12 @@ func TestUpdateAll_Summary(t *testing.T) {
 
 	deps := &updateDeps{
 		configPath: filepath.Join(t.TempDir(), "config.yaml"),
-		runner:  runner,
-		fetcher: newFakeFetcher(),
-		stdin:   strings.NewReader(""),
-		stdout:  &bytes.Buffer{},
-		stderr:  &bytes.Buffer{},
-		noColor: true,
+		runner:     runner,
+		fetcher:    newFakeFetcher(),
+		stdin:      strings.NewReader(""),
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+		noColor:    true,
 	}
 
 	installScope = "user"
@@ -471,12 +472,12 @@ func TestUpdateAll_PerPlatformOutput(t *testing.T) {
 
 	deps := &updateDeps{
 		configPath: filepath.Join(t.TempDir(), "config.yaml"),
-		runner:  runner,
-		fetcher: newFakeFetcher(),
-		stdin:   strings.NewReader(""),
-		stdout:  &bytes.Buffer{},
-		stderr:  &bytes.Buffer{},
-		noColor: true,
+		runner:     runner,
+		fetcher:    newFakeFetcher(),
+		stdin:      strings.NewReader(""),
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+		noColor:    true,
 	}
 
 	installScope = "user"
@@ -519,12 +520,12 @@ func TestUpdate_AllPlatformsFail(t *testing.T) {
 
 	deps := &updateDeps{
 		configPath: filepath.Join(t.TempDir(), "config.yaml"),
-		runner:  runner,
-		fetcher: newFakeFetcher(),
-		stdin:   strings.NewReader(""),
-		stdout:  &bytes.Buffer{},
-		stderr:  &bytes.Buffer{},
-		noColor: true,
+		runner:     runner,
+		fetcher:    newFakeFetcher(),
+		stdin:      strings.NewReader(""),
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+		noColor:    true,
 	}
 
 	installScope = "user"

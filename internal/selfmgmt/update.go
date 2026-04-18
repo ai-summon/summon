@@ -87,7 +87,7 @@ func FetchLatestVersion(httpClient HTTPClient) (ReleaseInfo, error) {
 	if err != nil {
 		return ReleaseInfo{}, fmt.Errorf("failed to check for updates: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return ReleaseInfo{}, fmt.Errorf("no releases found for ai-summon/summon")
@@ -138,6 +138,7 @@ func IsUpToDate(currentVersion, latestVersion string) bool {
 }
 
 // RunUpdate checks for a newer version and updates the binary if available.
+//
 // Deprecated: Use FetchLatestVersion + IsUpToDate + PerformUpdate for better control.
 func RunUpdate(currentVersion string, paths SummonPaths, httpClient HTTPClient, runner ExecRunner, w io.Writer) (*UpdateResult, error) {
 	current := StripVersion(currentVersion)
@@ -157,7 +158,7 @@ func RunUpdate(currentVersion string, paths SummonPaths, httpClient HTTPClient, 
 		return result, nil
 	}
 
-	fmt.Fprintf(w, "updating summon v%s → v%s\n", current, release.Version)
+	_, _ = fmt.Fprintf(w, "updating summon v%s → v%s\n", current, release.Version)
 
 	if err := PerformUpdate(release, paths, httpClient, runner, w); err != nil {
 		return nil, err
@@ -182,17 +183,17 @@ func PerformUpdate(release ReleaseInfo, paths SummonPaths, httpClient HTTPClient
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("update failed: %w\nThe current installation has not been modified.", err)
+		return fmt.Errorf("update failed: %w\nthe current installation has not been modified", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("update failed: could not download installer (HTTP %d)\nThe current installation has not been modified.", resp.StatusCode)
+		return fmt.Errorf("update failed: could not download installer (HTTP %d)\nthe current installation has not been modified", resp.StatusCode)
 	}
 
 	scriptContent, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("update failed: could not read installer script\nThe current installation has not been modified.")
+		return fmt.Errorf("update failed: could not read installer script\nthe current installation has not been modified")
 	}
 
 	tmpFile, err := createTempScript(scriptContent, scriptName)

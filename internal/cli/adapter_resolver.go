@@ -51,7 +51,7 @@ func resolveEnabledAdapters(deps *adapterResolverDeps) ([]platform.Adapter, erro
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		// Config exists but is unreadable — fall back to pure detection
-		fmt.Fprintf(deps.stderr, "⚠ could not read config: %v (using auto-detection)\n", err)
+		_, _ = fmt.Fprintf(deps.stderr, "⚠ could not read config: %v (using auto-detection)\n", err)
 		return detectAndFilterTarget(deps)
 	}
 
@@ -95,7 +95,7 @@ func filterByTargetWithWarning(detected []platform.Adapter, target string, cfg c
 		return nil, err
 	}
 	if enabled, configured := cfg.IsEnabled(target); configured && !enabled {
-		fmt.Fprintf(stderr, "⚠ using disabled platform %s (--target override)\n", target)
+		_, _ = fmt.Fprintf(stderr, "⚠ using disabled platform %s (--target override)\n", target)
 	}
 	return filtered, nil
 }
@@ -108,13 +108,11 @@ func bootstrapFromDetection(detected []platform.Adapter, cfgPath string, saveFn 
 
 	// Build and save config (non-fatal on save failure)
 	var cfg config.Config
-	names := make([]string, 0, len(detected))
 	for _, a := range detected {
 		_ = cfg.SetPlatform(a.Name(), true)
-		names = append(names, a.Name())
 	}
 	if err := saveFn(cfgPath, cfg); err != nil {
-		fmt.Fprintf(stderr, "⚠ could not save config: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "⚠ could not save config: %v\n", err)
 	}
 
 	return detected, nil
@@ -137,7 +135,7 @@ func applyConfigFilter(detected []platform.Adapter, cfg config.Config, stderr io
 		if a, ok := detectedSet[name]; ok {
 			result = append(result, a)
 		} else {
-			fmt.Fprintf(stderr, "⚠ %s is enabled but not installed, skipping\n", name)
+			_, _ = fmt.Fprintf(stderr, "⚠ %s is enabled but not installed, skipping\n", name)
 		}
 	}
 

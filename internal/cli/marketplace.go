@@ -9,7 +9,6 @@ import (
 
 	"github.com/ai-summon/summon/internal/marketplace"
 	"github.com/ai-summon/summon/internal/platform"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )
 
@@ -86,13 +85,13 @@ func runMarketplaceAddWith(source string, deps *addDeps) error {
 		return fmt.Errorf("no supported CLIs detected. Install copilot or claude CLI first")
 	}
 
-	fmt.Fprintf(out, "Registering marketplace %q (%s)\n", name, source)
+	_, _ = fmt.Fprintf(out, "Registering marketplace %q (%s)\n", name, source)
 
 	for _, a := range deps.adapters {
 		if err := a.EnsureMarketplace(name, source); err != nil {
-			fmt.Fprintf(deps.stderr, "⚠ %s: failed to register marketplace: %v\n", a.Name(), err)
+			_, _ = fmt.Fprintf(deps.stderr, "⚠ %s: failed to register marketplace: %v\n", a.Name(), err)
 		} else {
-			fmt.Fprintf(out, "  ✓ %s: marketplace registered\n", a.Name())
+			_, _ = fmt.Fprintf(out, "  ✓ %s: marketplace registered\n", a.Name())
 		}
 	}
 
@@ -132,18 +131,7 @@ func runMarketplaceListWith(deps *marketplaceListDeps) error {
 		return fmt.Errorf("no supported CLIs detected")
 	}
 
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
-	starStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	bulletStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	badgeStyle := lipgloss.NewStyle().Faint(true)
-	urlStyle := lipgloss.NewStyle().Faint(true)
-	if deps.noColor {
-		headerStyle = lipgloss.NewStyle()
-		starStyle = lipgloss.NewStyle()
-		bulletStyle = lipgloss.NewStyle()
-		badgeStyle = lipgloss.NewStyle()
-		urlStyle = lipgloss.NewStyle()
-	}
+	s := NewStyles(deps.noColor)
 
 	first := true
 	for _, a := range deps.adapters {
@@ -166,24 +154,24 @@ func runMarketplaceListWith(deps *marketplaceListDeps) error {
 		title := strings.ToUpper(a.Name()[:1]) + a.Name()[1:]
 
 		if !first {
-			fmt.Fprintln(out)
+			_, _ = fmt.Fprintln(out)
 		}
 		first = false
-		fmt.Fprintf(out, "\n%s\n", headerStyle.Render(fmt.Sprintf("%s (%d):", title, len(marketplaces))))
+		_, _ = fmt.Fprintf(out, "\n%s\n", s.Header.Render(fmt.Sprintf("%s (%d):", title, len(marketplaces))))
 
 		for _, m := range marketplaces {
-			icon := bulletStyle.Render("●")
+			icon := s.Bullet.Render("●")
 			badge := ""
 			if m.Name == "summon-marketplace" {
-				icon = starStyle.Render("★")
-				badge = "  " + badgeStyle.Render("official")
+				icon = s.Star.Render("★")
+				badge = "  " + s.Dim.Render("official")
 			}
-			fmt.Fprintf(out, "\n  %s %s%s\n", icon, m.Name, badge)
-			fmt.Fprintf(out, "    %s\n", urlStyle.Render(m.Source))
+			_, _ = fmt.Fprintf(out, "\n  %s %s%s\n", icon, m.Name, badge)
+			_, _ = fmt.Fprintf(out, "    %s\n", s.URL.Render(m.Source))
 		}
 	}
 
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out)
 	return nil
 }
 
@@ -225,13 +213,13 @@ func runMarketplaceRemoveWith(name string, deps *removeDeps) error {
 		return fmt.Errorf("cannot remove the official marketplace")
 	}
 
-	fmt.Fprintf(out, "Removing marketplace %q\n", name)
+	_, _ = fmt.Fprintf(out, "Removing marketplace %q\n", name)
 
 	for _, a := range deps.adapters {
 		if err := a.RemoveMarketplace(name); err != nil {
-			fmt.Fprintf(deps.stderr, "⚠ %s: %v\n", a.Name(), err)
+			_, _ = fmt.Fprintf(deps.stderr, "⚠ %s: %v\n", a.Name(), err)
 		} else {
-			fmt.Fprintf(out, "  ✓ %s: marketplace removed\n", a.Name())
+			_, _ = fmt.Fprintf(out, "  ✓ %s: marketplace removed\n", a.Name())
 		}
 	}
 
@@ -286,7 +274,7 @@ func runMarketplaceBrowseWith(name string, deps *browseDeps) error {
 	}
 
 	if len(idx) == 0 {
-		fmt.Fprintf(out, "No packages found in %s\n", name)
+		_, _ = fmt.Fprintf(out, "No packages found in %s\n", name)
 		return nil
 	}
 
@@ -306,22 +294,15 @@ func runMarketplaceBrowseWith(name string, deps *browseDeps) error {
 	}
 
 	// Styled output
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
-	nameStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	descStyle := lipgloss.NewStyle().Faint(true)
-	if deps.noColor {
-		headerStyle = lipgloss.NewStyle()
-		nameStyle = lipgloss.NewStyle()
-		descStyle = lipgloss.NewStyle()
-	}
+	s := NewStyles(deps.noColor)
 
-	fmt.Fprintf(out, "\n%s\n\n", headerStyle.Render(fmt.Sprintf("Packages in %s:", name)))
+	_, _ = fmt.Fprintf(out, "\n%s\n\n", s.Header.Render(fmt.Sprintf("Packages in %s:", name)))
 	for _, n := range names {
 		entry := idx[n]
 		padding := strings.Repeat(" ", maxLen-len(n)+4)
-		fmt.Fprintf(out, "  %s%s%s\n", nameStyle.Render(n), padding, descStyle.Render(entry.Description))
+		_, _ = fmt.Fprintf(out, "  %s%s%s\n", s.Name.Render(n), padding, s.Dim.Render(entry.Description))
 	}
-	fmt.Fprintf(out, "\n%d package(s) available\n", len(names))
+	_, _ = fmt.Fprintf(out, "\n%d package(s) available\n", len(names))
 
 	return nil
 }

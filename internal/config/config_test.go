@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -199,6 +201,61 @@ func TestSave_NoTempFileLeftOnSuccess(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, entries, 1, "only config.yaml should remain, no temp files")
 	assert.Equal(t, "config.yaml", entries[0].Name())
+}
+
+func TestDefaultPath(t *testing.T) {
+	p, err := DefaultPath()
+	require.NoError(t, err)
+	assert.True(t, filepath.IsAbs(p))
+	assert.True(t, strings.HasSuffix(p, filepath.Join(".summon", "config.yaml")))
+}
+
+func TestLoad_ReadError(t *testing.T) {
+	// Passing a directory to Load triggers a non-ErrNotExist read error
+	dir := t.TempDir()
+	_, err := Load(dir)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "reading config")
+}
+
+func TestSave_MkdirAllError(t *testing.T) {
+	dir := t.TempDir()
+	// Create a regular file where a directory would be needed
+	blocker := filepath.Join(dir, "blocker")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o644))
+
+	path := filepath.Join(blocker, "sub", "config.yaml")
+	err := Save(path, Config{})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "creating config directory")
+}
+
+func TestSave_CreateTempError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod-based test not applicable on Windows")
+	}
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "readonly")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	require.NoError(t, os.Chmod(configDir, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(configDir, 0o755) })
+
+	path := filepath.Join(configDir, "config.yaml")
+	err := Save(path, Config{})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "creating temp file")
+}
+
+func TestSave_RenameError(t *testing.T) {
+	dir := t.TempDir()
+	// Create a non-empty directory at the target path so rename(file→dir) fails
+	targetPath := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.MkdirAll(targetPath, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(targetPath, "dummy"), []byte("x"), 0o644))
+
+	err := Save(targetPath, Config{})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "renaming config")
 }
 
 func TestRoundTrip_OmitsNilFields(t *testing.T) {

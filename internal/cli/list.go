@@ -11,7 +11,6 @@ import (
 
 	"github.com/ai-summon/summon/internal/manifest"
 	"github.com/ai-summon/summon/internal/platform"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )
 
@@ -124,21 +123,14 @@ func runList(deps *listDeps) error {
 			result[o.CLI] = o.Plugins
 		}
 		data, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Fprintln(out, string(data))
+		_, _ = fmt.Fprintln(out, string(data))
 		return nil
 	}
 
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out)
 
 	// Human-readable styled output
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
-	checkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	dimStyle := lipgloss.NewStyle().Faint(true)
-	if deps.noColor {
-		headerStyle = lipgloss.NewStyle()
-		checkStyle = lipgloss.NewStyle()
-		dimStyle = lipgloss.NewStyle()
-	}
+	s := NewStyles(deps.noColor)
 
 	// Find the longest plugin name for column alignment
 	maxNameLen := 0
@@ -151,26 +143,26 @@ func runList(deps *listDeps) error {
 	}
 
 	for _, o := range outputs {
-		fmt.Fprintf(out, "%s\n", headerStyle.Render(o.CLI+":"))
+		_, _ = fmt.Fprintf(out, "%s\n", s.PlatformHeader(o.CLI))
 		if len(o.Plugins) == 0 {
-			fmt.Fprintln(out, "  (none)")
-			fmt.Fprintln(out)
+			_, _ = fmt.Fprintln(out, "  (none)")
+			_, _ = fmt.Fprintln(out)
 			continue
 		}
 		for _, p := range o.Plugins {
-			check := checkStyle.Render("✓")
+			check := s.Success.Render("✓")
 			if p.Version != "" {
 				padding := strings.Repeat(" ", maxNameLen-len(p.Name)+2)
-				version := dimStyle.Render("v" + p.Version)
-				fmt.Fprintf(out, "  %s %s%s%s\n", check, p.Name, padding, version)
+				version := s.Dim.Render("v" + p.Version)
+				_, _ = fmt.Fprintf(out, "  %s %s%s%s\n", check, p.Name, padding, version)
 			} else {
-				fmt.Fprintf(out, "  %s %s\n", check, p.Name)
+				_, _ = fmt.Fprintf(out, "  %s %s\n", check, p.Name)
 			}
 			for _, dep := range p.Dependencies {
-				fmt.Fprintf(out, "      └── %s\n", dimStyle.Render(dep))
+				_, _ = fmt.Fprintf(out, "      └── %s\n", s.Dim.Render(dep))
 			}
 		}
-		fmt.Fprintln(out)
+		_, _ = fmt.Fprintln(out)
 	}
 
 	total := 0
@@ -178,7 +170,7 @@ func runList(deps *listDeps) error {
 		total += len(o.Plugins)
 	}
 	if total == 0 {
-		fmt.Fprintln(out, "No plugins installed.")
+		_, _ = fmt.Fprintln(out, "No plugins installed.")
 	}
 
 	return nil

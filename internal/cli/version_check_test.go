@@ -41,7 +41,7 @@ func TestRunVersionCheck_PrintsWarning(t *testing.T) {
 
 	runVersionCheck(cmd, deps)
 
-	w.Close()
+	_ = w.Close()
 	out, _ := io.ReadAll(r)
 	output := string(out)
 	assert.Contains(t, output, "Update available")
@@ -74,7 +74,7 @@ func TestRunVersionCheck_NoWarningWhenCurrent(t *testing.T) {
 
 	runVersionCheck(cmd, deps)
 
-	w.Close()
+	_ = w.Close()
 	out, _ := io.ReadAll(r)
 	assert.Empty(t, string(out))
 }
@@ -103,7 +103,7 @@ func TestRunVersionCheck_SkippedWhenDisabled(t *testing.T) {
 
 	runVersionCheck(cmd, deps)
 
-	w.Close()
+	_ = w.Close()
 	out, _ := io.ReadAll(r)
 	assert.Empty(t, string(out))
 }
@@ -129,7 +129,7 @@ func TestRunVersionCheck_SkippedWhenDevVersion(t *testing.T) {
 
 	runVersionCheck(cmd, deps)
 
-	w.Close()
+	_ = w.Close()
 	out, _ := io.ReadAll(r)
 	assert.Empty(t, string(out))
 }
@@ -158,7 +158,7 @@ func TestRunVersionCheck_SkippedWhenNotTTY(t *testing.T) {
 
 	runVersionCheck(cmd, deps)
 
-	w.Close()
+	_ = w.Close()
 	out, _ := io.ReadAll(r)
 	assert.Empty(t, string(out))
 }
@@ -190,7 +190,7 @@ func TestRunVersionCheck_SkippedForSelfUpdate(t *testing.T) {
 
 	runVersionCheck(cmd, deps)
 
-	w.Close()
+	_ = w.Close()
 	out, _ := io.ReadAll(r)
 	assert.Empty(t, string(out))
 }
@@ -219,7 +219,7 @@ func TestRunVersionCheck_SkippedForHelp(t *testing.T) {
 
 	runVersionCheck(cmd, deps)
 
-	w.Close()
+	_ = w.Close()
 	out, _ := io.ReadAll(r)
 	assert.Empty(t, string(out))
 }
@@ -258,7 +258,7 @@ func TestRunVersionCheck_RefreshesStaleCache(t *testing.T) {
 	defer func() { os.Stderr = origStderr }()
 
 	runVersionCheck(cmd, deps)
-	w.Close()
+	_ = w.Close()
 
 	// Give the goroutine a moment to write the cache.
 	time.Sleep(100 * time.Millisecond)

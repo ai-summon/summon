@@ -7,7 +7,8 @@ import (
 )
 
 var (
-	targetFlag string
+	targetFlag  string
+	noColorFlag bool
 )
 
 var rootCmd = &cobra.Command{
@@ -22,6 +23,7 @@ install/uninstall experience while delegating actual plugin operations to the na
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&targetFlag, "target", "", "Target a specific CLI: copilot or claude")
+	rootCmd.PersistentFlags().BoolVar(&noColorFlag, "no-color", false, "Disable colored output")
 	rootCmd.CompletionOptions.HiddenDefaultCmd = true
 }
 

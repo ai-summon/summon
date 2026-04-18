@@ -13,7 +13,7 @@ func createTempScript(content []byte, name string) (string, error) {
 	}
 	tmpFile := filepath.Join(tmpDir, name)
 	if err := os.WriteFile(tmpFile, content, 0700); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		return "", err
 	}
 	return tmpFile, nil
@@ -21,7 +21,7 @@ func createTempScript(content []byte, name string) (string, error) {
 
 // removeTempFile removes a temporary script file and its parent directory.
 func removeTempFile(path string) {
-	os.RemoveAll(filepath.Dir(path))
+	_ = os.RemoveAll(filepath.Dir(path))
 }
 
 // buildInstallerEnv constructs the environment variables for the installer subprocess.

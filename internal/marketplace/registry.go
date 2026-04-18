@@ -263,7 +263,7 @@ func (f *DefaultIndexFetcher) fetchFromGitHub(owner, repo string) (Index, error)
 		if err != nil {
 			continue
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode == http.StatusNotFound {
 			continue

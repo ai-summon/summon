@@ -17,6 +17,7 @@ var selfUninstallConfirm bool
 type selfUninstallDeps struct {
 	pathResolver selfmgmt.PathResolver
 	fileSystem   selfmgmt.FileSystem
+	noColor      bool
 	stdin        io.Reader
 	stdout       io.Writer
 	stderr       io.Writer
@@ -37,6 +38,7 @@ var selfUninstallCmd = &cobra.Command{
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		deps := defaultSelfUninstallDeps()
+		deps.noColor = noColorFlag
 		return runSelfUninstall(deps)
 	},
 }
@@ -58,11 +60,11 @@ func runSelfUninstall(deps *selfUninstallDeps) error {
 		paths, err = selfmgmt.ResolvePaths()
 	}
 	if err != nil {
-		return fmt.Errorf("Error: %w", err)
+		return fmt.Errorf("error: %w", err)
 	}
 
 	// Display paths to be removed
-	fmt.Fprintln(out, "This will remove:")
+	_, _ = fmt.Fprintln(out, "This will remove:")
 
 	// Check if config dir exists to decide whether to display it
 	var configExists bool
@@ -75,14 +77,14 @@ func runSelfUninstall(deps *selfUninstallDeps) error {
 	}
 
 	if configExists {
-		fmt.Fprintf(out, "    %s\n", paths.ConfigDir)
+		_, _ = fmt.Fprintf(out, "    %s\n", paths.ConfigDir)
 	}
-	fmt.Fprintf(out, "    %s\n", paths.BinaryPath)
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintf(out, "    %s\n", paths.BinaryPath)
+	_, _ = fmt.Fprintln(out)
 
 	// Confirmation prompt (unless --confirm)
 	if !selfUninstallConfirm {
-		fmt.Fprint(out, "Remove summon and all configuration data? [y/N] ")
+		_, _ = fmt.Fprint(out, "Remove summon and all configuration data? [y/N] ")
 
 		scanner := bufio.NewScanner(deps.stdin)
 		if scanner.Scan() {
@@ -105,10 +107,10 @@ func runSelfUninstall(deps *selfUninstallDeps) error {
 		return err
 	}
 
-	fmt.Fprintln(out, "summon is now uninstalled")
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Note: plugins installed in native CLI platforms (copilot, claude) are not")
-	fmt.Fprintln(out, "removed. Use each platform's tools to manage those plugins.")
+	_, _ = fmt.Fprintln(out, "summon is now uninstalled")
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "Note: plugins installed in native CLI platforms (copilot, claude) are not")
+	_, _ = fmt.Fprintln(out, "removed. Use each platform's tools to manage those plugins.")
 
 	return nil
 }

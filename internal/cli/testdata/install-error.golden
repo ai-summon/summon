@@ -1,0 +1,5 @@
+claude:
+  Installing my-plugin... ✗ my-plugin failed
+
+Installed 0 of 1 packages:
+  ✗ my-plugin            (claude: failed — "claude install https://github.com/owner/my-plugin failed: network timeout")
