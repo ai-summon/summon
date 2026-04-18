@@ -82,7 +82,7 @@ func TestHelp_RootHasGroupedCommands(t *testing.T) {
 	out := buf.String()
 
 	// Verify groups appear in order
-	groups := []string{"Plugin Management:", "Inspection:", "Configuration:", "Maintenance:"}
+	groups := []string{"Plugin Management:", "Inspection:", "Configuration:", "Maintenance:", "Plugin Development:"}
 	lastIdx := -1
 	for _, g := range groups {
 		idx := strings.Index(out, g)

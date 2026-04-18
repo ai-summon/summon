@@ -12,7 +12,6 @@ Plugin Management:
 Inspection:
   check       Check installed plugin health
   list        List installed plugins with dependency tree
-  validate    Validate the summon.yaml in the current directory
 
 Configuration:
   marketplace Manage marketplace registrations
@@ -21,6 +20,9 @@ Configuration:
 Maintenance:
   help        Help about any command
   self        Manage the summon installation
+
+Plugin Development:
+  validate    Validate the summon.yaml in the current directory
 
 Flags:
   -h, --help            help for summon

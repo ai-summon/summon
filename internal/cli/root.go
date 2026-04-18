@@ -30,6 +30,7 @@ func init() {
 		&cobra.Group{ID: "inspect", Title: "Inspection:"},
 		&cobra.Group{ID: "config", Title: "Configuration:"},
 		&cobra.Group{ID: "maintain", Title: "Maintenance:"},
+		&cobra.Group{ID: "develop", Title: "Plugin Development:"},
 	)
 
 	// Custom styled help and usage rendering

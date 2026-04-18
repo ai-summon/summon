@@ -24,7 +24,7 @@ type validateDeps struct {
 var validateCmd = &cobra.Command{
 	Use:     "validate",
 	Short:   "Validate the summon.yaml in the current directory",
-	GroupID: "inspect",
+	GroupID: "develop",
 	Long:    `Check the summon.yaml manifest for structural errors and verify that declared system requirements are available.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		deps := &validateDeps{
