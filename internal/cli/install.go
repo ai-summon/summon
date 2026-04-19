@@ -231,6 +231,14 @@ func runInstall(specifier string, deps *installDeps) error {
 
 	// 9. Display post-install summary
 	renderSummary(summary, out, s)
+
+	// 10. Check for skill collisions introduced by newly installed packages
+	newPackages := resultOrder
+	for _, a := range adapters {
+		cr := scanPlatformCollisions(a, scope, &collisionCheckDeps{})
+		printInstallCollisionWarning(out, cr, newPackages, s)
+	}
+
 	return nil
 }
 

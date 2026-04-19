@@ -10,6 +10,7 @@ import (
 
 	"github.com/ai-summon/summon/internal/manifest"
 	"github.com/ai-summon/summon/internal/platform"
+	"github.com/ai-summon/summon/internal/skillscan"
 	"github.com/ai-summon/summon/internal/syscheck"
 	"github.com/spf13/cobra"
 )
@@ -17,12 +18,13 @@ import (
 var checkJSON bool
 
 type checkDeps struct {
-	runner   platform.CommandRunner
-	fetcher  manifest.ManifestFetcher
-	adapters []platform.Adapter // if non-nil, use instead of auto-detecting
-	stdout   io.Writer
-	stderr   io.Writer
-	noColor  bool
+	runner       platform.CommandRunner
+	fetcher      manifest.ManifestFetcher
+	adapters     []platform.Adapter // if non-nil, use instead of auto-detecting
+	stdout       io.Writer
+	stderr       io.Writer
+	noColor      bool
+	collisionDeps *collisionCheckDeps // if non-nil, override collision scanning dependencies
 }
 
 func defaultCheckDeps() *checkDeps {
@@ -138,7 +140,20 @@ func runCheckAll(deps *checkDeps) error {
 		return nil
 	}
 
-	printCheckOutputs(deps, outputs)
+	// Skill collision detection (advisory — does not affect exit code)
+	cDeps := deps.collisionDeps
+	if cDeps == nil {
+		cDeps = &collisionCheckDeps{}
+	}
+	var allCollisionResults []*collisionResult
+	for _, a := range adapters {
+		cr := scanPlatformCollisions(a, scope, cDeps)
+		if len(cr.Collisions) > 0 {
+			allCollisionResults = append(allCollisionResults, cr)
+		}
+	}
+
+	printCheckOutputs(deps, outputs, allCollisionResults)
 
 	if hasIssues {
 		return fmt.Errorf("health check failed: required dependencies missing")
@@ -194,7 +209,34 @@ func runCheckSingle(name string, deps *checkDeps) error {
 		return fmt.Errorf("package %q is not installed", name)
 	}
 
-	printCheckOutputs(deps, outputs)
+	// Collision detection for single-plugin check
+	cDeps := deps.collisionDeps
+	if cDeps == nil {
+		cDeps = &collisionCheckDeps{}
+	}
+	var allCollisionResults []*collisionResult
+	for _, a := range adapters {
+		cr := scanPlatformCollisions(a, scope, cDeps)
+		// Only include collisions involving the target package
+		var relevant []skillscan.Collision
+		for _, c := range cr.Collisions {
+			for _, e := range c.Entries {
+				if e.PluginName == name {
+					relevant = append(relevant, c)
+					break
+				}
+			}
+		}
+		if len(relevant) > 0 {
+			allCollisionResults = append(allCollisionResults, &collisionResult{
+				CLI:         cr.CLI,
+				Collisions:  relevant,
+				PluginCount: cr.PluginCount,
+			})
+		}
+	}
+
+	printCheckOutputs(deps, outputs, allCollisionResults)
 
 	if hasIssues {
 		return fmt.Errorf("health check failed for %s", name)
@@ -266,14 +308,26 @@ func checkPlugin(p platform.InstalledPlugin, m *manifest.Manifest, installed map
 	return result
 }
 
-func printCheckOutputs(deps *checkDeps, outputs []checkOutput) {
+func printCheckOutputs(deps *checkDeps, outputs []checkOutput, collisionResults []*collisionResult) {
 	w := deps.stdout
 	if checkJSON {
-		result := make(map[string][]checkResult)
-		for _, o := range outputs {
-			result[o.CLI] = o.Results
+		type jsonOutput struct {
+			Results         map[string][]checkResult         `json:"results"`
+			SkillCollisions map[string][]collisionJSONEntry  `json:"skill_collisions,omitempty"`
 		}
-		data, _ := json.MarshalIndent(result, "", "  ")
+		out := jsonOutput{
+			Results: make(map[string][]checkResult),
+		}
+		for _, o := range outputs {
+			out.Results[o.CLI] = o.Results
+		}
+		if len(collisionResults) > 0 {
+			out.SkillCollisions = make(map[string][]collisionJSONEntry)
+			for _, cr := range collisionResults {
+				out.SkillCollisions[cr.CLI] = collisionsToJSON(cr.Collisions)
+			}
+		}
+		data, _ := json.MarshalIndent(out, "", "  ")
 		_, _ = fmt.Fprintln(w, string(data))
 		return
 	}
@@ -311,6 +365,11 @@ func printCheckOutputs(deps *checkDeps, outputs []checkOutput) {
 			printCheckResult(w, r, maxNameLen, s)
 		}
 		_, _ = fmt.Fprintln(w)
+	}
+
+	// Print collision warnings after health checks
+	for _, cr := range collisionResults {
+		printCollisions(w, cr, s)
 	}
 }
 
