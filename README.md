@@ -12,14 +12,19 @@ Plugins depend on other plugins. Plugins depend on system tools. Summon resolves
 
 ---
 
+## Highlights
+
+- **Transitive dependency resolution** — install a plugin and Summon automatically installs every plugin it depends on, and every plugin *those* depend on
+- **System dependency checks** — Summon verifies that required system tools (git, node, docker, etc.) are present, so nothing silently breaks
+- **Skill collision detection** — Summon detects when multiple plugins define skills with the same name, showing which one wins and which are silently shadowed
+
+
 ## Why Summon?
 
 Claude/Copilot plugins don't exist in isolation. A plugin might depend on three other plugins, which each depend on more — and they might need `git`, `node`, or `docker` on your system to actually work.
 
 Today, you manage all of that by hand. Summon handles it for you:
 
-- **Transitive dependency resolution** — install a plugin and Summon automatically installs every plugin it depends on, and every plugin *those* depend on
-- **System dependency checks** — Summon verifies that required system tools (git, node, docker, etc.) are present *before* installing, so nothing silently breaks
 - **Health monitoring** — run `summon check` at any time to verify that all plugin and system dependencies are still satisfied
 - **Cross-CLI support** — one `summon install` deploys a plugin and its full dependency tree to Claude/Copilot on your system
 - **Custom marketplaces** — register third-party plugin registries to discover and install community plugins
