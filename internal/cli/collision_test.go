@@ -32,26 +32,34 @@ func createTestPluginDir(t *testing.T, baseDir, pluginName string, skills map[st
 	return pluginDir
 }
 
-func writeCopilotConfig(t *testing.T, homeDir string, plugins []struct {
+type testPluginEntry struct {
 	Name        string
 	Marketplace string
 	CachePath   string
-}) {
+	Enabled     *bool // nil = omit from JSON (defaults to enabled); non-nil = explicit
+}
+
+func writeCopilotConfig(t *testing.T, homeDir string, plugins []testPluginEntry) {
 	t.Helper()
 	type entry struct {
 		Name        string `json:"name"`
 		Marketplace string `json:"marketplace"`
 		CachePath   string `json:"cache_path"`
-		Enabled     bool   `json:"enabled"`
+		Enabled     *bool  `json:"enabled,omitempty"`
 	}
 	var entries []entry
 	for _, p := range plugins {
-		entries = append(entries, entry{
+		e := entry{
 			Name:        p.Name,
 			Marketplace: p.Marketplace,
 			CachePath:   p.CachePath,
-			Enabled:     true,
-		})
+		}
+		if p.Enabled != nil {
+			e.Enabled = p.Enabled
+		} else {
+			e.Enabled = boolPtr(true)
+		}
+		entries = append(entries, e)
 	}
 	cfg := struct {
 		InstalledPlugins []entry `json:"installedPlugins"`
@@ -216,11 +224,7 @@ func TestScanPlatformCollisions_CopilotWithCollisions(t *testing.T) {
 		"init": "---\nname: init\n---\n",
 	})
 
-	writeCopilotConfig(t, homeDir, []struct {
-		Name        string
-		Marketplace string
-		CachePath   string
-	}{
+	writeCopilotConfig(t, homeDir, []testPluginEntry{
 		{Name: "wingman", Marketplace: "mkt", CachePath: wingmanDir},
 		{Name: "speckit", Marketplace: "mkt", CachePath: speckitDir},
 	})
@@ -247,11 +251,7 @@ func TestScanPlatformCollisions_NoCollisions(t *testing.T) {
 		"skill-b": "---\nname: skill-b\n---\n",
 	})
 
-	writeCopilotConfig(t, homeDir, []struct {
-		Name        string
-		Marketplace string
-		CachePath   string
-	}{
+	writeCopilotConfig(t, homeDir, []testPluginEntry{
 		{Name: "plugin-a", Marketplace: "mkt", CachePath: pluginADir},
 		{Name: "plugin-b", Marketplace: "mkt", CachePath: pluginBDir},
 	})
@@ -276,13 +276,10 @@ func TestScanPlatformCollisions_DisabledPlugin(t *testing.T) {
 	})
 
 	// Write config with speckit disabled
-	copilotDir := filepath.Join(homeDir, ".copilot")
-	require.NoError(t, os.MkdirAll(copilotDir, 0o755))
-	cfg := `{"installedPlugins":[
-		{"name":"wingman","marketplace":"mkt","cache_path":"` + wingmanDir + `","enabled":true},
-		{"name":"speckit","marketplace":"mkt","cache_path":"` + speckitDir + `","enabled":false}
-	]}`
-	require.NoError(t, os.WriteFile(filepath.Join(copilotDir, "config.json"), []byte(cfg), 0o644))
+	writeCopilotConfig(t, homeDir, []testPluginEntry{
+		{Name: "wingman", Marketplace: "mkt", CachePath: wingmanDir, Enabled: boolPtr(true)},
+		{Name: "speckit", Marketplace: "mkt", CachePath: speckitDir, Enabled: boolPtr(false)},
+	})
 
 	adapter := newFakeAdapter("copilot")
 	result := scanPlatformCollisions(adapter, "user", &collisionCheckDeps{homeDir: homeDir})
@@ -338,11 +335,7 @@ func TestCheck_WithCollisions(t *testing.T) {
 		"init": "---\nname: init\n---\n",
 	})
 
-	writeCopilotConfig(t, homeDir, []struct {
-		Name        string
-		Marketplace string
-		CachePath   string
-	}{
+	writeCopilotConfig(t, homeDir, []testPluginEntry{
 		{Name: "wingman", Marketplace: "mkt", CachePath: wingmanDir},
 		{Name: "speckit", Marketplace: "mkt", CachePath: speckitDir},
 	})
@@ -393,11 +386,7 @@ func TestCheck_JSONWithCollisions(t *testing.T) {
 		"init": "---\nname: init\n---\n",
 	})
 
-	writeCopilotConfig(t, homeDir, []struct {
-		Name        string
-		Marketplace string
-		CachePath   string
-	}{
+	writeCopilotConfig(t, homeDir, []testPluginEntry{
 		{Name: "wingman", Marketplace: "mkt", CachePath: wingmanDir},
 		{Name: "speckit", Marketplace: "mkt", CachePath: speckitDir},
 	})
@@ -445,11 +434,7 @@ func TestCheck_NoCollisions_CleanOutput(t *testing.T) {
 		"unique-skill": "---\nname: unique-skill\n---\n",
 	})
 
-	writeCopilotConfig(t, homeDir, []struct {
-		Name        string
-		Marketplace string
-		CachePath   string
-	}{
+	writeCopilotConfig(t, homeDir, []testPluginEntry{
 		{Name: "my-plugin", Marketplace: "mkt", CachePath: pluginDir},
 	})
 
