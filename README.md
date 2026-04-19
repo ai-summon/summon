@@ -1,14 +1,8 @@
-<div align="center">
-
 # Summon
 
-**Dependency management for Claude/Copilot plugins.**
+**The cross-platform AI plugin manager.**
 
-Plugins depend on other plugins. Plugins depend on system tools. Summon resolves it all — across **Claude Code CLI** and **GitHub Copilot CLI**.
-
-[Install](#install) · [Quick Start](#quick-start) · [Commands](#commands) · [Marketplaces](#marketplaces)
-
-</div>
+> Plugins depend on other plugins. Plugins depend on system tools. Summon resolves it all — across **Claude Code CLI** and **GitHub Copilot CLI**.
 
 ---
 
@@ -17,19 +11,14 @@ Plugins depend on other plugins. Plugins depend on system tools. Summon resolves
 - **Transitive dependency resolution** — install a plugin and Summon automatically installs every plugin it depends on, and every plugin *those* depend on
 - **System dependency checks** — Summon verifies that required system tools (git, node, docker, etc.) are present, so nothing silently breaks
 - **Skill collision detection** — Summon detects when multiple plugins define skills with the same name, showing which one wins and which are silently shadowed
-
-
-## Why Summon?
-
-Claude/Copilot plugins don't exist in isolation. A plugin might depend on three other plugins, which each depend on more — and they might need `git`, `node`, or `docker` on your system to actually work.
-
-Today, you manage all of that by hand. Summon handles it for you:
-
 - **Health monitoring** — run `summon check` at any time to verify that all plugin and system dependencies are still satisfied
-- **Cross-CLI support** — one `summon install` deploys a plugin and its full dependency tree to Claude/Copilot on your system
-- **Custom marketplaces** — register third-party plugin registries to discover and install community plugins
+- Supports Claude-style marketplaces and plugins.
+- Fully compatible with Claude and Copilot CLIs.
+- Supports macOS, Linux, and Windows.
 
 ## Install
+
+Install summon with our standalone installers:
 
 ### macOS / Linux
 
@@ -43,17 +32,23 @@ curl -fsSL https://raw.githubusercontent.com/ai-summon/summon/main/install.sh | 
 irm https://raw.githubusercontent.com/ai-summon/summon/main/install.ps1 | iex
 ```
 
-Verify it works:
+If installed via the standalone installer, summon can update itself to the latest version:
 
 ```sh
-summon --version
+summon self update
 ```
+
+## Documentation
+
+uv's documentation is available at docs.ai-summon.com.
+
+Additionally, the command line reference documentation can be viewed with summon help.
 
 ## Quick Start
 
 ```sh
 # Install a plugin
-summon install my-plugin
+summon install speckit
 
 # See what's installed
 summon list
